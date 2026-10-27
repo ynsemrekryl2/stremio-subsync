@@ -13,8 +13,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::ruler::Event;
-use crate::{rank, srt};
+use crate::rank;
+use crate::srt::{self, Cue};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// Largest list, subtitle file or archive read from a source.
@@ -547,13 +547,13 @@ pub struct SourcesProbe {
 }
 
 /// Searches every source, ranks the candidates against `filename` and
-/// downloads the best few. Beside the report, the line times of each
-/// download (`None` where it failed), in the same order.
+/// downloads the best few. Beside the report, the cues of each download
+/// (`None` where it failed), in the same order.
 pub async fn probe(
     sources: &[Arc<dyn SubtitleSource>],
     query: &Query,
     filename: Option<&str>,
-) -> (SourcesProbe, Vec<Option<Vec<Event>>>) {
+) -> (SourcesProbe, Vec<Option<Vec<Cue>>>) {
     let started = Instant::now();
     let mut searches = Vec::new();
     let mut found: Vec<(usize, Candidate)> = Vec::new();
@@ -569,23 +569,30 @@ pub async fn probe(
         .map(|(_, c)| rank::score(&c.release, filename))
         .collect();
     let mut downloads = Vec::new();
-    let mut times = Vec::new();
+    let mut read = Vec::new();
     for (i, candidate) in found.iter().take(PROBE_DOWNLOADS) {
         let result = sources[*i].download(query, candidate).await.map(|bytes| {
             let cues = srt::parse(&srt::decode(&bytes, &query.lang));
-            times.push(Some(srt::events(&cues)));
-            SrtStats {
+            let stats = SrtStats {
                 source: candidate.source,
                 score: rank::score(&candidate.release, filename),
                 bytes: bytes.len(),
                 cues: cues.len(),
                 first_ms: cues.first().map(|c| c.start_ms),
                 last_end_ms: cues.iter().map(|c| c.end_ms).max(),
-            }
+            };
+            (stats, cues)
         });
-        if result.is_err() {
-            times.push(None);
-        }
+        let result = match result {
+            Ok((stats, cues)) => {
+                read.push(Some(cues));
+                Ok(stats)
+            }
+            Err(err) => {
+                read.push(None);
+                Err(err)
+            }
+        };
         downloads.push(result);
     }
     let report = SourcesProbe {
@@ -594,7 +601,7 @@ pub async fn probe(
         top_scores,
         downloads,
     };
-    (report, times)
+    (report, read)
 }
 
 #[cfg(test)]
@@ -850,6 +857,7 @@ mod tests {
         assert_eq!(outcome.downloads[1], Err(SourceError::Status(404)));
         assert!(outcome.top_scores[2] < 0, "CAM release ranks last");
         let counts: Vec<Option<usize>> = times.iter().map(|t| t.as_ref().map(Vec::len)).collect();
+        assert_eq!(times[0].as_ref().unwrap()[0].text, "A");
         assert_eq!(counts, vec![Some(2), None, Some(2)]);
     }
 }

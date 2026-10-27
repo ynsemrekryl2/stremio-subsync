@@ -4,21 +4,24 @@
 use axum::{
     Json, Router,
     extract::{MatchedPath, Path, Request, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 use crate::align;
 use crate::dump::{self, Dump};
 use crate::extra::PlaybackHints;
+use crate::label::{self, LabelCache};
 use crate::range::RangeReader;
+use crate::ruler::Event;
 use crate::sources::{self, Query, SubtitleSource};
+use crate::srt;
 use crate::streams::{self, StreamSource};
 
 /// Shared state for the HTTP handlers.
@@ -31,6 +34,8 @@ pub struct AppState {
     lang: String,
     /// Where probe timings are saved for calibration, if anywhere.
     dump_dir: Option<std::path::PathBuf>,
+    /// Labeling mode: candidates listed in Stremio's menu, kept here.
+    labels: Option<Mutex<LabelCache>>,
 }
 
 impl AppState {
@@ -43,6 +48,7 @@ impl AppState {
             subtitle_sources: Vec::new(),
             lang: String::new(),
             dump_dir: None,
+            labels: None,
         })
     }
 
@@ -75,6 +81,12 @@ impl AppState {
         self
     }
 
+    /// Lists every downloaded candidate in Stremio's menu, marked ✓ or ✗.
+    pub fn with_label_mode(mut self) -> Self {
+        self.labels = Some(Mutex::new(LabelCache::default()));
+        self
+    }
+
     fn authorized(&self, candidate: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
@@ -101,6 +113,7 @@ pub fn router(state: AppState) -> Router {
             "/{token}/subtitles/{kind}/{id}/{extra}",
             get(subtitles_with_extra),
         )
+        .route("/{token}/label/{entry}/{file}", get(label_srt))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -163,19 +176,37 @@ async fn manifest(State(state): State<Arc<AppState>>, Path(token): Path<String>)
 
 async fn subtitles(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((token, kind, id)): Path<(String, String, String)>,
 ) -> Response {
-    respond(&state, &token, &kind, &id, PlaybackHints::default())
+    respond(
+        state,
+        &headers,
+        &token,
+        &kind,
+        &id,
+        PlaybackHints::default(),
+    )
+    .await
 }
 
 async fn subtitles_with_extra(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((token, kind, id, extra)): Path<(String, String, String, String)>,
 ) -> Response {
-    respond(&state, &token, &kind, &id, PlaybackHints::parse(&extra))
+    let hints = PlaybackHints::parse(&extra);
+    respond(state, &headers, &token, &kind, &id, hints).await
 }
 
-fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackHints) -> Response {
+async fn respond(
+    state: Arc<AppState>,
+    headers: &HeaderMap,
+    token: &str,
+    kind: &str,
+    id: &str,
+    hints: PlaybackHints,
+) -> Response {
     if !state.authorized(token) {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -185,69 +216,173 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
-    let stream_source = state.streams.clone();
-    let subtitle_sources = Some(state.subtitle_sources.clone()).filter(|s| !s.is_empty());
-    let query = Query::new(kind, id, &state.lang);
-    if stream_source.is_some() || (subtitle_sources.is_some() && query.is_some()) {
-        // Runs beside the response so Stremio is not kept waiting.
-        let range = state.range.clone();
-        let dump_dir = state.dump_dir.clone();
-        let (kind, id) = (kind.to_owned(), id.to_owned());
-        tokio::spawn(async move {
-            let filename = hints.filename.clone();
-            let k2 = async {
-                let source = stream_source?;
-                let outcome =
-                    streams::probe(source.as_ref(), range.as_deref(), &kind, &id, &hints).await;
-                eprintln!("k2 probe kind={kind} outcome={outcome:?}");
-                Some(outcome)
-            };
-            let m3 = async {
-                let (sources, query) = (subtitle_sources?, query?);
-                let (outcome, times) = sources::probe(&sources, &query, filename.as_deref()).await;
-                eprintln!("m3 probe query={query:?} outcome={outcome:?}");
-                let scores: Vec<Option<i32>> = outcome
-                    .downloads
-                    .iter()
-                    .map(|d| d.as_ref().ok().map(|stats| stats.score))
-                    .collect();
-                Some((times, scores))
-            };
-            let (k2, m3) = tokio::join!(k2, m3);
-            let rulers = match k2 {
-                Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) => {
-                    (*mkv).ok().map(|report| report.rulers.0)
-                }
-                _ => None,
-            };
-            // Alignment and the dump are CPU and disk work; keep them off the
-            // async workers.
-            if let (Some(rulers), Some((times, scores))) = (rulers, m3)
-                && !rulers.is_empty()
-                && times.iter().any(Option::is_some)
-                && let Ok((trials, dumped)) = tokio::task::spawn_blocking(move || {
-                    let dumped = dump_dir
-                        .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)));
-                    (align::trials(&rulers, &times), dumped)
-                })
-                .await
-            {
-                match dumped {
-                    Some(Ok(name)) => eprintln!("dump written file={name}"),
-                    Some(Err(err)) => eprintln!("dump failed error={:?}", err.kind()),
-                    None => {}
-                }
-                for trial in trials {
-                    eprintln!("m4 probe {trial:?}");
-                }
-            }
-        });
+    // Kept in memory only, to find this request's labels again.
+    let request = format!(
+        "{kind}/{id}/{}/{}",
+        hints.filename.as_deref().unwrap_or_default(),
+        hints.video_size.unwrap_or_default()
+    );
+    if let Some(list) = label_list(&state, headers, token, &request) {
+        return list;
     }
-    // Serving aligned subtitles comes in M5; for now only the probes run.
+    let work = tokio::spawn(run_probes(
+        state.clone(),
+        kind.to_owned(),
+        id.to_owned(),
+        hints,
+        request.clone(),
+    ));
+    if state.labels.is_some() {
+        // Stremio waits for the menu; give the probes time to fill it.
+        let _ = tokio::time::timeout(LABEL_WAIT, work).await;
+        if let Some(list) = label_list(&state, headers, token, &request) {
+            return list;
+        }
+    }
     Json(SubtitlesResponse {
         subtitles: Vec::new(),
     })
     .into_response()
+}
+
+/// How long a request waits for its labels before answering without them.
+const LABEL_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The labeled candidates of `request` as a Stremio subtitle list, if any.
+fn label_list(
+    state: &AppState,
+    headers: &HeaderMap,
+    token: &str,
+    request: &str,
+) -> Option<Response> {
+    let labels = state.labels.as_ref()?.lock().ok()?;
+    let (entry, subs) = labels.find(request)?;
+    let host = headers.get(header::HOST)?.to_str().ok()?;
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .filter(|p| *p == "https")
+        .unwrap_or("http");
+    let subtitles = subs
+        .iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            let n = i + 1;
+            json!({
+                "id": format!("subsync-{entry}-{n}"),
+                "url": format!("{scheme}://{host}/{token}/label/{entry}/{n}.srt"),
+                "lang": sub.label,
+            })
+        })
+        .collect();
+    Some(Json(SubtitlesResponse { subtitles }).into_response())
+}
+
+async fn label_srt(
+    State(state): State<Arc<AppState>>,
+    Path((token, entry, file)): Path<(String, u64, String)>,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(n) = file.strip_suffix(".srt").and_then(|n| n.parse().ok()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let srt = state
+        .labels
+        .as_ref()
+        .and_then(|labels| labels.lock().ok()?.srt(entry, n).map(str::to_owned));
+    match srt {
+        Some(srt) => (
+            [(header::CONTENT_TYPE, "application/x-subrip; charset=utf-8")],
+            srt,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// K2 and M3 probes side by side, then alignment, the timing dump and, in
+/// labeling mode, the menu entries for `request`.
+async fn run_probes(
+    state: Arc<AppState>,
+    kind: String,
+    id: String,
+    hints: PlaybackHints,
+    request: String,
+) {
+    let query = Query::new(&kind, &id, &state.lang);
+    let filename = hints.filename.clone();
+    let k2 = async {
+        let source = state.streams.clone()?;
+        let outcome =
+            streams::probe(source.as_ref(), state.range.as_deref(), &kind, &id, &hints).await;
+        eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+        Some(outcome)
+    };
+    let m3 = async {
+        let query = query.as_ref()?;
+        if state.subtitle_sources.is_empty() {
+            return None;
+        }
+        let (outcome, cues) =
+            sources::probe(&state.subtitle_sources, query, filename.as_deref()).await;
+        eprintln!("m3 probe query={query:?} outcome={outcome:?}");
+        let scores: Vec<Option<i32>> = outcome
+            .downloads
+            .iter()
+            .map(|d| d.as_ref().ok().map(|stats| stats.score))
+            .collect();
+        Some((cues, scores))
+    };
+    let (k2, m3) = tokio::join!(k2, m3);
+    let rulers = match k2 {
+        Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) => {
+            (*mkv).ok().map(|report| report.rulers.0)
+        }
+        _ => None,
+    };
+    let (Some(rulers), Some((cues, scores))) = (rulers, m3) else {
+        return;
+    };
+    let times: Vec<Option<Vec<Event>>> =
+        cues.iter().map(|c| c.as_deref().map(srt::events)).collect();
+    if rulers.is_empty() || times.iter().all(Option::is_none) {
+        return;
+    }
+    // Alignment and the dump are CPU and disk work; keep them off the async
+    // workers.
+    let dump_dir = state.dump_dir.clone();
+    let Ok((trials, dumped)) = tokio::task::spawn_blocking(move || {
+        let dumped =
+            dump_dir.map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)));
+        (align::trials(&rulers, &times), dumped)
+    })
+    .await
+    else {
+        return;
+    };
+    let dump_name = match dumped {
+        Some(Ok(name)) => {
+            eprintln!("dump written file={name}");
+            Some(name)
+        }
+        Some(Err(err)) => {
+            eprintln!("dump failed error={:?}", err.kind());
+            None
+        }
+        None => None,
+    };
+    for trial in &trials {
+        eprintln!("m4 probe {trial:?}");
+    }
+    if let Some(labels) = &state.labels {
+        let subs = label::build(&trials, &cues, dump_name.as_deref());
+        eprintln!("labels ready entries={}", subs.len());
+        if let Ok(mut labels) = labels.lock() {
+            labels.insert(request, subs);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +537,59 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(query, Query::new("series", "tt0944947:1:2", "tur").unwrap());
+    }
+
+    #[tokio::test]
+    async fn label_mode_lists_cached_candidates_and_serves_srt() {
+        let state = AppState::new(TOKEN.to_owned()).unwrap().with_label_mode();
+        state.labels.as_ref().unwrap().lock().unwrap().insert(
+            "movie/tt1/A.mkv/0".to_owned(),
+            vec![label::LabelSub {
+                label: "SubSync 1 ✓ +0.00s".to_owned(),
+                srt: "1\n00:00:01,000 --> 00:00:02,000\nx\n\n".to_owned(),
+            }],
+        );
+        let app = router(state);
+        let call = |uri: String| {
+            let app = app.clone();
+            async move {
+                let request = Request::get(uri)
+                    .header(header::HOST, "127.0.0.1:7000")
+                    .body(Body::empty())
+                    .unwrap();
+                let response = app.oneshot(request).await.unwrap();
+                let status = response.status();
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+
+        let (status, body) =
+            call(format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv.json")).await;
+        assert_eq!(status, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            list["subtitles"][0],
+            json!({
+                "id": "subsync-0-1",
+                "url": format!("http://127.0.0.1:7000/{TOKEN}/label/0/1.srt"),
+                "lang": "SubSync 1 ✓ +0.00s",
+            })
+        );
+
+        let (status, body) = call(format!("/{TOKEN}/label/0/1.srt")).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::OK, "1\n00:00:01,000 --> 00:00:02,000\nx\n\n")
+        );
+        for uri in [
+            "/wrong-token/label/0/1.srt".to_owned(),
+            format!("/{TOKEN}/label/0/2.srt"),
+            format!("/{TOKEN}/label/9/1.srt"),
+            format!("/{TOKEN}/label/0/one.srt"),
+        ] {
+            assert_eq!(call(uri.clone()).await.0, StatusCode::NOT_FOUND, "{uri}");
+        }
     }
 
     #[test]

@@ -143,6 +143,19 @@ olarak saklanır: yalnız cetvel ve aday satır zamanları ile sıralama puanı
 (kimlik, ad, metin yok; `dumps/` git'e girmez). `cargo run -- calibrate dumps`
 hepsini güncel kodla yeniden hizalar ve deneme başına bir satır basar.
 
+### Etiketleme modu
+
+`SUBSYNC_LABEL_MODE=1` açıkken altyazı isteği probe'ları en çok 15 sn bekler
+ve indirilen her adayı Stremio menüsünde listeler: `SubSync <sıra> ✓|✗
+<kaydırma>[ fps] · <dump eki>`. Sıra `calibrate`'teki `cand` + 1; dump eki
+dump dosya adının son 4 hanesi. Kabul edilenler de reddedilenler de kendi en
+iyi fix'iyle kaydırılmış gelir: ✗ işaretli biri senkronlu görünüyorsa o bir
+yanlış ret. Altyazılar yalnız bellekte (son 32 istek).
+
+Etiket sözlüğü: **senkron** (baştan sona tutuyor) · **kaymış** (sabit bir
+gecikme var) · **kayıyor** (zamanla açılıyor) · **yanlış** (başka sürüm/kurgu,
+yer yer tutmuyor).
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,

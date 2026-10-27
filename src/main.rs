@@ -2,13 +2,12 @@ mod addon;
 mod align;
 mod dump;
 mod extra;
+mod label;
 mod mkv;
 mod range;
 mod rank;
 mod ruler;
 mod sources;
-// Wired into the subtitles route in M5.
-#[cfg_attr(not(test), allow(dead_code))]
 mod srt;
 mod streams;
 #[cfg(test)]
@@ -113,6 +112,10 @@ async fn main() {
             state = state.with_dump_dir(dir.trim().into());
         }
         _ => eprintln!("timing dump: off"),
+    }
+    if std::env::var("SUBSYNC_LABEL_MODE").as_deref() == Ok("1") {
+        eprintln!("label mode: on (every candidate listed in Stremio, marked)");
+        state = state.with_label_mode();
     }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
