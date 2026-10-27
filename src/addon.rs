@@ -16,13 +16,21 @@ use tower_http::cors::CorsLayer;
 
 use crate::extra::PlaybackHints;
 use crate::range::RangeReader;
+use crate::sources::{self, SubtitleSource};
 use crate::streams::{self, StreamSource};
+
+/// How many ranked candidates the sources probe downloads per request.
+pub const SOURCES_LIMIT: usize = 3;
+
+/// Subtitle provider and the languages asked of it.
+type SubtitleSetup = (Arc<dyn SubtitleSource>, Arc<[String]>);
 
 /// Shared state for the HTTP handlers.
 pub struct AppState {
     token: String,
     streams: Option<Arc<dyn StreamSource>>,
     range: Option<Arc<dyn RangeReader>>,
+    subtitles: Option<SubtitleSetup>,
 }
 
 impl AppState {
@@ -32,6 +40,7 @@ impl AppState {
             token,
             streams: None,
             range: None,
+            subtitles: None,
         })
     }
 
@@ -44,6 +53,17 @@ impl AppState {
     /// Lets the K2 probe read the first bytes of the single matched stream.
     pub fn with_range_reader(mut self, reader: Arc<dyn RangeReader>) -> Self {
         self.range = Some(reader);
+        self
+    }
+
+    /// Enables the M3 probe: candidates in `languages` are listed, ranked
+    /// and the best few downloaded for each request.
+    pub fn with_subtitle_source(
+        mut self,
+        source: Arc<dyn SubtitleSource>,
+        languages: Vec<String>,
+    ) -> Self {
+        self.subtitles = Some((source, languages.into()));
         self
     }
 
@@ -157,6 +177,21 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
+    if let Some((source, languages)) = state.subtitles.clone() {
+        let (kind, id, hints) = (kind.to_owned(), id.to_owned(), hints.clone());
+        tokio::spawn(async move {
+            let outcome = sources::collect(
+                source.as_ref(),
+                &kind,
+                &id,
+                &hints,
+                &languages,
+                SOURCES_LIMIT,
+            )
+            .await;
+            eprintln!("m3 sources kind={kind} outcome={outcome:?}");
+        });
+    }
     if let Some(source) = state.streams.clone() {
         // Runs beside the response so Stremio is not kept waiting.
         let range = state.range.clone();
@@ -280,6 +315,48 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(called, "series/tt0944947:1:2");
+    }
+
+    struct SignalSubtitles(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>);
+
+    impl SubtitleSource for SignalSubtitles {
+        fn list<'a>(
+            &'a self,
+            kind: &'a str,
+            id: &'a str,
+            hints: &'a PlaybackHints,
+        ) -> sources::ListFuture<'a> {
+            if let Some(tx) = self.0.lock().unwrap().take() {
+                let _ = tx.send(format!("{kind}/{id}/{}", hints.filename.is_some()));
+            }
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn download<'a>(&'a self, _candidate: &'a sources::Candidate) -> sources::BodyFuture<'a> {
+            Box::pin(async { Err(sources::SourceError::Other) })
+        }
+    }
+
+    #[tokio::test]
+    async fn subtitles_request_triggers_sources_probe() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let source = Arc::new(SignalSubtitles(std::sync::Mutex::new(Some(tx))));
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_subtitle_source(source, vec!["tur".to_owned()]),
+        );
+        let uri = format!("/{TOKEN}/subtitles/movie/tt0111161/filename=A.mkv.json");
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let called = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(called, "movie/tt0111161/true");
     }
 
     #[test]

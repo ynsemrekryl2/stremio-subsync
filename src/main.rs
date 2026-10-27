@@ -2,7 +2,10 @@ mod addon;
 mod extra;
 mod mkv;
 mod range;
+mod rank;
 mod ruler;
+mod sources;
+mod srt;
 mod streams;
 
 use std::net::SocketAddr;
@@ -61,6 +64,23 @@ async fn main() {
         }
         _ => eprintln!("aiostreams probe: off"),
     }
+    // Lists and downloads subtitles for every request, so it is opt-in until
+    // the results are served.
+    if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() == Ok("1") {
+        let languages = languages(&std::env::var("SUBSYNC_LANGUAGES").unwrap_or_default());
+        let source = sources::OpenSubtitlesV3::new().unwrap_or_else(|| {
+            eprintln!("cannot build the subtitle source HTTP client");
+            std::process::exit(1);
+        });
+        eprintln!(
+            "sources probe: on (languages {}, top {})",
+            languages.join(","),
+            addon::SOURCES_LIMIT
+        );
+        state = state.with_subtitle_source(std::sync::Arc::new(source), languages);
+    } else {
+        eprintln!("sources probe: off");
+    }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .unwrap_or_else(|err| {
@@ -75,4 +95,29 @@ async fn main() {
         })
         .await
         .expect("server error");
+}
+
+/// Comma-separated ISO 639-2 codes; Turkish when none is given.
+fn languages(raw: &str) -> Vec<String> {
+    let list: Vec<String> = raw
+        .split(',')
+        .map(|code| code.trim().to_ascii_lowercase())
+        .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_lowercase()))
+        .collect();
+    if list.is_empty() {
+        vec!["tur".to_owned()]
+    } else {
+        list
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn languages_default_to_turkish() {
+        assert_eq!(languages(""), ["tur"]);
+        assert_eq!(languages(" TUR, eng ,x,english"), ["tur", "eng"]);
+    }
 }
