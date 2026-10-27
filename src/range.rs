@@ -293,10 +293,12 @@ impl RangeReader for HttpRangeReader {
                     Err(err) => return Err(classify(&err, hops)),
                 };
                 let elapsed_ms = started.elapsed().as_millis();
+                let size = total_size(status, &headers);
                 let report = analyze(hops, status, &headers, &head, expected_size, elapsed_ms);
                 let file = Box::new(HttpFile {
                     client: self.client.clone(),
                     url,
+                    size,
                     retries: AtomicUsize::new(0),
                 });
                 return Ok(Opened { report, head, file });
@@ -309,12 +311,18 @@ impl RangeReader for HttpRangeReader {
 struct HttpFile {
     client: reqwest::Client,
     url: Url,
+    /// Total size from the first answer. Real-Debrid cuts the connection
+    /// short on ranges that run past the end, so reads are clamped to it.
+    size: Option<u64>,
     retries: AtomicUsize,
 }
 
 impl HttpFile {
     async fn read_once(&self, start: u64, len: usize) -> Result<Vec<u8>, ReadError> {
-        let end = start.saturating_add(len as u64 - 1);
+        let Some(end) = clamp_end(start, len, self.size) else {
+            return Ok(Vec::new());
+        };
+        let len = usize::try_from(end - start + 1).unwrap_or(len).min(len);
         let mut response = self
             .client
             .get(self.url.clone())
@@ -351,6 +359,19 @@ impl ByteSource for HttpFile {
 
     fn retries(&self) -> usize {
         self.retries.load(Ordering::Relaxed)
+    }
+}
+
+/// Last byte to ask for, kept inside the file; `None` when nothing is left.
+fn clamp_end(start: u64, len: usize, size: Option<u64>) -> Option<u64> {
+    if len == 0 {
+        return None;
+    }
+    let end = start.saturating_add(len as u64 - 1);
+    match size {
+        Some(size) if start >= size => None,
+        Some(size) => Some(end.min(size - 1)),
+        None => Some(end),
     }
 }
 
@@ -402,6 +423,15 @@ mod tests {
             map.insert(*name, HeaderValue::from_static(value));
         }
         map
+    }
+
+    #[test]
+    fn reads_are_clamped_to_file_end() {
+        assert_eq!(clamp_end(0, 100, Some(1000)), Some(99));
+        assert_eq!(clamp_end(950, 100, Some(1000)), Some(999));
+        assert_eq!(clamp_end(1000, 100, Some(1000)), None);
+        assert_eq!(clamp_end(5, 10, None), Some(14));
+        assert_eq!(clamp_end(5, 0, Some(1000)), None);
     }
 
     #[test]

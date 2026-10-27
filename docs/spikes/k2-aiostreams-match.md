@@ -79,6 +79,12 @@ Range okuma sonuçları:
 İkinci tur (2026-10-27, range ve K3 açık): 16 istek daha (film ve dizi,
 9–41 stream); **hepsinde `both: 1`**. Ayrıntılar K3 notunda.
 
+Üçüncü tur (2026-10-27): 20 istek daha (2–38 stream), hepsinde `both: 1`.
+Bir bölümde iki stream aynı boyuttaydı (`size: 2`); dosya adı ayırdı. Yani
+boyut tek başına yetmiyor, ikisi birlikte gerekli. Bir filmde Real-Debrid'in
+bildirdiği boyut `videoSize`'dan farklıydı (`size_matches: false`), ama dosya
+MKV'ydi; boyut karşılaştırması tek başına "gerçek dosya değil" demek değil.
+
 ## Sonuç (Real-Debrid, masaüstü)
 
 - **Eşleşme:** 5/5 örnekte `filename` + `videoSize` tek stream'i kesin seçti
