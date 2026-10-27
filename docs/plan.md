@@ -12,7 +12,7 @@ Stremio ──GET /{token}/subtitles/{type}/{id}/{extra}──▶ add-on
                     İngilizce metin izinin bloklarını tek tek oku → cue zamanları
 3. Adayları topla   OpenSubtitles v3 (anahtarsız) + SubDL (ücretsiz anahtar);
                     sürüm adı dosyaya en çok benzeyen önce
-4. Hizala ve test   konuşma maskesi (10 ms) + FFT çapraz korelasyon; fps adayları;
+4. Hizala ve test   satır örtüşmesi (10 ms ızgara, tam hesap) her fps adayı için;
                     baş / orta / son aynı kaydırmada tutmazsa reddet
 5. Teslim           kabul edilenleri SRT olarak sun; sonucu dosya kimliğiyle cache'le
 ```

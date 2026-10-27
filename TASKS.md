@@ -23,6 +23,16 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
 - [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
 
+## M4 — Hizalama
+
+Girdi iki zaman listesi: cetvel olayları (M2) ve aday altyazının satırları.
+M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
+
+- [x] **SS-011** Hizalama çekirdeği: kendimiz mi, `alass-core` mu? Küçük karşılaştırma — kanıt: `docs/spikes/m4-align.md` (220 sentetik hizalamada doğruluk aynı, bizimki ~27× hızlı ve kabul testli → kendimiz) + `docs/decisions.md` satırı
+- [x] **SS-012** Kaydırma + fps düzeltmesi: aday satırlarını cetvele en iyi oturtan (ölçek, kaydırma) — kanıt: `cargo test align` (örtüşme eğrisi kaba kuvvetle birebir; etiketli sette fps hep doğru, kaydırma ≤100 ms)
+- [x] **SS-013** Kabul testi (baş / orta / son aynı kaydırmada tutmalı) + sentetik etiketli test seti; yanlış kabul yok — kanıt: `labeled_set_has_no_false_accepts` (8 tohum × 11 durum; 40/40 pozitif kabul, 48/48 negatif ret)
+- [ ] **SS-014** Gerçek etiketli set: M2 cetvelleri + M3 adaylarıyla eşikleri ayarla (gerçek dosyalar elle etiketlenir) — kanıt: `docs/spikes/m4-align.md` tablosu
+
 ## Devam notları (2026-10-27, akşam)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
@@ -34,6 +44,9 @@ Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
   `docs/spikes/m2-ruler.md` tablosuna işlenecek. `with_duration` ≈ `cue_refs`
   ise cetvel ek okuma olmadan Cues'tan çıkıyor (SS-009 evet). Değilse süreler
   bloklardan okunmalı; plan değişir, önce ölçüm notuna yaz.
+- **M4 çekirdeği hazır** (`src/align.rs`, sentetik set `src/synth.rs`).
+  Henüz route'a bağlı değil (M5). Eşikler sentetik; gerçek ayar SS-014'te,
+  M2 ölçümü ve M3 adayları gelince.
 - **Sunucuyu başlatma (aynı terminal sekmesinde ortam hazırsa):**
   `SUBSYNC_RANGE_PROBE=1 cargo run`. Ortam kaybolduysa (yeni sekme) tek komut:
   `read` ile AIOStreams linkini sorar, yeni token üretir, kurulum linkini

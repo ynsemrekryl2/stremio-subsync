@@ -1,0 +1,90 @@
+# M4 — Hizalama çekirdeği: kendimiz mi, `alass-core` mu?
+
+Soru (SS-011): Aday altyazıyı cetvele oturtan çekirdeği kendimiz mi yazalım,
+yoksa `alass-core` 2.0.0'ı (GPL-3.0) mı kullanalım?
+
+## Bizim çekirdek (`src/align.rs`)
+
+1. **Arama:** Her fps adayı için (1, 25↔23.976, 24↔23.976, 25↔24) aday
+   satırlar ölçeklenir. 10 ms ızgarada ±10 dk kaydırma boyunca toplam örtüşme
+   tam olarak hesaplanır: bir satır çiftinin örtüşmesi kaydırmanın yamuk
+   biçimli bir fonksiyonu olduğu için çift başına dört eğim değişimi ve iki
+   kümülatif toplam yeterli. FFT yok, bağımlılık yok.
+2. **İnce ayar:** En iyi (ölçek, kaydırma) bulunduktan sonra, cetvel satırına
+   300 ms içinde başlayan aday satırların başlangıç farklarının ortancası
+   kaydırmaya eklenir (1 ms çözünürlük).
+3. **Kabul testi:** Cetvel süresi baş / orta / son diye üçe bölünür. Her
+   pencere için:
+   - en az 20 cetvel satırı (`ThinWindow`),
+   - pencerenin kendi en iyi kaydırması (global ±60 sn içinde aranır)
+     globalden en fazla 300 ms uzakta (`Disagree`),
+   - cetvel satırlarının en az %50'si 300 ms içinde bir aday satırla
+     karşılanıyor (`LowHits`).
+   Biri tutmazsa altyazı sunulmaz.
+
+Eşikler sentetik veriyle seçildi; gerçek dosyalarla SS-014'te ayarlanacak.
+
+## Sentetik etiketli set (`src/synth.rs`)
+
+Tohum başına bir film (85–130 dk konuşma izi, ara sıra 30–150 sn sessiz
+sahne). Cetvel: ±40 ms oynama. Aday: ±150 ms oynama, %8 eksik satır, %5 ses
+efekti satırı, %12 birleştirme.
+
+| Durum | Etiket | Nasıl üretildi |
+|---|---|---|
+| `same`, `shifted` | kabul | aynı zamanlama / ±90 sn kaydırma |
+| `pal-fast`, `pal-slow`, `ntsc24` | kabul | fps farkı + ±30 sn kaydırma |
+| `other-film` | ret | başka bir filmin konuşma izi |
+| `other-cut` | ret | ortadaki %25–75'lik bölümde yalnız adayda olan 20–90 sn'lik sahne |
+| `partial` | ret | aday filmin yalnız ilk %45'ini kapsıyor |
+| `drift` | ret | listede olmayan 1.003 ölçek (2 saatte ~20 sn kayma) |
+| `scrambled` | ret | her satır ±2.5 sn rastgele kaymış |
+| `forced-ruler` | ret | cetvel yalnız ~30 satırlık zorunlu iz |
+
+## Karşılaştırma (2026-10-27)
+
+20 tohum × 11 durum = 220 hizalama, `--release`, Apple Silicon. `alass-core`
+tarafı: `align_nosplit` + `overlap_scoring`, aynı 7 fps adayıyla (alass-cli'nin
+fps yöntemi); bölmeli mod ayrıca `align(…, 7.0, Some(3.0), standard_scoring)`.
+Betik repoda değil (geçici bir crate, `#[path]` ile aynı modülleri kullandı).
+
+| Durum | Bizim kabul | Bizim fps doğru | Bizim hata (ortanca) | alass fps doğru | alass hata (ortanca) | alass bölmeli: farklı kaydırma sayısı (ortanca) |
+|---|---|---|---|---|---|---|
+| same | 20/20 | 20/20 | 4 ms | 20/20 | 3 ms | 1 |
+| shifted | 20/20 | 20/20 | 3 ms | 20/20 | 3 ms | 1 |
+| pal-fast | 20/20 | 20/20 | 3 ms | 20/20 | 3 ms | 11 |
+| pal-slow | 20/20 | 20/20 | 3 ms | 20/20 | 3 ms | 9 |
+| ntsc24 | 20/20 | 20/20 | 3 ms | 20/20 | 4 ms | 7 |
+| other-film | 0/20 | — | — | — | — | 6 |
+| other-cut | 0/20 | — | — | — | — | 2 |
+| partial | 0/20 | — | — | — | — | 1 |
+| drift | 0/20 | — | — | — | — | 16 |
+| scrambled | 0/20 | — | — | — | — | 1 |
+| forced-ruler | 0/20 | — | — | — | — | 31 |
+
+| | ms / hizalama |
+|---|---|
+| Bizim (7 fps adayı + kabul testi) | 3.4 |
+| alass `align_nosplit` (7 fps adayı, kabul testi yok) | 90.9 |
+| alass bölmeli (tek ölçek) | 107.1 |
+
+## Sonuç
+
+- Doğruluk aynı: iki taraf da her pozitif durumda fps'i doğru buldu, kaydırma
+  hatası ortanca 3–4 ms.
+- Bizimki ~27 kat hızlı ve kabul testini de içeriyor. `alass-core` ret kararı
+  vermiyor; bölmeli modu başka bir filme ya da kaymaya bile birkaç parçalı bir
+  "çözüm" üretiyor. Kabul testini yine kendimiz yazmamız gerekirdi.
+- `alass-core` GPL-3.0; bağımlılık olarak eklemek binary'yi GPL yapar.
+- `alass`'ın tek artısı: farklı kurgu (`other-cut`) dosyalarını bölmeli modla
+  düzeltebilmesi (ortanca 2 kaydırma). Bunu şimdilik reddediyoruz; ileride
+  istenirse M6 adayı.
+
+**Karar:** Çekirdek bizim. `docs/decisions.md`'ye yazıldı.
+
+## Açık
+
+- Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
+  negatiflerde en çok %16 (tek pencerede değil, genelde). Gerçek altyazılar
+  arasındaki farklar (satır bölme, SDH, farklı zamanlama alışkanlıkları) bu
+  oranları düşürür. Eşikler SS-014'te gerçek etiketli setle ayarlanacak.
