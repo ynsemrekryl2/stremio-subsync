@@ -15,3 +15,25 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
 
 > M1 sonucu planı değiştirebilir. M2+ işleri keşif bittikten sonra açılır.
+
+## Devam notları (2026-10-27)
+
+Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
+
+- **Geçici yayın:** Sunucu Mac'te `cargo run` ile, dışarıya **Tailscale Funnel**
+  (443 → `127.0.0.1:7000`) ile açılıyor. Add-on masaüstü Stremio'ya Funnel
+  adresiyle kurulu, hesap üzerinden TV'lere geçiyor. Token yalnız açık terminal
+  sekmesinin ortamında; sekme kapanırsa yeni token üretilir ve add-on yeniden
+  kurulur. Funnel'ı kapatmak: `tailscale funnel --https=443 off`.
+- **SS-003:** Kalan tek ölçüm Apple TV (Stremio Lite). Sunucu + Funnel açıkken
+  film aç, terminaldeki `subtitles request` satırını K1 notuna ekle.
+- **SS-004 (K2) yaklaşımı:** AIOStreams manifest linki ortam değişkeniyle
+  verilir, asla loglanmaz. İlk aşamada yalnız stream listesi okunur; stream
+  URL'lerine istek atılmaz, çünkü TorBox'ta indirme başlatabilir. URL çağırma
+  ayrı ve kullanıcı onayıyla denenir.
+- **SS-005 (K3) riski:** Range okumaları VPS'in IP'sinden, oynatma evin
+  IP'sinden yapılacak. Real-Debrid aynı linkin farklı IP'lerden kullanılmasını
+  ya da veri merkezi IP'lerini kısıtlayabilir; K3'te ayrıca bakılmalı.
+- **SS-006:** Oracle Always Free ARM'de kapasite yoktu. Seçenekler:
+  Pay-As-You-Go'ya yükseltmek (ücretsiz sınırda para çıkmaz) ya da Hetzner
+  CAX11 (~4 €/ay). Script'ler `deploy/`, adımlar `docs/deploy.md`.
