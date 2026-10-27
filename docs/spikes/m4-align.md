@@ -202,6 +202,25 @@ yanlış eşleşme bir satırı fırlatamaz; 0.7 sn'den büyük yerel kayma
 izlenemez. Sentetik testte 0.02%'lik kayma (100 dk'da 1.2 sn) ortanca
 120 ms'nin altına iniyor.
 
+**Yerel senkron sonucu (2026-10-28):** Kullanıcı ne reddedilen ne kabul
+edilen adaylarda yerel sürümle fark gördü. `calibrate` artık yerel
+senkronun satırları ne kadar kaydırdığını da basıyor:
+
+| Dump / aday | Satırların kayan payı | Ortanca kayma | En büyük |
+|---|---|---|---|
+| …5228 / 0–2 (senkron, kabul) | %99 | 33 ms | 103 ms |
+| …5984 / 0 (kayan, ret) | %99 | 165 ms | 517 ms |
+
+- İyi altyazıyı bozmuyor (≤0.1 sn), ama kayan altyazıda da değişiklik
+  0.05–0.28 sn; algı sınırında.
+- Yön ters: …5984'te yerel senkron satırları **daha erkene** (−50…−280 ms)
+  çekiyor; kullanıcı ise altyazıyı zaten erken görüyor. Türkçe satırlar
+  İngilizce izden ~0.1–0.3 sn sonra başlıyor, demek ki bu dosyada **İngilizce
+  iz sesten erken**. Cetvelin kendi hatası, ulaşılabilecek kesinliğin
+  sınırı; ses kullanmadan bunu düzeltemeyiz.
+- Karar: yerel senkron teslimde kullanılmayacak; yalnız etiketleme modunda
+  kalıyor (SS-021).
+
 Etiket sözlüğü: **senkron** (baştan sona tutuyor) · **kaymış** (sabit bir
 gecikme var) · **kayıyor** (zamanla açılıyor) · **yanlış** (başka sürüm/kurgu,
 yer yer tutmuyor).

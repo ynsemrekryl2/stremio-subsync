@@ -102,6 +102,23 @@ pub fn write(dir: &Path, dump: &Dump) -> std::io::Result<String> {
     Ok(name)
 }
 
+/// How far local sync (SS-021) moves lines: share moved at all, and the
+/// median and largest move.
+fn local_summary(ruler: &[Event], candidate: &[Event], fix: align::Fix) -> String {
+    let mut moves: Vec<i64> = align::local_shifts(ruler, candidate, fix)
+        .into_iter()
+        .map(i64::abs)
+        .collect();
+    moves.sort_unstable();
+    let moved = moves.iter().filter(|&&m| m > 0).count();
+    format!(
+        "[moved {}% median {}ms max {}ms]",
+        100 * moved / moves.len().max(1),
+        moves.get(moves.len() / 2).copied().unwrap_or(0),
+        moves.last().copied().unwrap_or(0)
+    )
+}
+
 /// One trial as a single readable line.
 pub fn trial_line(name: &str, dump: &Dump, trial: &Trial) -> String {
     let ruler_lines = dump
@@ -145,6 +162,16 @@ pub fn trial_line(name: &str, dump: &Dump, trial: &Trial) -> String {
             );
         }
         line.push(']');
+        if let (Some(ruler), Some(candidate)) = (
+            dump.rulers.iter().find(|r| r.track == trial.track),
+            candidate,
+        ) {
+            let _ = write!(
+                line,
+                " local={}",
+                local_summary(&events(&ruler.events), &events(&candidate.events), fix)
+            );
+        }
     }
     if let Some(reject) = verdict.reject {
         let _ = write!(line, " reason={reject:?}");
