@@ -23,6 +23,16 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
 - [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
 
+## M3 — Kaynaklar
+
+Hedef dil `SUBSYNC_LANG` (ISO 639-2, varsayılan `tur`). Testler fake ile;
+gerçek servis yalnız elle açılan probe'da çağrılır.
+
+- [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
+- [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
+- [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca)
+- [x] **SS-018** Adayları dosya adına benzerliğe göre sırala (sürüm grubu, kaynak, çözünürlük; CAM/TS en sona) — kanıt: `cargo test rank` + gerçek denemede aynı sürüm 165 puanla başta
+
 ## M4 — Hizalama
 
 Girdi iki zaman listesi: cetvel olayları (M2) ve aday altyazının satırları.
@@ -44,6 +54,10 @@ Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
   `docs/spikes/m2-ruler.md` tablosuna işlenecek. `with_duration` ≈ `cue_refs`
   ise cetvel ek okuma olmadan Cues'tan çıkıyor (SS-009 evet). Değilse süreler
   bloklardan okunmalı; plan değişir, önce ölçüm notuna yaz.
+- **M3 probe:** `SUBSYNC_SOURCES_PROBE=1` ile her istekte OpenSubtitles v3
+  (+ `SUBDL_API_KEY` varsa SubDL) aranır, en iyi 3 aday indirilir;
+  `m3 probe` satırı yalnız sayı/puan taşır. AIOStreams'ten bağımsız çalışır.
+  SubDL anahtarı henüz yok (SS-017).
 - **M4 çekirdeği hazır** (`src/align.rs`, sentetik set `src/synth.rs`).
   Henüz route'a bağlı değil (M5). Eşikler sentetik; gerçek ayar SS-014'te,
   M2 ölçümü ve M3 adayları gelince.
