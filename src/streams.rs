@@ -189,7 +189,7 @@ pub async fn probe(
 pub enum ManifestUrlError {
     Empty,
     ControlChars,
-    InnerSpace,
+    ManyLinks,
     NotAUrl,
     Scheme,
     NotManifest,
@@ -201,7 +201,7 @@ impl std::fmt::Display for ManifestUrlError {
         f.write_str(match self {
             Self::Empty => "empty",
             Self::ControlChars => "contains control characters (paste it again, or type it)",
-            Self::InnerSpace => "contains spaces or line breaks inside",
+            Self::ManyLinks => "contains more than one manifest.json link",
             Self::NotAUrl => "not a URL (check for missing characters or extra text)",
             Self::Scheme => "must start with https://, http:// or stremio://",
             Self::NotManifest => "path must end in manifest.json",
@@ -211,26 +211,34 @@ impl std::fmt::Display for ManifestUrlError {
 }
 
 /// Undoes what copying and pasting tends to add: terminal paste markers,
-/// surrounding quotes or angle brackets, and a `stremio://` or missing scheme.
+/// surrounding quotes or angle brackets, text around the link, a link broken
+/// by spaces, and a `stremio://` or missing scheme.
 fn clean_link(raw: &str) -> Result<String, ManifestUrlError> {
     let raw = raw.replace("\u{1b}[200~", "").replace("\u{1b}[201~", "");
-    let link = raw
-        .trim()
-        .trim_matches(|c| matches!(c, '"' | '\'' | '<' | '>'))
-        .trim();
+    let strip = |s: &str| {
+        s.trim_matches(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
+            .to_owned()
+    };
+    // A URL never holds raw whitespace, so any found is from copying.
+    let candidates: Vec<&str> = raw
+        .split_whitespace()
+        .filter(|part| part.contains("manifest.json"))
+        .collect();
+    let link = match candidates.as_slice() {
+        [one] if one.contains("://") => strip(one),
+        [] | [_] => strip(&raw.split_whitespace().collect::<String>()),
+        _ => return Err(ManifestUrlError::ManyLinks),
+    };
     if link.is_empty() {
         return Err(ManifestUrlError::Empty);
     }
     if link.chars().any(char::is_control) {
         return Err(ManifestUrlError::ControlChars);
     }
-    if link.chars().any(char::is_whitespace) {
-        return Err(ManifestUrlError::InnerSpace);
-    }
     Ok(match link.strip_prefix("stremio://") {
         Some(rest) => format!("https://{rest}"),
         None if !link.contains("://") => format!("https://{link}"),
-        None => link.to_owned(),
+        None => link,
     })
 }
 
@@ -422,6 +430,9 @@ mod tests {
             "\"https://aio.test/stremio/u/secret/manifest.json\"",
             "<https://aio.test/stremio/u/secret/manifest.json>",
             "aio.test/stremio/u/secret/manifest.json",
+            "Manifest URL: https://aio.test/stremio/u/secret/manifest.json (copied)",
+            "https://aio.test/stremio/u/se cret/manifest.json",
+            "\thttps://aio.test/stremio/u/secret/manifest.json\t",
         ] {
             let source = AioStreams::from_manifest_url(raw).unwrap();
             assert_eq!(
@@ -441,8 +452,8 @@ mod tests {
             Some(ManifestUrlError::ControlChars)
         );
         assert_eq!(
-            reason("https://a.test/x y/manifest.json"),
-            Some(ManifestUrlError::InnerSpace)
+            reason("https://a.test/manifest.json https://b.test/manifest.json"),
+            Some(ManifestUrlError::ManyLinks)
         );
         assert_eq!(
             reason("https://[bad/manifest.json"),
