@@ -72,7 +72,7 @@ kapsamında sürer.
 
 ## Bakım
 
-- [~] **SS-027** Dalları `main` üzerinde birleştir; M5 menü/hata önbelleğini ve blok probe'unu birlikte koru. Paralel M2/M3 ölçümlerini aktar, eski numaraları eşle, yinelenen devam notlarını düzelt, yerel cache/dump verisini koru ve eski worktree/dalları kapat — kanıt: `docs/history/branch-consolidation.md`, birleşik testler ve `git worktree list`.
+- [x] **SS-027** Dallar `main` üzerinde birleştirildi; M5 menü/hata önbelleği ve blok probe'u birlikte korundu. Paralel M2/M3 ölçümleri aktarıldı, numaralar tekilleştirildi, eski devam notları düzeltildi. Altı eski dal `codex/archive/` altında; açık Claude süreçleri kullandığı için worktree dizinleri korundu. 7 cache + 14 dump dosyası yedeklendi — kanıt: `docs/history/branch-consolidation.md`, 95 geçen test, temiz format/Clippy ve tüm arşiv uçlarının `main` atası olması.
 
 ## Devam notları (2026-10-27, dallar birleştirildi)
 

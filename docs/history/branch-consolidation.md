@@ -21,8 +21,11 @@ bu toparlama oturumu yeni kaynak davranışı veya eşik değişikliği yapmadı
 CD parçalarını isimden peşinen eleme yerine mevcut hizalamanın kapsama
 kontrolü korunur; parçaları birleştirme SS-019 olarak açıktır.
 İki eski paralel dalın yararlı kayıtları aktarıldıktan sonra eski kodları
-yerine geçerli ağaç korunarak merge ataları kaydedilir (`ours` stratejisi).
+yerine geçerli ağaç korunarak merge ataları kaydedildi (`ours` stratejisi).
 Böylece eski commit'lere erişim kaybolmaz, bu kodlar tekrar merge adayı olmaz.
+
+Birleşik kod ve numara düzenlemesi `cab3be6` commit'indedir. Eski
+prototiplerin atalarını kaydeden sonraki merge de `main` üzerindedir.
 
 ## Tekil iş numaraları
 
@@ -45,7 +48,7 @@ iş satırında tanımlanır. Yeni numara SS-029'dan başlar.
 
 ## Eski worktree'ler ve yerel veriler
 
-Altı eski dal `codex/archive/<eski-dalın-son-parçası>` adına taşınır.
+Altı eski dal `codex/archive/<eski-dalın-son-parçası>` adına taşındı.
 Kaynak commit'leri `main` geçmişinde de korunur. Yeni geliştirme kökteki
 `main` üzerinde yapılır.
 
