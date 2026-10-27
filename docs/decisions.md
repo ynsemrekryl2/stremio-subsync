@@ -9,6 +9,7 @@
 | 2026-10-27 | **Cetvel = dosyanın gömülü İngilizce metin altyazısı**; ses kullanılmaz | Aynı dosyadan geldiği için en güvenilir referans; okuması ucuz. Gömülü İngilizce yoksa senkronlu altyazı üretilmez. |
 | 2026-10-27 | Önce yalnız **MKV**, Cues üzerinden hedefli Range okuma | Debrid sürümlerinin büyük kısmı MKV. Tüm dosyayı taramak bütçe dışı. K3 ile doğrulanacak. |
 | 2026-10-27 | Testi geçmeyen altyazı **sunulmaz** | Yanlış senkronlu altyazı, hiç altyazı olmamasından kötü. "Doğrulanmamış" iz ileride açıkça işaretli bir seçenek olabilir. |
+| 2026-10-27 | İlk sunucu **Oracle Cloud Always Free** ARM, HTTPS için **Caddy**, uygulama systemd servisi | Maliyet sıfır. Caddy sertifikayı kendisi alır. Erişim logu kapalı, çünkü URI token'ı taşır. Oracle boştaki sunucuyu geri alırsa Pay-As-You-Go'ya ya da Hetzner'e (~4 €/ay) geçilir. |
 
 ## Açık
 

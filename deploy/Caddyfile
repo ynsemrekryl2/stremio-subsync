@@ -1,0 +1,11 @@
+{
+	# Request URIs carry the install token. Access logs stay off (no `log`
+	# directive below) and the error loggers, which print the URI, are dropped.
+	log default {
+		exclude http.log.error http.handlers.reverse_proxy
+	}
+}
+
+SUBSYNC_DOMAIN {
+	reverse_proxy 127.0.0.1:7000
+}

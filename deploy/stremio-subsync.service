@@ -1,0 +1,29 @@
+[Unit]
+Description=stremio-subsync Stremio subtitle add-on
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Holds SUBSYNC_TOKEN (root-only, 0600). Never copy it into this unit.
+EnvironmentFile=/etc/stremio-subsync.env
+ExecStart=/usr/local/bin/stremio-subsync
+# The server shuts down gracefully on Ctrl-C only.
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=2
+
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

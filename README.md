@@ -32,6 +32,8 @@ http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_TOKEN` | — (zorunlu) | Kurulum linkindeki gizli parça. Linki bilen sunucuyu kullanır. |
 | `SUBSYNC_BIND` | `127.0.0.1:7000` | Dinlenen adres. VPS'te HTTPS reverse proxy'nin arkasında kalır. |
 
+Sunucu kurulumu: [`docs/deploy.md`](docs/deploy.md)
+
 ## Test
 
 ```bash
