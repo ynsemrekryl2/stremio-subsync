@@ -23,10 +23,23 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
 - [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
 
+## M3 — Kaynaklar
+
+- [x] **SS-011** OpenSubtitles v3 yanıt biçimini ölç (liste alanları, indirme kodlaması, dizi bölümü) — kanıt: `docs/spikes/m3-sources.md`
+- [x] **SS-012** OpenSubtitles v3 istemcisi: IMDb id (+ sezon/bölüm) ve dil için liste, boyut sınırlı indirme — kanıt: `src/sources.rs` testleri (fake)
+- [x] **SS-013** Aday sıralama: sürüm adını oynatılan dosya adıyla karşılaştır; çok parçalı (CD1/CD2) adayları ele — kanıt: `src/rank.rs` testleri
+- [x] **SS-014** SRT zamanlarını oku (metin tutulmaz), cetvel `Event` biçiminde — kanıt: `src/srt.rs` testleri
+- [ ] **SS-015** SubDL istemcisi (ücretsiz anahtar, zip indirme). Kullanıcı anahtarı sonra alacak — kanıt: testler + anahtarla gerçek deneme notu
+- [x] **SS-016** Aday toplama probe'u (`SUBSYNC_SOURCES_PROBE=1`): liste → sırala → ilk N'i indir → SRT olay sayısı; yalnız sayılar loglanır — kanıt: `docs/spikes/m3-sources.md` (6/6 başlıkta Türkçe aday, 15/15 indirme SRT olarak okundu)
+
 ## Devam notları (2026-10-27, akşam)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
+- **M3 (OpenSubtitles v3) bitti** (SS-011…SS-016). Açık kalan: SS-015 SubDL
+  (anahtar gelince). Sunucuda `SUBSYNC_SOURCES_PROBE=1` aday toplamayı açar;
+  dil `SUBSYNC_LANGUAGES` (varsayılan `tur`). M3 ile M2 cetveli henüz
+  birleşmedi; birleşme M4'ün işi.
 - **Şu an sırada: SS-009 / SS-010 ölçümü.** Kod hazır (`src/ruler.rs`,
   `src/mkv.rs`). Kullanıcı sunucuyu `SUBSYNC_RANGE_PROBE=1 cargo run` ile
   başlatıp İngilizce SRT/ASS izli 5–6 dosya açacak; `k2 probe` satırlarındaki

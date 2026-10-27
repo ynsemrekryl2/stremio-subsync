@@ -12,6 +12,7 @@
 | 2026-10-27 | İlk sunucu **Oracle Cloud Always Free** ARM, HTTPS için **Caddy**, uygulama systemd servisi | Maliyet sıfır. Caddy sertifikayı kendisi alır. Erişim logu kapalı, çünkü URI token'ı taşır. Oracle boştaki sunucuyu geri alırsa Pay-As-You-Go'ya ya da Hetzner'e (~4 €/ay) geçilir. |
 | 2026-10-27 | K2/K3 ölçümleri şimdilik **yalnız Real-Debrid** ile yapılır | TorBox aboneliği bitti. Probe debrid'den bağımsız; TorBox gelince aynı adımlar tekrarlanır (SS-007). TorBox'a özgü davranış (URL çağrısının indirme başlatması) o zamana kadar varsayım olarak kalır. |
 | 2026-10-27 | Cetvel, **Cues'taki altyazı konumlarından** hedefli okunur; altyazısı Cues'ta olmayan dosyalar şimdilik desteklenmez | K3: Real-Debrid'deki 12 MKV'nin 11'inde İngilizce metin izi indekslenmiş; Cues 18–855 KB, 1–2 istek. İndekslenmemiş dosya için küme taraması pahalı; gerekirse M6'da yeniden düşünülür. |
+| 2026-10-27 | Aday altyazılar önce yalnız **OpenSubtitles v3** (anahtarsız) ile, varsayılan dil **Türkçe** | v3 sürüm adı, fps ve UTF-8'e çevrilmiş SRT veriyor; 6 denemede 6'sında Türkçe aday çıktı (`docs/spikes/m3-sources.md`). SubDL anahtar alınınca ikinci kaynak olarak eklenir (SS-015). |
 
 ## Açık
 
