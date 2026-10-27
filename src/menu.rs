@@ -28,8 +28,10 @@ pub const KEEP_PASSING_S: u64 = 60;
 /// viewer is not left waiting for nothing; the entry's "subtitle" explains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
-    /// The file has no English text subtitle to align against.
+    /// The file has no English subtitle to align against.
     NoEnglishTrack,
+    /// It has one, but as images (PGS), not text.
+    ImageOnly,
     /// It has one, but Cues do not index it; reading it means the whole file.
     NotIndexed,
     /// The played file was not found in the stream list.
@@ -47,42 +49,48 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// Menu name (short: Stremio's menu cuts long names) and explanation.
     fn text(self) -> (&'static str, &'static str) {
         match self {
             Self::NoEnglishTrack => (
-                "SubSync: İngilizce iz yok",
-                "Bu dosyada İngilizce metin altyazısı yok, senkron için cetvel bulunamadı. \
-                 Başka bir sürüm (BluRay, WEB-DL) deneyin.",
+                "⚠ İng. iz yok",
+                "SubSync: Bu dosyada İngilizce altyazı yok, senkron için cetvel \
+                 bulunamadı. Başka bir sürüm (BluRay, WEB-DL) deneyin.",
+            ),
+            Self::ImageOnly => (
+                "⚠ İng. resim",
+                "SubSync: Bu dosyanın İngilizce altyazısı resim biçiminde (PGS); \
+                 metin olmadığı için cetvel olarak kullanılamıyor. Başka bir sürüm deneyin.",
             ),
             Self::NotIndexed => (
-                "SubSync: iz okunamıyor",
-                "Bu dosyanın İngilizce altyazısı dizinlenmemiş; okumak için dosyanın \
-                 tamamı gerekir. Başka bir sürüm deneyin.",
+                "⚠ İz okunmuyor",
+                "SubSync: Bu dosyanın İngilizce altyazısı dizinlenmemiş; okumak için \
+                 dosyanın tamamı gerekir. Başka bir sürüm deneyin.",
             ),
             Self::NoStreamMatch => (
-                "SubSync: dosya bulunamadı",
-                "Oynatılan dosya AIOStreams listesinde bulunamadı.",
+                "⚠ Dosya yok",
+                "SubSync: Oynatılan dosya AIOStreams listesinde bulunamadı.",
             ),
             Self::NoCandidates => (
-                "SubSync: aday altyazı yok",
-                "Bu yapım için aranan dilde altyazı bulunamadı.",
+                "⚠ Aday yok",
+                "SubSync: Bu yapım için aranan dilde altyazı bulunamadı.",
             ),
             Self::NoneAccepted => (
-                "SubSync: uyan altyazı yok",
-                "Bulunan altyazıların hiçbiri bu dosyaya baştan sona oturmadı.",
+                "⚠ Uyan yok",
+                "SubSync: Bulunan altyazıların hiçbiri bu dosyaya baştan sona oturmadı.",
             ),
             Self::NotMkv => (
-                "SubSync: MKV değil",
-                "Dosya MKV değil ya da debrid servisi henüz hazırlamadı. \
+                "⚠ MKV değil",
+                "SubSync: Dosya MKV değil ya da debrid servisi henüz hazırlamadı. \
                  Hazırsa videoyu biraz sonra yeniden açın.",
             ),
             Self::Failed => (
-                "SubSync: geçici hata",
-                "Bir kaynağa ulaşılamadı. Videoyu biraz sonra yeniden açın.",
+                "⚠ Geçici hata",
+                "SubSync: Bir kaynağa ulaşılamadı. Videoyu biraz sonra yeniden açın.",
             ),
             Self::NotReady => (
-                "SubSync: hazırlanıyor",
-                "Altyazı hâlâ hazırlanıyor. Videoyu birkaç saniye sonra yeniden açın.",
+                "⚠ Hazırlanıyor",
+                "SubSync: Altyazı hâlâ hazırlanıyor. Videoyu birkaç saniye sonra yeniden açın.",
             ),
         }
     }
@@ -123,22 +131,22 @@ impl std::fmt::Debug for MenuEntry {
     }
 }
 
-/// Accepted candidates on `track`, best hit rate first, each moved by its
-/// fix. Copies of one translation (same lines, other release) count once.
-pub fn accepted(
-    trials: &[Trial],
-    track: u64,
-    cues: &[Option<Vec<Cue>>],
-    lang: &str,
-) -> Vec<MenuEntry> {
-    let mut chosen: Vec<&Trial> = trials
-        .iter()
-        .filter(|t| t.track == track && t.accepted)
-        .collect();
+/// Candidates accepted against any of the file's English tracks, best hit
+/// rate first, each moved by the fix of its best trial. Copies of one
+/// translation (same lines, other release) count once.
+///
+/// Any track will do: a file's second English track (often SDH) can trip a
+/// window check the other one passes.
+pub fn accepted(trials: &[Trial], cues: &[Option<Vec<Cue>>], lang: &str) -> Vec<MenuEntry> {
+    let mut chosen: Vec<&Trial> = trials.iter().filter(|t| t.accepted).collect();
     chosen.sort_by(|a, b| b.verdict.hit_rate.total_cmp(&a.verdict.hit_rate));
     let mut seen = std::collections::HashSet::new();
+    let mut taken = std::collections::HashSet::new();
     let mut out = Vec::new();
     for trial in chosen {
+        if !taken.insert(trial.candidate) {
+            continue;
+        }
         let (Some(cues), Some(fix)) = (
             cues.get(trial.candidate).and_then(Option::as_ref),
             trial.verdict.fix,
@@ -345,10 +353,12 @@ mod tests {
             cues(&["a", "b"]),
             cues(&["z"]),
         ];
-        let offered = accepted(&trials, 5, &all, "tur");
+        let offered = accepted(&trials, &all, "tur");
         assert_eq!(
             offered.iter().map(|e| e.srt.as_str()).collect::<Vec<_>>(),
             vec![
+                // Accepted only against the other track, still offered.
+                "1\n00:00:01,000 --> 00:00:01,500\nz\n\n",
                 "1\n00:00:02,000 --> 00:00:02,500\nc\n\n",
                 "1\n00:00:00,500 --> 00:00:01,000\na\n\n2\n00:00:01,500 --> 00:00:02,000\nb\n\n",
             ]
@@ -432,11 +442,29 @@ mod tests {
     #[test]
     fn notice_entry_names_the_reason_and_explains() {
         let entry = Notice::NoEnglishTrack.entry();
-        assert_eq!(entry.lang, "SubSync: İngilizce iz yok");
+        assert_eq!(entry.lang, "⚠ İng. iz yok");
         let cues = srt::parse(&entry.srt);
         assert_eq!(cues.len(), 1);
         assert_eq!((cues[0].start_ms, cues[0].end_ms), (1_000, 10_000));
-        assert!(cues[0].text.contains("İngilizce metin altyazısı yok"));
+        assert!(
+            cues[0]
+                .text
+                .starts_with("SubSync: Bu dosyada İngilizce altyazı yok")
+        );
+        // Short enough for Stremio's menu.
+        for notice in [
+            Notice::NoEnglishTrack,
+            Notice::ImageOnly,
+            Notice::NotIndexed,
+            Notice::NoStreamMatch,
+            Notice::NoCandidates,
+            Notice::NoneAccepted,
+            Notice::NotMkv,
+            Notice::Failed,
+            Notice::NotReady,
+        ] {
+            assert!(notice.entry().lang.chars().count() <= 14, "{notice:?}");
+        }
         assert_eq!(Notice::NotReady.keep_s(), KEEP_PASSING_S);
         assert_eq!(Notice::NoneAccepted.keep_s(), KEEP_NONE_S);
     }

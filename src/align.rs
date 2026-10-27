@@ -24,6 +24,10 @@ const HIT_MS: i64 = 300;
 /// side with fewer lines: a translation that joins two lines into one can
 /// hit at most one of the pair.
 const MIN_HIT_RATE: f64 = 0.5;
+/// A window this well hit at the global fix agrees with it whatever its own
+/// overlap peak says: long lines (SDH "[music]", signs) can pull that peak
+/// a minute off while nearly every line start still lines up.
+const STRONG_HIT_RATE: f64 = 0.8;
 /// Candidate lines each window must have, as a share of its ruler lines.
 /// Keeps a half subtitle (CD1 of two) from passing on its few last lines.
 const MIN_COVERAGE: f64 = 0.4;
@@ -193,7 +197,9 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
             Some(Reject::ThinWindow(w))
         } else if coverage < MIN_COVERAGE {
             Some(Reject::Sparse(w))
-        } else if best_shift_ms.is_none_or(|s| (s - fix.shift_ms).abs() > AGREE_MS) {
+        } else if best_shift_ms.is_none_or(|s| (s - fix.shift_ms).abs() > AGREE_MS)
+            && hit_rate < STRONG_HIT_RATE
+        {
             Some(Reject::Disagree(w))
         } else if hit_rate < MIN_HIT_RATE {
             Some(Reject::LowHits(w))

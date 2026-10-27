@@ -177,6 +177,22 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
   gelmiyor. Eşikleri gevşetmek için daha çok etiket gerekli, özellikle
   isabeti %35–55 olan adaylar.
 
+### Teslim sırasında bulunanlar (2026-10-28)
+
+- **Yanlış ret, iki İngilizce izli bölüm (…441642):** Aday iz 3'e karşı %99
+  isabetle kabul, iz 4'e (SDH, 569 satır) karşı reddedildi: baş penceresinin
+  örtüşme tepesi −57.8 sn'ye kaçmış, oysa o pencerede isabet %98. Menü yalnız
+  ilk ize bakıyordu, "uyan yok" yazdı. Düzeltmeler:
+  - Menü, herhangi bir İngilizce ize karşı kabul edilen adayı sunar.
+  - Pencere, global fix'te isabeti ≥ %80 ise kendi örtüşme tepesi nerede
+    olursa olsun "uyuyor" sayılır (`STRONG_HIT_RATE`). Uzun SDH satırları
+    tepeyi bir dakika kaydırabiliyor.
+  - Etkisi: tüm dump'larda yalnız bu deneme ret → kabul oldu; sentetik
+    negatiflerin hepsi hâlâ ret, etiketli ret (…5984) hâlâ ret.
+- **İngilizce altyazısı PGS olan film:** "İngilizce iz yok" demek yanıltıcıydı
+  (Stremio İngilizce altyazıyı gösteriyor). Ayrı neden: "⚠ İng. resim".
+  PGS'ten cetvel çıkarma fikri SS-025.
+
 ### Kalibrasyon düzeni
 
 `SUBSYNC_DUMP_DIR=dumps` ile her hizalanan istek `dumps/<unix ms>.json`

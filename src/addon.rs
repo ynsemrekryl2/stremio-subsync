@@ -410,6 +410,7 @@ fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>
         (_, Some(mkv)) => match *mkv {
             Ok(report) if !report.rulers.0.is_empty() => Ok(report.rulers.0),
             Ok(report) if report.english_text_indexed == Some(false) => Err(Notice::NotIndexed),
+            Ok(report) if report.subtitles.iter().any(|s| s.english) => Err(Notice::ImageOnly),
             Ok(_) => Err(Notice::NoEnglishTrack),
             Err(_) => Err(Notice::Failed),
         },
@@ -506,7 +507,7 @@ async fn build_menu(
         let entries = if label_mode {
             label::build(&trials, (*track, events), &cues, dump_name.as_deref())
         } else {
-            menu::accepted(&trials, *track, &cues, &lang)
+            menu::accepted(&trials, &cues, &lang)
         };
         (trials, entries)
     })
@@ -670,7 +671,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         let list: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(list["subtitles"][0]["lang"], "SubSync: dosya bulunamadı");
+        assert_eq!(list["subtitles"][0]["lang"], "⚠ Dosya yok");
         let path = list["subtitles"][0]["url"]
             .as_str()
             .unwrap()
