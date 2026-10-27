@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
+use crate::align;
 use crate::extra::PlaybackHints;
 use crate::range::RangeReader;
 use crate::sources::{self, Query, SubtitleSource};
@@ -174,27 +175,49 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
-    if !state.subtitle_sources.is_empty()
-        && let Some(query) = Query::new(kind, id, &state.lang)
-    {
-        let sources = state.subtitle_sources.clone();
-        let filename = hints.filename.clone();
-        tokio::spawn(async move {
-            let outcome = sources::probe(&sources, &query, filename.as_deref()).await;
-            eprintln!("m3 probe query={query:?} outcome={outcome:?}");
-        });
-    }
-    if let Some(source) = state.streams.clone() {
+    let stream_source = state.streams.clone();
+    let subtitle_sources = Some(state.subtitle_sources.clone()).filter(|s| !s.is_empty());
+    let query = Query::new(kind, id, &state.lang);
+    if stream_source.is_some() || (subtitle_sources.is_some() && query.is_some()) {
         // Runs beside the response so Stremio is not kept waiting.
         let range = state.range.clone();
         let (kind, id) = (kind.to_owned(), id.to_owned());
         tokio::spawn(async move {
-            let outcome =
-                streams::probe(source.as_ref(), range.as_deref(), &kind, &id, &hints).await;
-            eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+            let filename = hints.filename.clone();
+            let k2 = async {
+                let source = stream_source?;
+                let outcome =
+                    streams::probe(source.as_ref(), range.as_deref(), &kind, &id, &hints).await;
+                eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+                Some(outcome)
+            };
+            let m3 = async {
+                let (sources, query) = (subtitle_sources?, query?);
+                let (outcome, times) = sources::probe(&sources, &query, filename.as_deref()).await;
+                eprintln!("m3 probe query={query:?} outcome={outcome:?}");
+                Some(times)
+            };
+            let (k2, times) = tokio::join!(k2, m3);
+            let rulers = match k2 {
+                Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) => {
+                    (*mkv).ok().map(|report| report.rulers.0)
+                }
+                _ => None,
+            };
+            // Alignment is CPU work; keep it off the async workers.
+            if let (Some(rulers), Some(times)) = (rulers, times)
+                && !rulers.is_empty()
+                && times.iter().any(Option::is_some)
+                && let Ok(trials) =
+                    tokio::task::spawn_blocking(move || align::trials(&rulers, &times)).await
+            {
+                for trial in trials {
+                    eprintln!("m4 probe {trial:?}");
+                }
+            }
         });
     }
-    // Lookup, extraction and alignment are not implemented yet.
+    // Serving aligned subtitles comes in M5; for now only the probes run.
     Json(SubtitlesResponse {
         subtitles: Vec::new(),
     })

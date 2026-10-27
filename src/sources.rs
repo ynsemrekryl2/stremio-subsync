@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::ruler::Event;
 use crate::{rank, srt};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -546,12 +547,13 @@ pub struct SourcesProbe {
 }
 
 /// Searches every source, ranks the candidates against `filename` and
-/// downloads the best few.
+/// downloads the best few. Beside the report, the line times of each
+/// download (`None` where it failed), in the same order.
 pub async fn probe(
     sources: &[Arc<dyn SubtitleSource>],
     query: &Query,
     filename: Option<&str>,
-) -> SourcesProbe {
+) -> (SourcesProbe, Vec<Option<Vec<Event>>>) {
     let started = Instant::now();
     let mut searches = Vec::new();
     let mut found: Vec<(usize, Candidate)> = Vec::new();
@@ -567,9 +569,11 @@ pub async fn probe(
         .map(|(_, c)| rank::score(&c.release, filename))
         .collect();
     let mut downloads = Vec::new();
+    let mut times = Vec::new();
     for (i, candidate) in found.iter().take(PROBE_DOWNLOADS) {
         let result = sources[*i].download(query, candidate).await.map(|bytes| {
             let cues = srt::parse(&srt::decode(&bytes, &query.lang));
+            times.push(Some(srt::events(&cues)));
             SrtStats {
                 source: candidate.source,
                 score: rank::score(&candidate.release, filename),
@@ -579,14 +583,18 @@ pub async fn probe(
                 last_end_ms: cues.iter().map(|c| c.end_ms).max(),
             }
         });
+        if result.is_err() {
+            times.push(None);
+        }
         downloads.push(result);
     }
-    SourcesProbe {
+    let report = SourcesProbe {
         elapsed_ms: started.elapsed().as_millis(),
         searches,
         top_scores,
         downloads,
-    }
+    };
+    (report, times)
 }
 
 #[cfg(test)]
@@ -823,7 +831,7 @@ mod tests {
                 found: Err(SourceError::Status(403)),
             }),
         ];
-        let outcome = probe(&sources, &movie(), Some(file)).await;
+        let (outcome, times) = probe(&sources, &movie(), Some(file)).await;
         assert_eq!(
             outcome.searches,
             vec![
@@ -841,5 +849,7 @@ mod tests {
         );
         assert_eq!(outcome.downloads[1], Err(SourceError::Status(404)));
         assert!(outcome.top_scores[2] < 0, "CAM release ranks last");
+        let counts: Vec<Option<usize>> = times.iter().map(|t| t.as_ref().map(Vec::len)).collect();
+        assert_eq!(counts, vec![Some(2), None, Some(2)]);
     }
 }

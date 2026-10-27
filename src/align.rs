@@ -2,6 +2,8 @@
 //! subtitle's lines over the ruler, and a test that the same fix holds at the
 //! head, middle and end of the film. Works on times only.
 
+use std::time::Instant;
+
 use crate::ruler::Event;
 
 /// Grid step of the overlap search. The final shift is refined to 1 ms.
@@ -178,6 +180,37 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
         windows,
         reject,
     }
+}
+
+/// One ruler track against one downloaded candidate. Safe to log.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Trial {
+    pub track: u64,
+    /// Index among the downloads, best ranked first.
+    pub candidate: usize,
+    pub accepted: bool,
+    pub elapsed_ms: u128,
+    pub verdict: Verdict,
+}
+
+/// Every ruler track against every candidate that could be read.
+pub fn trials(rulers: &[(u64, Vec<Event>)], candidates: &[Option<Vec<Event>>]) -> Vec<Trial> {
+    let mut out = Vec::new();
+    for (track, ruler) in rulers {
+        for (candidate, events) in candidates.iter().enumerate() {
+            let Some(events) = events else { continue };
+            let started = Instant::now();
+            let verdict = align(ruler, events);
+            out.push(Trial {
+                track: *track,
+                candidate,
+                accepted: verdict.accepted().is_some(),
+                elapsed_ms: started.elapsed().as_millis(),
+                verdict,
+            });
+        }
+    }
+    out
 }
 
 fn scale(ms: u64, num: u64, den: u64) -> i64 {
@@ -405,6 +438,28 @@ mod tests {
             })
         );
         assert_eq!(verdict.hit_rate, 1.0);
+    }
+
+    #[test]
+    fn trials_cover_every_track_and_readable_candidate() {
+        let mut rng = synth::Rng::new(3);
+        let speech = synth::speech(&mut rng, 95);
+        let full = synth::lines(&mut rng, &speech, &synth::Style::RULER);
+        let sdh = synth::lines(&mut rng, &speech, &synth::Style::OTHER);
+        let good = synth::lines(&mut rng, &speech, &synth::Style::OTHER);
+        let elsewhere = synth::speech(&mut rng, 95);
+        let wrong = synth::lines(&mut rng, &elsewhere, &synth::Style::OTHER);
+
+        let rulers = [(5, full), (4, sdh)];
+        let found = trials(&rulers, &[Some(good), None, Some(wrong)]);
+        let shape: Vec<(u64, usize, bool)> = found
+            .iter()
+            .map(|t| (t.track, t.candidate, t.accepted))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![(5, 0, true), (5, 2, false), (4, 0, true), (4, 2, false)]
+        );
     }
 
     #[test]

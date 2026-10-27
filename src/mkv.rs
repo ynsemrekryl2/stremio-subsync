@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::range::{ByteSource, ReadError};
-use crate::ruler::{self, CueRef, RulerReport};
+use crate::ruler::{self, CueRef, Event, RulerReport};
 
 const EBML: u32 = 0x1A45_DFA3;
 const SEGMENT: u32 = 0x1853_8067;
@@ -131,6 +131,21 @@ pub struct MkvReport {
     pub scale_known: bool,
     /// Built from Cues for the chosen English text track, if any.
     pub ruler: Option<RulerReport>,
+    /// Times for alignment; logged as counts only.
+    pub rulers: Rulers,
+}
+
+/// Event times of every indexed English text track, the chosen ruler track
+/// first. `Debug` prints only track numbers and event counts.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Rulers(pub Vec<(u64, Vec<Event>)>);
+
+impl std::fmt::Debug for Rulers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(track, events)| (track, events.len())))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -543,6 +558,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
 
     let mut subtitles = tracks.subtitles;
     let mut ruler_report = None;
+    let mut rulers = Rulers::default();
     let cues = match cues {
         Ok((bytes, (points, per_track))) => {
             for sub in &mut subtitles {
@@ -557,10 +573,24 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
                 .max()
                 .unwrap_or(0);
             let scale = scan.scale.unwrap_or(DEFAULT_SCALE_NS);
-            ruler_report = pick_ruler_track(&subtitles).map(|track| {
-                let refs = per_track.get(&track.number).map_or(&[][..], Vec::as_slice);
-                ruler::build(track.number, refs, scale).0
+            let chosen = pick_ruler_track(&subtitles).map(|track| track.number);
+            ruler_report = chosen.map(|number| {
+                let refs = per_track.get(&number).map_or(&[][..], Vec::as_slice);
+                ruler::build(number, refs, scale).0
             });
+            let mut english: Vec<u64> = subtitles
+                .iter()
+                .filter(|s| s.english && s.codec.is_text() && s.cue_points > 0)
+                .map(|s| s.number)
+                .collect();
+            english.sort_by_key(|&n| Some(n) != chosen);
+            for number in english {
+                let refs = per_track.get(&number).map_or(&[][..], Vec::as_slice);
+                let events = ruler::events_from_cues(refs, scale);
+                if !events.is_empty() {
+                    rulers.0.push((number, events));
+                }
+            }
             CuesState::Read {
                 bytes,
                 points,
@@ -592,6 +622,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
         english_text_indexed,
         scale_known: scan.scale.is_some(),
         ruler: ruler_report,
+        rulers,
     })
 }
 
@@ -867,6 +898,15 @@ mod tests {
         );
         assert_eq!(ruler.first_ms, Some(1_000));
         assert_eq!(ruler.last_end_ms, Some(6_500));
+        // Every English text track is kept for alignment, the chosen one first.
+        let counts: Vec<(u64, usize)> = report
+            .rulers
+            .0
+            .iter()
+            .map(|(track, events)| (*track, events.len()))
+            .collect();
+        assert_eq!(counts, vec![(3, 2), (2, 1)]);
+        assert_eq!(format!("{:?}", report.rulers), "[(3, 2), (2, 1)]");
     }
 
     #[test]
