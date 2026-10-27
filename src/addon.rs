@@ -17,7 +17,8 @@ use tower_http::cors::CorsLayer;
 use crate::align;
 use crate::dump::{self, Dump};
 use crate::extra::PlaybackHints;
-use crate::label::{self, LabelCache};
+use crate::label;
+use crate::menu::{self, MenuCache};
 use crate::range::RangeReader;
 use crate::ruler::Event;
 use crate::sources::{self, Query, SubtitleSource};
@@ -34,8 +35,13 @@ pub struct AppState {
     lang: String,
     /// Where probe timings are saved for calibration, if anywhere.
     dump_dir: Option<std::path::PathBuf>,
-    /// Labeling mode: candidates listed in Stremio's menu, kept here.
-    labels: Option<Mutex<LabelCache>>,
+    /// Menus already answered: accepted subtitles, or in labeling mode
+    /// every candidate.
+    menus: Mutex<MenuCache>,
+    /// List every candidate, marked, instead of the accepted ones.
+    label_mode: bool,
+    /// Where answered menus are kept across restarts (not in labeling mode).
+    cache_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -48,7 +54,9 @@ impl AppState {
             subtitle_sources: Vec::new(),
             lang: String::new(),
             dump_dir: None,
-            labels: None,
+            menus: Mutex::new(MenuCache::default()),
+            label_mode: false,
+            cache_dir: None,
         })
     }
 
@@ -83,7 +91,13 @@ impl AppState {
 
     /// Lists every downloaded candidate in Stremio's menu, marked ✓ or ✗.
     pub fn with_label_mode(mut self) -> Self {
-        self.labels = Some(Mutex::new(LabelCache::default()));
+        self.label_mode = true;
+        self
+    }
+
+    /// Keeps answered menus under `dir` so a restart needs no new probes.
+    pub fn with_cache_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.cache_dir = Some(dir);
         self
     }
 
@@ -113,7 +127,7 @@ pub fn router(state: AppState) -> Router {
             "/{token}/subtitles/{kind}/{id}/{extra}",
             get(subtitles_with_extra),
         )
-        .route("/{token}/label/{entry}/{file}", get(label_srt))
+        .route("/{token}/sub/{entry}/{file}", get(menu_srt))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -216,69 +230,97 @@ async fn respond(
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
-    // Kept in memory only, to find this request's labels again.
+    // Kept in memory only, to find this request's menu again; on disk only
+    // its hash is used.
     let request = format!(
         "{kind}/{id}/{}/{}",
         hints.filename.as_deref().unwrap_or_default(),
         hints.video_size.unwrap_or_default()
     );
-    if let Some(list) = label_list(&state, headers, token, &request) {
+    let now = menu::now_s();
+    if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+        eprintln!("subtitles served from=memory offered={offered}");
         return list;
     }
-    let work = tokio::spawn(run_probes(
-        state.clone(),
-        kind.to_owned(),
-        id.to_owned(),
-        hints,
-        request.clone(),
-    ));
-    if state.labels.is_some() {
-        // Stremio waits for the menu; give the probes time to fill it.
-        let _ = tokio::time::timeout(LABEL_WAIT, work).await;
-        if let Some(list) = label_list(&state, headers, token, &request) {
+    if !state.label_mode
+        && let Some(dir) = state.cache_dir.clone()
+    {
+        let key = request.clone();
+        if let Ok(Some((created, entries))) =
+            tokio::task::spawn_blocking(move || menu::load(&dir, &key, now)).await
+        {
+            if let Ok(mut menus) = state.menus.lock() {
+                menus.insert(request.clone(), entries, created);
+            }
+            if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+                eprintln!("subtitles served from=disk offered={offered}");
+                return list;
+            }
+        }
+    }
+    if state.streams.is_some() || !state.subtitle_sources.is_empty() {
+        let work = tokio::spawn(run_probes(
+            state.clone(),
+            kind.to_owned(),
+            id.to_owned(),
+            hints,
+            request.clone(),
+        ));
+        // Stremio waits for the menu; give the probes time to fill it. If
+        // they take longer they still finish, and the next open is served
+        // from the cache.
+        let _ = tokio::time::timeout(MENU_WAIT, work).await;
+        if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+            eprintln!("subtitles served from=probes offered={offered}");
             return list;
         }
     }
+    eprintln!("subtitles served from=none offered=0");
     Json(SubtitlesResponse {
         subtitles: Vec::new(),
     })
     .into_response()
 }
 
-/// How long a request waits for its labels before answering without them.
-const LABEL_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// How long a request waits for the probes before answering without them.
+const MENU_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// The labeled candidates of `request` as a Stremio subtitle list, if any.
-fn label_list(
+/// The menu of `request` as a Stremio subtitle list, and its length.
+fn menu_list(
     state: &AppState,
     headers: &HeaderMap,
     token: &str,
     request: &str,
-) -> Option<Response> {
-    let labels = state.labels.as_ref()?.lock().ok()?;
-    let (entry, subs) = labels.find(request)?;
+    now: u64,
+) -> Option<(Response, usize)> {
+    let menus = state.menus.lock().ok()?;
+    let (entry, entries) = menus.find(request, now)?;
     let host = headers.get(header::HOST)?.to_str().ok()?;
     let scheme = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .filter(|p| *p == "https")
         .unwrap_or("http");
-    let subtitles = subs
+    let subtitles: Vec<Value> = entries
         .iter()
         .enumerate()
-        .map(|(i, sub)| {
+        .map(|(i, offered)| {
             let n = i + 1;
             json!({
                 "id": format!("subsync-{entry}-{n}"),
-                "url": format!("{scheme}://{host}/{token}/label/{entry}/{n}.srt"),
-                "lang": sub.label,
+                "url": format!("{scheme}://{host}/{token}/sub/{entry}/{n}.srt"),
+                "lang": offered.lang,
             })
         })
         .collect();
-    Some(Json(SubtitlesResponse { subtitles }).into_response())
+    let offered = subtitles.len();
+    Some((
+        Json(SubtitlesResponse { subtitles }).into_response(),
+        offered,
+    ))
 }
 
-async fn label_srt(
+async fn menu_srt(
     State(state): State<Arc<AppState>>,
     Path((token, entry, file)): Path<(String, u64, String)>,
 ) -> Response {
@@ -289,9 +331,10 @@ async fn label_srt(
         return StatusCode::NOT_FOUND.into_response();
     };
     let srt = state
-        .labels
-        .as_ref()
-        .and_then(|labels| labels.lock().ok()?.srt(entry, n).map(str::to_owned));
+        .menus
+        .lock()
+        .ok()
+        .and_then(|menus| menus.srt(entry, n).map(str::to_owned));
     match srt {
         Some(srt) => (
             [(header::CONTENT_TYPE, "application/x-subrip; charset=utf-8")],
@@ -350,11 +393,15 @@ async fn run_probes(
     if rulers.is_empty() || times.iter().all(Option::is_none) {
         return;
     }
-    // Alignment, the dump and the label files are CPU and disk work; keep
-    // them off the async workers.
+    // Alignment, the dump, the menu and the disk cache are CPU and disk
+    // work; keep them off the async workers.
     let dump_dir = state.dump_dir.clone();
-    let labeling = state.labels.is_some();
-    let Ok((trials, labels)) = tokio::task::spawn_blocking(move || {
+    let cache_dir = state.cache_dir.clone();
+    let label_mode = state.label_mode;
+    let lang = state.lang.clone();
+    let cache_key = request.clone();
+    let now = menu::now_s();
+    let Ok((trials, entries)) = tokio::task::spawn_blocking(move || {
         let dump_name = match dump_dir
             .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
         {
@@ -369,11 +416,19 @@ async fn run_probes(
             None => None,
         };
         let trials = align::trials(&rulers, &times);
-        let labels = labeling.then(|| {
-            let (track, events) = &rulers[0];
+        let (track, events) = &rulers[0];
+        let entries = if label_mode {
             label::build(&trials, (*track, events), &cues, dump_name.as_deref())
-        });
-        (trials, labels)
+        } else {
+            let entries = menu::accepted(&trials, *track, &cues, &lang);
+            if let Some(dir) = cache_dir
+                && let Err(err) = menu::save(&dir, &cache_key, &entries, now)
+            {
+                eprintln!("cache write failed error={:?}", err.kind());
+            }
+            entries
+        };
+        (trials, entries)
     })
     .await
     else {
@@ -382,11 +437,12 @@ async fn run_probes(
     for trial in &trials {
         eprintln!("m4 probe {trial:?}");
     }
-    if let (Some(subs), Some(cache)) = (labels, &state.labels) {
-        eprintln!("labels ready entries={}", subs.len());
-        if let Ok(mut cache) = cache.lock() {
-            cache.insert(request, subs);
-        }
+    eprintln!(
+        "menu ready entries={} label_mode={label_mode}",
+        entries.len()
+    );
+    if let Ok(mut menus) = state.menus.lock() {
+        menus.insert(request, entries, now);
     }
 }
 
@@ -544,57 +600,104 @@ mod tests {
         assert_eq!(query, Query::new("series", "tt0944947:1:2", "tur").unwrap());
     }
 
+    async fn call(app: &Router, uri: String) -> (StatusCode, String) {
+        let request = Request::get(uri)
+            .header(header::HOST, "127.0.0.1:7000")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    const SRT: &str = "1\n00:00:01,000 --> 00:00:02,000\nx\n\n";
+
+    fn offered() -> Vec<menu::MenuEntry> {
+        vec![menu::MenuEntry {
+            lang: "tur".to_owned(),
+            srt: SRT.to_owned(),
+        }]
+    }
+
     #[tokio::test]
-    async fn label_mode_lists_cached_candidates_and_serves_srt() {
-        let state = AppState::new(TOKEN.to_owned()).unwrap().with_label_mode();
-        state.labels.as_ref().unwrap().lock().unwrap().insert(
+    async fn cached_menu_is_listed_and_served() {
+        let state = AppState::new(TOKEN.to_owned()).unwrap();
+        state.menus.lock().unwrap().insert(
             "movie/tt1/A.mkv/0".to_owned(),
-            vec![label::LabelSub {
-                label: "SubSync 1 ✓ +0.00s".to_owned(),
-                srt: "1\n00:00:01,000 --> 00:00:02,000\nx\n\n".to_owned(),
-            }],
+            offered(),
+            menu::now_s(),
         );
         let app = router(state);
-        let call = |uri: String| {
-            let app = app.clone();
-            async move {
-                let request = Request::get(uri)
-                    .header(header::HOST, "127.0.0.1:7000")
-                    .body(Body::empty())
-                    .unwrap();
-                let response = app.oneshot(request).await.unwrap();
-                let status = response.status();
-                let body = response.into_body().collect().await.unwrap().to_bytes();
-                (status, String::from_utf8(body.to_vec()).unwrap())
-            }
-        };
 
-        let (status, body) =
-            call(format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv.json")).await;
+        let (status, body) = call(
+            &app,
+            format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv.json"),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let list: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(
             list["subtitles"][0],
             json!({
                 "id": "subsync-0-1",
-                "url": format!("http://127.0.0.1:7000/{TOKEN}/label/0/1.srt"),
-                "lang": "SubSync 1 ✓ +0.00s",
+                "url": format!("http://127.0.0.1:7000/{TOKEN}/sub/0/1.srt"),
+                "lang": "tur",
             })
         );
 
-        let (status, body) = call(format!("/{TOKEN}/label/0/1.srt")).await;
-        assert_eq!(
-            (status, body.as_str()),
-            (StatusCode::OK, "1\n00:00:01,000 --> 00:00:02,000\nx\n\n")
-        );
+        let (status, body) = call(&app, format!("/{TOKEN}/sub/0/1.srt")).await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, SRT));
         for uri in [
-            "/wrong-token/label/0/1.srt".to_owned(),
-            format!("/{TOKEN}/label/0/2.srt"),
-            format!("/{TOKEN}/label/9/1.srt"),
-            format!("/{TOKEN}/label/0/one.srt"),
+            "/wrong-token/sub/0/1.srt".to_owned(),
+            format!("/{TOKEN}/sub/0/2.srt"),
+            format!("/{TOKEN}/sub/9/1.srt"),
+            format!("/{TOKEN}/sub/0/one.srt"),
         ] {
-            assert_eq!(call(uri.clone()).await.0, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(
+                call(&app, uri.clone()).await.0,
+                StatusCode::NOT_FOUND,
+                "{uri}"
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn disk_cache_answers_without_probes() {
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-addon-cache-{}-{}",
+            std::process::id(),
+            menu::now_s()
+        ));
+        menu::save(&dir, "series/tt2:1:3/B.mkv/7", &offered(), menu::now_s()).unwrap();
+        // No sources at all: only the cache can answer.
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_cache_dir(dir.clone()),
+        );
+        let (status, body) = call(
+            &app,
+            format!("/{TOKEN}/subtitles/series/tt2:1:3/filename=B.mkv&videoSize=7.json"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        let url = list["subtitles"][0]["url"].as_str().unwrap().to_owned();
+        let path = url.trim_start_matches("http://127.0.0.1:7000");
+        assert_eq!(
+            call(&app, path.to_owned()).await,
+            (StatusCode::OK, SRT.to_owned())
+        );
+
+        // Another file of the same episode is not this cache entry.
+        let (_, body) = call(
+            &app,
+            format!("/{TOKEN}/subtitles/series/tt2:1:3/filename=C.mkv&videoSize=7.json"),
+        )
+        .await;
+        assert_eq!(body, r#"{"subtitles":[]}"#);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

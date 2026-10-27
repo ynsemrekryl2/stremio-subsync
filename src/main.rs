@@ -3,6 +3,7 @@ mod align;
 mod dump;
 mod extra;
 mod label;
+mod menu;
 mod mkv;
 mod range;
 mod rank;
@@ -68,8 +69,9 @@ async fn main() {
             };
             state = state.with_stream_source(std::sync::Arc::new(source));
             eprintln!("aiostreams probe: on");
-            // Reading stream URLs touches the debrid service, so it is opt-in.
-            if std::env::var("SUBSYNC_RANGE_PROBE").as_deref() == Ok("1") {
+            // The ruler is read from the stream with Range requests. On by
+            // default since M5; `SUBSYNC_RANGE_PROBE=0` turns it off.
+            if std::env::var("SUBSYNC_RANGE_PROBE").as_deref() != Ok("0") {
                 let reader = range::HttpRangeReader::new().unwrap_or_else(|| {
                     eprintln!("cannot build the range probe HTTP client");
                     std::process::exit(1);
@@ -87,8 +89,9 @@ async fn main() {
         eprintln!("SUBSYNC_LANG must be a three-letter ISO 639-2 code such as tur");
         std::process::exit(2);
     }
-    // Searching and downloading subtitles uses the providers' quota, so it is opt-in.
-    if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() == Ok("1") {
+    // Candidate search and download. On by default since M5;
+    // `SUBSYNC_SOURCES_PROBE=0` turns it off.
+    if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() != Ok("0") {
         let mut found: Vec<Arc<dyn SubtitleSource>> = Vec::new();
         if let Some(source) = sources::OpenSubtitlesV3::new() {
             found.push(Arc::new(source));
@@ -114,8 +117,17 @@ async fn main() {
         _ => eprintln!("timing dump: off"),
     }
     if std::env::var("SUBSYNC_LABEL_MODE").as_deref() == Ok("1") {
-        eprintln!("label mode: on (every candidate listed in Stremio, marked)");
+        eprintln!("label mode: on (every candidate listed in Stremio, marked; no disk cache)");
         state = state.with_label_mode();
+    }
+    // Answered menus survive restarts here; `off` keeps them in memory only.
+    let cache_dir = std::env::var("SUBSYNC_CACHE_DIR").unwrap_or_else(|_| "cache".to_owned());
+    match cache_dir.trim() {
+        "" | "off" => eprintln!("subtitle cache: memory only"),
+        dir => {
+            eprintln!("subtitle cache: {dir}");
+            state = state.with_cache_dir(dir.into());
+        }
     }
     let listener = tokio::net::TcpListener::bind(bind)
         .await

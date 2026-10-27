@@ -14,6 +14,7 @@
 | 2026-10-27 | Cetvel, **Cues'taki altyazı konumlarından** hedefli okunur; altyazısı Cues'ta olmayan dosyalar şimdilik desteklenmez | K3: Real-Debrid'deki 12 MKV'nin 11'inde İngilizce metin izi indekslenmiş; Cues 18–855 KB, 1–2 istek. İndekslenmemiş dosya için küme taraması pahalı; gerekirse M6'da yeniden düşünülür. |
 | 2026-10-27 | **Hizalama çekirdeği bizim** (`src/align.rs`); `alass-core` kullanılmaz | 220 sentetik hizalamada doğruluk aynı (ortanca 3–4 ms, fps hep doğru), bizimki ~27 kat hızlı ve kabul testini içeriyor; `alass-core` ret kararı vermez ve GPL-3.0. Farklı kurgu dosyaları reddedilir; bölmeli hizalama gerekirse M6'da düşünülür. Ölçüm: `docs/spikes/m4-align.md`. |
 | 2026-10-27 | Adaylar **OpenSubtitles v3 Stremio add-on'u** (anahtarsız) + **SubDL** (ücretsiz anahtar); hedef dil `SUBSYNC_LANG`, varsayılan `tur` | v3 add-on'u sürüm adı ve fps veriyor, kota/anahtar istemiyor. SubDL ZIP veriyor; `zip` ve eski kod sayfaları için `encoding_rs` eklendi. Ölçüm: `docs/spikes/m3-sources.md`. |
+| 2026-10-28 | **Teslim (M5):** istek probe'ları en çok 15 sn bekler; yalnız kabul edilenler, aynı çevirinin kopyaları teke indirilerek, en çok 3 tane sunulur. Sonuç bellek + diskte cache'lenir (kabul 30 gün, "uygun yok" 1 gün). Probe'lar artık varsayılan açık | Gerçek etiketlerde (4) yanlış kabul yok, kabuller büyük kaymalarda da senkron. Stremio yanıtı bekliyor; geç kalan probe yine biter ve sonraki açılış cache'ten gelir. Yerel senkron (SS-021) fayda göstermediği için teslimde yok. |
 
 ## Açık
 

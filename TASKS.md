@@ -46,20 +46,26 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [~] **SS-014** Gerçek etiketli set: M2 cetvelleri + M3 adaylarıyla eşikleri ayarla (gerçek dosyalar elle etiketlenir) — kanıt: `docs/spikes/m4-align.md` tablosu
 - [x] **SS-021** Yerel senkron: altyazıyı tek kaydırma yerine yerel olarak kaydır — her satıra, çevresindeki ~20 satırın İngilizce iz başlangıçlarına göre ortanca kaydırması (satır satır yapıştırma eşleşme hatasında satırı saniyelerce kaçırır; 6 sabit nokta gürültüyü kovalar). Etiketleme modunda ayrı menü girdisi olarak denenir. Karar kaydındaki "bölmeli hizalama M6'da" maddesini açar — kanıt: ölçüm notu (…5984'te satırların %36'sı 300 ms, %74'ü 700 ms içinde eşleşiyor) + kullanıcı etiketleri + sentetik negatifleri yine reddeden testler → **sonuç: fayda görülmedi** (kullanıcı fark görmedi; kayan altyazıda ortanca 165 ms, yön de cetvelin kendi erkenliği yüzünden ters). Teslimde yok, yalnız etiketleme modunda.
 
+## M5 — Teslim
+
+- [~] **SS-022** Kabul edilen altyazıları Stremio'da normal sun: istek probe'ları bekler (en çok 15 sn), yalnız kabul edilenler `tur` dilinde, fix uygulanmış olarak listelenir; aynı çevirinin kopyaları tek girdi — kanıt: testler + Stremio'da gerçek bir dosyada Türkçe altyazının senkron gelmesi
+- [~] **SS-023** Sonucu cache'le: bellek + disk (`SUBSYNC_CACHE_DIR`, varsayılan `cache`); dosya adı istek anahtarının özeti, kimlik/dosya adı yok; kabul 30 gün, "uygun aday yok" 1 gün geçerli — kanıt: testler + ikinci açılışta probe'suz yanıt (log)
+- [ ] **SS-024** Cetvel çıkmayan ya da aday bulunamayan istekleri de kısa süre cache'le (geçici hata ile kalıcı nedeni ayır) — kanıt: testler
+
 ## Devam notları (2026-10-27, gece)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
-- **Şu an sırada: SS-014 (gerçek etiketli set) sürüyor.** Etiketleme modu
-  (`SUBSYNC_LABEL_MODE=1`) adayları Stremio menüsünde "SubSync 2 ✓ +1.60s ·
-  7530" diye gösteriyor; kullanıcı izleyip etiketliyor. Zamanlar
-  `SUBSYNC_DUMP_DIR=dumps` ile saklanıyor, `cargo run -- calibrate dumps`
-  yeniden hizalıyor. Şimdilik 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış
-  kabul (`docs/spikes/m4-align.md`). Eşikler değişmedi; en değerli etiketler
-  ✓ olanlar (yanlış kabul var mı) ve kaydırması küçük ✗ olanlar.
-  Sunucu: `SUBSYNC_RANGE_PROBE=1 SUBSYNC_SOURCES_PROBE=1 SUBSYNC_DUMP_DIR=dumps
-  SUBSYNC_LABEL_MODE=1 cargo run` (Terminal sekmesine elle; Run düğmesi o
-  sekmenin ortamını görmüyor).
+- **Şu an sırada: SS-022 / SS-023 gerçek deneme.** Teslim ve cache kodu
+  hazır, testli; Stremio'da denenmedi. Sunucu artık bayraksız da çalışır:
+  `cargo run` (Terminal sekmesinde, `SUBSYNC_TOKEN` ve
+  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlıyken). Beklenen: ilk açılışta
+  birkaç saniye sonra menüde "Turkish" altyazı; ikinci açılışta log
+  `subtitles served from=memory` (yeniden başlatınca `from=disk`).
+  Etiketlemeye dönmek için `SUBSYNC_LABEL_MODE=1 SUBSYNC_DUMP_DIR=dumps`.
+- **SS-014 durumu:** 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış kabul
+  (`docs/spikes/m4-align.md`). `cargo run -- calibrate dumps` kayıtları
+  yeniden hizalar.
 - **M3 probe:** `SUBSYNC_SOURCES_PROBE=1` ile her istekte OpenSubtitles v3
   (+ `SUBDL_API_KEY` varsa SubDL) aranır, en iyi 3 aday indirilir;
   `m3 probe` satırı yalnız sayı/puan taşır. AIOStreams'ten bağımsız çalışır.

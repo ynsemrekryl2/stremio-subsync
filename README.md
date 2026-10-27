@@ -10,7 +10,11 @@ içindekiler tablosunu ve altyazı bloklarını HTTP Range ile okur.
 
 ## Durum
 
-İskelet: manifest ve boş altyazı yanıtı dönen, gizli token'lı HTTP sunucusu.
+Çalışıyor (yerel): oynatılan MKV'nin İngilizce altyazısından cetvel çıkarır,
+OpenSubtitles (ve anahtar varsa SubDL) adaylarını hizalar, baş / orta / son
+testini geçenleri kaydırılmış olarak Stremio'ya sunar ve sonucu cache'ler.
+İlk açılışta yanıt birkaç saniye sürebilir (en çok 15 sn); sonraki açılışlar
+cache'ten gelir. VPS kurulumu henüz yapılmadı (SS-006).
 Plan: [`docs/plan.md`](docs/plan.md) · Kararlar: [`docs/decisions.md`](docs/decisions.md)
 · İş listesi: [`TASKS.md`](TASKS.md)
 
@@ -32,7 +36,10 @@ http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_TOKEN` | — (zorunlu) | Kurulum linkindeki gizli parça. Linki bilen sunucuyu kullanır. |
 | `SUBSYNC_BIND` | `127.0.0.1:7000` | Dinlenen adres. VPS'te HTTPS reverse proxy'nin arkasında kalır. |
 | `SUBSYNC_LANG` | `tur` | Aranan altyazı dili (ISO 639-2, OpenSubtitles adlarıyla: `tur`, `eng`, `pob`). |
-| `SUBSYNC_SOURCES_PROBE` | kapalı | `1` ise her istekte aday altyazılar aranır ve en iyi 3'ü indirilir (M3 ölçümü). |
+| `SUBSYNC_AIOSTREAMS_URL` | — | AIOStreams manifest linki; oynatılan dosyayı bulmak için. Yoksa cetvel çıkmaz, altyazı sunulmaz. Loglanmaz. |
+| `SUBSYNC_RANGE_PROBE` | açık | `0` ise dosyadan cetvel okunmaz (altyazı da sunulmaz). |
+| `SUBSYNC_SOURCES_PROBE` | açık | `0` ise aday altyazı aranmaz. Açıkken en iyi 3 aday indirilir. |
+| `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. |
 | `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
 | `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Kaydırması olan her adayın bir de `yerel` sürümü gelir (SS-021: kayma filmin içinde değişiyorsa satırları çevresine göre ayrıca kaydırır). Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
