@@ -187,6 +187,9 @@ pub async fn probe(
 /// Why a manifest link was refused. Carries no part of the link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestUrlError {
+    Empty,
+    ControlChars,
+    InnerSpace,
     NotAUrl,
     Scheme,
     NotManifest,
@@ -196,12 +199,39 @@ pub enum ManifestUrlError {
 impl std::fmt::Display for ManifestUrlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::Empty => "empty",
+            Self::ControlChars => "contains control characters (paste it again, or type it)",
+            Self::InnerSpace => "contains spaces or line breaks inside",
             Self::NotAUrl => "not a URL (check for missing characters or extra text)",
             Self::Scheme => "must start with https://, http:// or stremio://",
             Self::NotManifest => "path must end in manifest.json",
             Self::Client => "cannot build the HTTP client",
         })
     }
+}
+
+/// Undoes what copying and pasting tends to add: terminal paste markers,
+/// surrounding quotes or angle brackets, and a `stremio://` or missing scheme.
+fn clean_link(raw: &str) -> Result<String, ManifestUrlError> {
+    let raw = raw.replace("\u{1b}[200~", "").replace("\u{1b}[201~", "");
+    let link = raw
+        .trim()
+        .trim_matches(|c| matches!(c, '"' | '\'' | '<' | '>'))
+        .trim();
+    if link.is_empty() {
+        return Err(ManifestUrlError::Empty);
+    }
+    if link.chars().any(char::is_control) {
+        return Err(ManifestUrlError::ControlChars);
+    }
+    if link.chars().any(char::is_whitespace) {
+        return Err(ManifestUrlError::InnerSpace);
+    }
+    Ok(match link.strip_prefix("stremio://") {
+        Some(rest) => format!("https://{rest}"),
+        None if !link.contains("://") => format!("https://{link}"),
+        None => link.to_owned(),
+    })
 }
 
 /// AIOStreams instance addressed by its manifest link. The link embeds the
@@ -215,12 +245,7 @@ impl AioStreams {
     /// Accepts an `http(s)://…/manifest.json` link, or the `stremio://` form
     /// of it that install buttons hand out.
     pub fn from_manifest_url(raw: &str) -> Result<Self, ManifestUrlError> {
-        let raw = raw.trim();
-        let url = match raw.strip_prefix("stremio://") {
-            Some(rest) => Url::parse(&format!("https://{rest}")),
-            None => Url::parse(raw),
-        }
-        .map_err(|_| ManifestUrlError::NotAUrl)?;
+        let url = Url::parse(&clean_link(raw)?).map_err(|_| ManifestUrlError::NotAUrl)?;
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
             return Err(ManifestUrlError::Scheme);
         }
@@ -390,9 +415,39 @@ mod tests {
     }
 
     #[test]
+    fn paste_artifacts_are_removed() {
+        let expected = "https://aio.test/stremio/u/secret/stream/movie/tt1.json";
+        for raw in [
+            "\u{1b}[200~https://aio.test/stremio/u/secret/manifest.json\u{1b}[201~",
+            "\"https://aio.test/stremio/u/secret/manifest.json\"",
+            "<https://aio.test/stremio/u/secret/manifest.json>",
+            "aio.test/stremio/u/secret/manifest.json",
+        ] {
+            let source = AioStreams::from_manifest_url(raw).unwrap();
+            assert_eq!(
+                source.stream_url("movie", "tt1").unwrap().as_str(),
+                expected,
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
     fn refusal_reason_names_the_failed_check() {
         let reason = |raw| AioStreams::from_manifest_url(raw).err();
-        assert_eq!(reason("not a url"), Some(ManifestUrlError::NotAUrl));
+        assert_eq!(reason("  "), Some(ManifestUrlError::Empty));
+        assert_eq!(
+            reason("https://a.test/\u{7}manifest.json"),
+            Some(ManifestUrlError::ControlChars)
+        );
+        assert_eq!(
+            reason("https://a.test/x y/manifest.json"),
+            Some(ManifestUrlError::InnerSpace)
+        );
+        assert_eq!(
+            reason("https://[bad/manifest.json"),
+            Some(ManifestUrlError::NotAUrl)
+        );
         assert_eq!(
             reason("ftp://aio.test/manifest.json"),
             Some(ManifestUrlError::Scheme)
