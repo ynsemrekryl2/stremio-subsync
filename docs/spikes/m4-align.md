@@ -82,6 +82,26 @@ Betik repoda değil (geçici bir crate, `#[path]` ile aynı modülleri kullandı
 
 **Karar:** Çekirdek bizim. `docs/decisions.md`'ye yazıldı.
 
+## Gerçek dosyalar (2026-10-27, `m4 probe`)
+
+Cetvel M2 ölçümündeki dosyalar; aday OpenSubtitles `tur`. "Etiket" kullanıcının
+izleyerek verdiği karardır; boşsa henüz etiketlenmedi.
+
+| Dosya | Aday | Fix | Pencere kaydırmaları (global'e göre) | İsabet (baş / orta / son) | Karar | Etiket |
+|---|---|---|---|---|---|---|
+| Film 2 (~160 dk) | 668 satır, ~89 dk'da bitiyor | 1000/1001, −43.5 sn | −24, −94 ms, yok | %16 / %30 / %0 | ret (`LowHits(0)`) | — |
+| Bölüm 1 (~44 dk) | 619 satır | 1/1, 0 ms | 0, 0, +40 ms | %32 / %40 / %35 | ret (`LowHits(0)`) | — |
+
+- **Film 2:** CD1 parçası; son pencerede aday yok. Ret doğru (bkz. SS-019).
+- **Bölüm 1:** Üç pencere de aynı kaydırmada (0 ms, kayma yok) buluşuyor; rastgele
+  bir aday için bu neredeyse imkânsız. Büyük olasılıkla doğru senkronlu ama
+  isabet eşiği (%50) yüzünden reddedildi: **yanlış ret adayı.**
+  İsabet cetvel satırına bölünüyor; aday 619, cetvel 1006 satır. Türkçe
+  çeviri satırları birleştirdiği için tam uyumda bile en fazla ~%61 olabilir.
+  Adayın satırlarına göre oran ~%58.
+- Sentetik sette aday ve cetvel satır sayıları yakındı; bu yanlılık orada
+  görünmedi.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
