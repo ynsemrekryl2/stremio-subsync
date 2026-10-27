@@ -14,16 +14,27 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::extra::PlaybackHints;
+use crate::streams::{self, StreamSource};
 
 /// Shared state for the HTTP handlers.
 pub struct AppState {
     token: String,
+    streams: Option<Arc<dyn StreamSource>>,
 }
 
 impl AppState {
     /// `token` is the secret path segment; it must be non-empty.
     pub fn new(token: String) -> Option<Self> {
-        (!token.is_empty()).then_some(Self { token })
+        (!token.is_empty()).then_some(Self {
+            token,
+            streams: None,
+        })
+    }
+
+    /// Enables the K2 probe against this stream list source.
+    pub fn with_stream_source(mut self, source: Arc<dyn StreamSource>) -> Self {
+        self.streams = Some(source);
+        self
     }
 
     fn authorized(&self, candidate: &str) -> bool {
@@ -100,6 +111,14 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
+    if let Some(source) = state.streams.clone() {
+        // Runs beside the response so Stremio is not kept waiting.
+        let (kind, id) = (kind.to_owned(), id.to_owned());
+        tokio::spawn(async move {
+            let outcome = streams::probe(source.as_ref(), &kind, &id, &hints).await;
+            eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+        });
+    }
     // Lookup, extraction and alignment are not implemented yet.
     Json(SubtitlesResponse {
         subtitles: Vec::new(),
@@ -176,6 +195,43 @@ mod tests {
             let (status, _) = get(&uri).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         }
+    }
+
+    struct SignalSource(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>);
+
+    impl StreamSource for SignalSource {
+        fn fetch<'a>(&'a self, kind: &'a str, id: &'a str) -> streams::FetchFuture<'a> {
+            if let Some(tx) = self.0.lock().unwrap().take() {
+                let _ = tx.send(format!("{kind}/{id}"));
+            }
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn host(&self) -> &str {
+            "aio.test"
+        }
+    }
+
+    #[tokio::test]
+    async fn subtitles_request_triggers_stream_probe() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let source = Arc::new(SignalSource(std::sync::Mutex::new(Some(tx))));
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(source),
+        );
+        let uri = format!("/{TOKEN}/subtitles/series/tt0944947:1:2/filename=A.mkv.json");
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let called = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(called, "series/tt0944947:1:2");
     }
 
     #[test]

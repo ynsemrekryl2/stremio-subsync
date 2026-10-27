@@ -1,5 +1,6 @@
 mod addon;
 mod extra;
+mod streams;
 
 use std::net::SocketAddr;
 
@@ -22,7 +23,19 @@ async fn main() {
             std::process::exit(2);
         });
 
-    let state = addon::AppState::new(token).expect("token checked above");
+    let mut state = addon::AppState::new(token).expect("token checked above");
+    // The manifest link embeds the AIOStreams configuration; it is never printed.
+    match std::env::var("SUBSYNC_AIOSTREAMS_URL") {
+        Ok(raw) if !raw.trim().is_empty() => {
+            let Some(source) = streams::AioStreams::from_manifest_url(&raw) else {
+                eprintln!("SUBSYNC_AIOSTREAMS_URL must be an http(s) link ending in manifest.json");
+                std::process::exit(2);
+            };
+            state = state.with_stream_source(std::sync::Arc::new(source));
+            eprintln!("aiostreams probe: on");
+        }
+        _ => eprintln!("aiostreams probe: off"),
+    }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .unwrap_or_else(|err| {
