@@ -47,19 +47,20 @@ Her satır bir dosya. `İng. metin iz(ler)i` sütunu codec ve `cue_points`.
 | 1 | 2026-10-27 | dizi bölümü | RD | 273 KB | 10553 (282) | ASS forced: 4985 · ASS: 5286 | **evet** | 2 / 273 KB |
 | 2 | 2026-10-27 | film (14 altyazı izi) | RD | 505 KB | 19264 (930) | SRT: 1053 · SRT: 1824 (+ PGS: 3648) | **evet** | 2 / 505 KB |
 | 3 | 2026-10-27 | film | RD | 312 KB | 13810 (8564) | yok — yalnız PGS (en: 2968) | yok (İng. metin izi yok) | 2 / 312 KB |
-| 4 | 2026-10-27 | dizi bölümü | RD | — | — | SRT · SRT | ölçülemedi: `cues: Failed(Read(Other))` | 1 / 0 |
-| 5 | 2026-10-27 | dizi bölümü | RD | — | — | altyazı izi yok | ölçülemedi: `cues: Failed(Read(Other))` | 1 / 0 |
+| 4 | 2026-10-27 | dizi bölümü | RD | — | — | SRT · SRT | yeniden ölçülmedi (dosya sonu hatası) | 1 / 0 |
+| 5 | 2026-10-27 | dizi bölümü | RD | — | — | altyazı izi yok | yeniden ölçülmedi; İng. metin izi zaten yok | 1 / 0 |
 | 6 | 2026-10-27 | dizi bölümü (31 altyazı izi) | RD | 855 KB | 31603 (1785) | SRT: 908 · SRT: 963 | **evet** | 2 / 855 KB |
 | 7 | 2026-10-27 | film | RD | 458 KB | 19121 (1345) | SRT forced: 73 · SRT: 1769 (+ PGS: 2626) | **evet** | 2 / 458 KB |
 | 8 | 2026-10-27 | dizi bölümü (30 iz) | RD | 395 KB | 16265 (1744) | SRT: 414 (+ PGS: 734) | **evet** | 2 / 395 KB |
 | 9 | 2026-10-27 | dizi bölümü (32 iz) | RD | 352 KB | 14287 (1732) | SRT: 321 · SRT: 463 (+ PGS: 658) | **evet** | 2 / 352 KB |
-| 10 | 2026-10-27 | film | RD | — | — | SRT · SRT (+ 2 fr SRT) | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 11 | 2026-10-27 | dizi bölümü | RD | — | — | altyazı izi yok | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 12 | 2026-10-27 | dizi bölümü | RD | — | — | yok — yalnız PGS | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 13 | 2026-10-27 | dizi bölümü | RD | — | — | SRT (+ pl ASS, fr SRT) | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 14 | 2026-10-27 | dizi bölümü (14 iz) | RD | — | — | SRT | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 15 | 2026-10-27 | dizi bölümü | RD | — | — | SRT | ölçülemedi (dosya sonu hatası) | 1 / 0 |
-| 16 | 2026-10-27 | film | RD | — | — | SRT (+ fr-CA, es-419 SRT) | ölçülemedi (dosya sonu hatası) | 1 / 0 |
+| 10 | 2026-10-27 | film | RD | 113 KB | 4480 (1352) | SRT: 1014 · SRT: 1166 | **evet** | 1 / 116 KB |
+| 11 | 2026-10-27 | dizi bölümü | RD | 18 KB | 871 (871) | altyazı izi yok | yok (İng. metin izi yok) | 1 / 20 KB |
+| 12 | 2026-10-27 | dizi bölümü | RD | — | — | yok — yalnız PGS | yeniden ölçülmedi; İng. metin izi zaten yok | 1 / 0 |
+| 13 | 2026-10-27 | dizi bölümü | RD | 71 KB | 2809 (874) | SRT: 771 (+ pl ASS: 589) | **evet** | 1 / 73 KB |
+| 14 | 2026-10-27 | dizi bölümü (14 iz) | RD | 160 KB | 6109 (709) | SRT: 475 | **evet** | 1 / 167 KB |
+| 15 | 2026-10-27 | dizi bölümü | RD | 30 KB | 1229 (678) | SRT: 551 | **evet** | 1 / 30 KB |
+| 16 | 2026-10-27 | film | RD | 59 KB | 2715 (2715) | SRT: **0** (fr-CA, es-419 SRT: 0) | **hayır** — Cues yalnız video | 1 / 60 KB |
+| 17 | 2026-10-27 | dizi bölümü | RD | 22 KB | 896 (369) | SRT: 527 | **evet** | 1 / 23 KB |
 
 MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
 
@@ -68,6 +69,24 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
 | dizi bölümü (4 istek) | `[Other, Other]` | hayır | hayır | `OtherVideo` | Debrid'de hazır olmayan dosya; muhtemelen "indiriliyor" yer tutucu videosu. Kullanıcı: açılmadı. |
 | dizi bölümü (2 istek) | `[Other, RealDebrid]` | hayır | 1. istek hayır, 2. evet | `Other` | MKV değil (muhtemelen MP4) |
 | dizi bölümü | `[Other, RealDebrid]` | hayır | evet | `Other` | MKV değil (muhtemelen MP4) |
+| dizi bölümü (3. tur) | `[Other, RealDebrid]` | hayır | evet | `Other` | MKV değil ya da debrid hatası (kullanıcı: bir dosyada debrid hatası aldı) |
+
+## Sonuç (Real-Debrid, 2026-10-27)
+
+- **Range:** destekleniyor (206), ev IP'sinden.
+- **İndeksleme:** Cues'u okunan ve İngilizce metin izi olan **12 dosyanın
+  11'inde** iz Cues'ta indekslenmiş (~%92). İndekslenmeyen tek dosyada (16)
+  Cues yalnız video anahtar karelerini içeriyor; o dosyadaki hiçbir altyazı izi
+  indekslenmemiş. Muxer ayarı dosya bazında, iz bazında değil.
+- İngilizce metin izi olmayan dosyalar: 3 ve 12 yalnız PGS, 5 ve 11 hiç
+  altyazısız. Bunlar için zaten cetvel yok.
+- **Maliyet:** Cues 18–855 KB; ilk 64 KB'tan sonra 1–2 istek, 0,35–1,3 sn.
+  8 MiB'lık bütçeye hiç yaklaşılmadı.
+- **Sonuç:** Planın varsayımı (Cues'tan hedefli okuma) Real-Debrid'deki MKV'lerin
+  büyük çoğunluğu için geçerli. İndekslenmemiş dosyalar için (12'de 1) ya
+  desteklenmez denir, ya da ileride küme taraması gibi pahalı bir yedek yol
+  düşünülür.
+- Açık kalanlar: VPS IP'sinden okuma (SS-008), TorBox (SS-007).
 
 ## Notlar
 
@@ -95,10 +114,9 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
   kapatıyor. Düzeltme: ilk yanıttaki toplam boyutla okumalar dosya sonunda
   kesiliyor. Yerel sunucuda aynı davranış taklit edilerek hata tekrarlandı ve
   düzeltmenin çözdüğü görüldü. Bu dosyalar yeniden ölçülecek.
-- Başarılı dosyaların hepsinde Cues 350 KB'ın üstünde ve altyazı noktaları
-  çoğunlukta; başarısızlarda Cues 256 KB'tan küçük (tek istekte dosya sonuna
-  varılıyor). Bu, başarısız grubun **altyazısı indekslenmemiş** dosyalar olduğunu
-  düşündürüyor; yeniden ölçümle doğrulanmalı.
+- Başarısız grubun altyazısı indekslenmemiş dosyalar olduğu tahmini **yanlış
+  çıktı**. Yeniden ölçülen 6 dosyanın 5'inde İngilizce metin izi indekslenmiş;
+  Cues yalnız dosyalar kısa olduğu için küçüktü (dizi bölümleri, 18–160 KB).
 - Debrid'de hazır olmayan stream'ler de eşleşiyor (K2 `both: 1`), ama range
   okuması gerçek dosya yerine başka bir video döndürüyor. İmzası: `hops`'ta
   Real-Debrid yok, `size_matches: false`, `ebml_magic: false`. Gerçek akışta bu
