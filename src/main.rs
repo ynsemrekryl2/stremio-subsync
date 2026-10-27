@@ -2,6 +2,7 @@ mod addon;
 mod extra;
 mod mkv;
 mod range;
+mod ruler;
 mod streams;
 
 use std::net::SocketAddr;

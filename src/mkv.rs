@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::range::{ByteSource, ReadError};
+use crate::ruler::{self, CueRef, RulerReport};
 
 const EBML: u32 = 0x1A45_DFA3;
 const SEGMENT: u32 = 0x1853_8067;
@@ -29,6 +30,13 @@ const CUES: u32 = 0x1C53_BB6B;
 const CUE_POINT: u32 = 0xBB;
 const CUE_TRACK_POSITIONS: u32 = 0xB7;
 const CUE_TRACK: u32 = 0xF7;
+const CUE_TIME: u32 = 0xB3;
+const CUE_RELATIVE_POSITION: u32 = 0xF0;
+const CUE_DURATION: u32 = 0xB2;
+const INFO: u32 = 0x1549_A966;
+const TIMESTAMP_SCALE: u32 = 0x2A_D7B1;
+/// Matroska default: one tick is one millisecond.
+const DEFAULT_SCALE_NS: u64 = 1_000_000;
 
 const TRACK_TYPE_VIDEO: u64 = 1;
 const TRACK_TYPE_AUDIO: u64 = 2;
@@ -82,6 +90,8 @@ pub struct SubTrack {
     pub forced: bool,
     /// Cue points that carry a position for this track.
     pub cue_points: usize,
+    /// Of those, the ones with `CueDuration`.
+    pub cue_durations: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +127,10 @@ pub struct MkvReport {
     /// The K3 answer for this file: does any English text subtitle track
     /// appear in Cues? `None` when there is no English text track.
     pub english_text_indexed: Option<bool>,
+    /// `TimestampScale` was found in Info; otherwise the default was used.
+    pub scale_known: bool,
+    /// Built from Cues for the chosen English text track, if any.
+    pub ruler: Option<RulerReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,6 +290,7 @@ fn parse_tracks(data: &[u8]) -> TrackList {
                     default,
                     forced,
                     cue_points: 0,
+                    cue_durations: 0,
                 });
             }
             _ => {}
@@ -284,34 +299,67 @@ fn parse_tracks(data: &[u8]) -> TrackList {
     list
 }
 
-/// Cue point count, and per track number the cue points that mention it.
-type CueCounts = (usize, HashMap<u64, usize>);
+/// Cue point count, and per track number one reference per cue point.
+type CueCounts = (usize, HashMap<u64, Vec<CueRef>>);
 
 fn parse_cues(data: &[u8]) -> CueCounts {
     let mut points = 0;
-    let mut per_track: HashMap<u64, usize> = HashMap::new();
+    let mut per_track: HashMap<u64, Vec<CueRef>> = HashMap::new();
     for (_, point) in children(data)
         .into_iter()
         .filter(|(id, _)| *id == CUE_POINT)
     {
         points += 1;
+        let fields = children(point);
+        let Some(time) = fields
+            .iter()
+            .find(|(id, _)| *id == CUE_TIME)
+            .and_then(|(_, v)| uint(v))
+        else {
+            continue;
+        };
         let mut seen = Vec::new();
-        for (_, positions) in children(point)
-            .into_iter()
-            .filter(|(id, _)| *id == CUE_TRACK_POSITIONS)
-        {
+        for (_, positions) in fields.iter().filter(|(id, _)| *id == CUE_TRACK_POSITIONS) {
+            let mut track = None;
+            let mut cue = CueRef {
+                time,
+                duration: None,
+                relative: None,
+            };
             for (id, value) in children(positions) {
-                if id == CUE_TRACK
-                    && let Some(track) = uint(value)
-                    && !seen.contains(&track)
-                {
-                    seen.push(track);
-                    *per_track.entry(track).or_default() += 1;
+                match id {
+                    CUE_TRACK => track = uint(value),
+                    CUE_DURATION => cue.duration = uint(value),
+                    CUE_RELATIVE_POSITION => cue.relative = uint(value),
+                    _ => {}
                 }
+            }
+            if let Some(track) = track
+                && !seen.contains(&track)
+            {
+                seen.push(track);
+                per_track.entry(track).or_default().push(cue);
             }
         }
     }
     (points, per_track)
+}
+
+fn parse_info(data: &[u8]) -> Option<u64> {
+    children(data)
+        .into_iter()
+        .find(|(id, _)| *id == TIMESTAMP_SCALE)
+        .and_then(|(_, v)| uint(v))
+        .filter(|&scale| scale > 0)
+}
+
+/// The English text track to use as ruler: indexed, not forced if possible,
+/// then the one with the most cue points.
+fn pick_ruler_track(subtitles: &[SubTrack]) -> Option<&SubTrack> {
+    subtitles
+        .iter()
+        .filter(|s| s.english && s.codec.is_text() && s.cue_points > 0)
+        .max_by_key(|s| (!s.forced, s.cue_points))
 }
 
 struct Budget<'a> {
@@ -384,6 +432,7 @@ struct HeadScan {
     seek: Vec<(u32, u64)>,
     tracks: Option<TrackList>,
     cues: Option<(u64, CueCounts)>,
+    scale: Option<u64>,
 }
 
 fn scan_head(head: &[u8]) -> Result<HeadScan, MkvError> {
@@ -425,6 +474,7 @@ fn scan_head(head: &[u8]) -> Result<HeadScan, MkvError> {
         match header.id {
             SEEK_HEAD => scan.seek.extend(parse_seek_head(data)),
             TRACKS => scan.tracks = Some(parse_tracks(data)),
+            INFO => scan.scale = parse_info(data),
             CUES => scan.cues = Some((size as u64, parse_cues(data))),
             _ => {}
         }
@@ -492,17 +542,25 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
     };
 
     let mut subtitles = tracks.subtitles;
+    let mut ruler_report = None;
     let cues = match cues {
         Ok((bytes, (points, per_track))) => {
             for sub in &mut subtitles {
-                sub.cue_points = per_track.get(&sub.number).copied().unwrap_or(0);
+                let refs = per_track.get(&sub.number).map_or(&[][..], Vec::as_slice);
+                sub.cue_points = refs.len();
+                sub.cue_durations = refs.iter().filter(|r| r.duration.is_some()).count();
             }
             let video_points = tracks
                 .video
                 .iter()
-                .map(|n| per_track.get(n).copied().unwrap_or(0))
+                .map(|n| per_track.get(n).map_or(0, Vec::len))
                 .max()
                 .unwrap_or(0);
+            let scale = scan.scale.unwrap_or(DEFAULT_SCALE_NS);
+            ruler_report = pick_ruler_track(&subtitles).map(|track| {
+                let refs = per_track.get(&track.number).map_or(&[][..], Vec::as_slice);
+                ruler::build(track.number, refs, scale).0
+            });
             CuesState::Read {
                 bytes,
                 points,
@@ -532,6 +590,8 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
         subtitles,
         cues,
         english_text_indexed,
+        scale_known: scan.scale.is_some(),
+        ruler: ruler_report,
     })
 }
 
@@ -757,6 +817,56 @@ mod tests {
         }
         let file = MemFile::new(Vec::new());
         assert!(inspect(&file, &[0xFF; 64]).await.is_err());
+    }
+
+    fn sub_cue(time: u64, track: u64, duration: u64) -> Vec<u8> {
+        let mut pos = uint_el(CUE_TRACK, track);
+        pos.extend(uint_el(0xF1, 0));
+        pos.extend(uint_el(CUE_RELATIVE_POSITION, 7));
+        pos.extend(uint_el(CUE_DURATION, duration));
+        let mut data = uint_el(CUE_TIME, time);
+        data.extend(el(CUE_TRACK_POSITIONS, &pos));
+        el(CUE_POINT, &data)
+    }
+
+    #[tokio::test]
+    async fn ruler_uses_full_track_durations_and_scale() {
+        let mut forced = uint_el(TRACK_NUMBER, 2);
+        forced.extend(uint_el(TRACK_TYPE, TRACK_TYPE_SUBTITLE));
+        forced.extend(el(CODEC_ID, b"S_TEXT/UTF8"));
+        forced.extend(uint_el(FLAG_FORCED, 1));
+        let mut tracks = track(1, TRACK_TYPE_VIDEO, "V", None);
+        tracks.extend(el(TRACK_ENTRY, &forced));
+        tracks.extend(track(3, TRACK_TYPE_SUBTITLE, "S_TEXT/UTF8", Some("eng")));
+
+        // Scale 10 ms per tick.
+        let mut body = el(INFO, &uint_el(TIMESTAMP_SCALE, 10_000_000));
+        body.extend(el(TRACKS, &tracks));
+        let mut cues = cue_point(0, &[1]);
+        cues.extend(sub_cue(100, 3, 200));
+        cues.extend(sub_cue(500, 3, 150));
+        cues.extend(sub_cue(500, 2, 150));
+        cues.extend(cue_point(900, &[3]));
+        body.extend(el(CUES, &cues));
+        let mut file = el(EBML, &[]);
+        file.extend(el(SEGMENT, &body));
+
+        let mem = MemFile::new(file.clone());
+        let report = inspect(&mem, &file).await.unwrap();
+        assert!(report.scale_known);
+        let forced = &report.subtitles[0];
+        assert_eq!(
+            (forced.number, forced.cue_points, forced.cue_durations),
+            (2, 1, 1)
+        );
+        let ruler = report.ruler.unwrap();
+        assert_eq!(ruler.track, 3, "full track wins over forced");
+        assert_eq!(
+            (ruler.cue_refs, ruler.with_duration, ruler.events),
+            (3, 2, 2)
+        );
+        assert_eq!(ruler.first_ms, Some(1_000));
+        assert_eq!(ruler.last_end_ms, Some(6_500));
     }
 
     #[test]

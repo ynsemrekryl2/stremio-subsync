@@ -18,6 +18,11 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 
 > M1 sonucu planı değiştirebilir. M2+ işleri keşif bittikten sonra açılır.
 
+## M2 — Cetvel
+
+- [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
+- [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
+
 ## Devam notları (2026-10-27)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
