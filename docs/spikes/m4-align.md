@@ -136,6 +136,20 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
   değişmedi; SDH'de kapsama düşük, isabet benzer.
 - Sınırdaki kabuller (%52–61 isabet) etiketlenmeden eşik değiştirilmemeli.
 
+### Etiketler
+
+| Dump | Aday | Karar | Fix | Pencere kaydırmaları (global'e göre) | İsabet | Kullanıcı etiketi |
+|---|---|---|---|---|---|---|
+| …265984 (bölüm, ~22 dk) | 1 (puan 75), 532 satır / cetvel 551 | ret `Disagree(0)` | 1/1, −500 ms | −450, +50, +60 | %36 / %46 / %28 | "çok az erken" (izlenen yer: belirtilmedi) |
+
+- Orta ve son pencere −450 / −440 ms diyor; global −500 ms bunlardan ~60 ms
+  erken. Kullanıcının "çok az erken" demesi bununla uyumlu.
+- Baş penceresi −950 ms diyor: ilk ~7 dakikada altyazı −500 ile ~0.45 sn geç
+  kalıyor olmalı. Baş gerçekten kaymışsa ret doğru; değilse baş penceresinin
+  tahmini yanlış ve bu bir yanlış ret.
+- İsabet düşük (%28–46) ama satır sayıları neredeyse eşit: bu çevirinin satır
+  başlangıçları İngilizce izden belirgin farklı zamanlanmış.
+
 ### Kalibrasyon düzeni
 
 `SUBSYNC_DUMP_DIR=dumps` ile her hizalanan istek `dumps/<unix ms>.json`
