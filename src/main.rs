@@ -27,9 +27,13 @@ async fn main() {
     // The manifest link embeds the AIOStreams configuration; it is never printed.
     match std::env::var("SUBSYNC_AIOSTREAMS_URL") {
         Ok(raw) if !raw.trim().is_empty() => {
-            let Some(source) = streams::AioStreams::from_manifest_url(&raw) else {
-                eprintln!("SUBSYNC_AIOSTREAMS_URL must be an http(s) link ending in manifest.json");
-                std::process::exit(2);
+            let source = match streams::AioStreams::from_manifest_url(&raw) {
+                Ok(source) => source,
+                Err(reason) => {
+                    // Only the failed check is printed, never the link.
+                    eprintln!("SUBSYNC_AIOSTREAMS_URL refused: {reason}");
+                    std::process::exit(2);
+                }
             };
             state = state.with_stream_source(std::sync::Arc::new(source));
             eprintln!("aiostreams probe: on");

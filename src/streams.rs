@@ -184,6 +184,26 @@ pub async fn probe(
     }
 }
 
+/// Why a manifest link was refused. Carries no part of the link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestUrlError {
+    NotAUrl,
+    Scheme,
+    NotManifest,
+    Client,
+}
+
+impl std::fmt::Display for ManifestUrlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotAUrl => "not a URL (check for missing characters or extra text)",
+            Self::Scheme => "must start with https://, http:// or stremio://",
+            Self::NotManifest => "path must end in manifest.json",
+            Self::Client => "cannot build the HTTP client",
+        })
+    }
+}
+
 /// AIOStreams instance addressed by its manifest link. The link embeds the
 /// user's configuration, so this type has no `Debug` and errors drop the URL.
 pub struct AioStreams {
@@ -192,13 +212,22 @@ pub struct AioStreams {
 }
 
 impl AioStreams {
-    /// Accepts an `http(s)://…/manifest.json` link; anything else is `None`.
-    pub fn from_manifest_url(raw: &str) -> Option<Self> {
-        let url = Url::parse(raw.trim()).ok()?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-            return None;
+    /// Accepts an `http(s)://…/manifest.json` link, or the `stremio://` form
+    /// of it that install buttons hand out.
+    pub fn from_manifest_url(raw: &str) -> Result<Self, ManifestUrlError> {
+        let raw = raw.trim();
+        let url = match raw.strip_prefix("stremio://") {
+            Some(rest) => Url::parse(&format!("https://{rest}")),
+            None => Url::parse(raw),
         }
-        let path = url.path().strip_suffix("manifest.json")?;
+        .map_err(|_| ManifestUrlError::NotAUrl)?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+            return Err(ManifestUrlError::Scheme);
+        }
+        let path = url
+            .path()
+            .strip_suffix("manifest.json")
+            .ok_or(ManifestUrlError::NotManifest)?;
         let mut base = url.clone();
         base.set_path(path);
         base.set_query(None);
@@ -207,8 +236,8 @@ impl AioStreams {
             .timeout(FETCH_TIMEOUT)
             .user_agent(concat!("stremio-subsync/", env!("CARGO_PKG_VERSION")))
             .build()
-            .ok()?;
-        Some(Self { base, client })
+            .map_err(|_| ManifestUrlError::Client)?;
+        Ok(Self { base, client })
     }
 
     fn stream_url(&self, kind: &str, id: &str) -> Option<Url> {
@@ -350,13 +379,40 @@ mod tests {
     }
 
     #[test]
+    fn stremio_scheme_is_read_as_https() {
+        let source =
+            AioStreams::from_manifest_url(" stremio://aio.test/stremio/u/secret/manifest.json\n")
+                .unwrap();
+        assert_eq!(
+            source.stream_url("movie", "tt1").unwrap().as_str(),
+            "https://aio.test/stremio/u/secret/stream/movie/tt1.json"
+        );
+    }
+
+    #[test]
+    fn refusal_reason_names_the_failed_check() {
+        let reason = |raw| AioStreams::from_manifest_url(raw).err();
+        assert_eq!(reason("not a url"), Some(ManifestUrlError::NotAUrl));
+        assert_eq!(
+            reason("ftp://aio.test/manifest.json"),
+            Some(ManifestUrlError::Scheme)
+        );
+        assert_eq!(
+            reason("https://aio.test/configure"),
+            Some(ManifestUrlError::NotManifest)
+        );
+        let printed = ManifestUrlError::NotManifest.to_string();
+        assert!(!printed.contains("aio.test"), "{printed}");
+    }
+
+    #[test]
     fn non_manifest_urls_are_rejected() {
         for raw in [
             "https://aio.test/stremio/u/secret/",
             "ftp://aio.test/manifest.json",
             "not a url",
         ] {
-            assert!(AioStreams::from_manifest_url(raw).is_none(), "{raw}");
+            assert!(AioStreams::from_manifest_url(raw).is_err(), "{raw}");
         }
     }
 
