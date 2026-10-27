@@ -9,7 +9,7 @@ Stremio ──GET /{token}/subtitles/{type}/{id}/{extra}──▶ add-on
 1. Dosyayı tanı     AIOStreams /stream/{type}/{id}.json → filename + boyutu
                     tutan stream → oynatma URL'si (arkada Real-Debrid veya TorBox)
 2. Cetveli oku      HTTP Range: EBML başlığı → SeekHead → Tracks + Cues →
-                    İngilizce metin izinin bloklarını tek tek oku → cue zamanları
+                    İngilizce metin izinin CueTime + CueDuration'ı → cue zamanları
 3. Adayları topla   OpenSubtitles v3 (anahtarsız) + SubDL (ücretsiz anahtar);
                     sürüm adı dosyaya en çok benzeyen önce
 4. Hizala ve test   konuşma maskesi (10 ms) + FFT çapraz korelasyon; fps adayları;
