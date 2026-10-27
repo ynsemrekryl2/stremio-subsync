@@ -1,9 +1,14 @@
 mod addon;
+// Wired into the subtitles route in M5.
+#[cfg_attr(not(test), allow(dead_code))]
+mod align;
 mod extra;
 mod mkv;
 mod range;
 mod ruler;
 mod streams;
+#[cfg(test)]
+mod synth;
 
 use std::net::SocketAddr;
 
