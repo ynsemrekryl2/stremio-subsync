@@ -1,5 +1,6 @@
 mod addon;
 mod extra;
+mod mkv;
 mod range;
 mod streams;
 

@@ -152,16 +152,44 @@ pub enum RangeError {
 }
 
 pub type RangeOutcome = Result<RangeReport, RangeError>;
-pub type RangeFuture<'a> = Pin<Box<dyn Future<Output = RangeOutcome> + Send + 'a>>;
 
-/// Reads the first bytes of a stream URL; faked in tests.
+/// Why a later range read failed. Carries no URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadError {
+    Timeout,
+    Connect,
+    Status(u16),
+    /// The server answered 200 instead of 206; nothing more is read.
+    RangeIgnored,
+    Other,
+}
+
+pub type ReadFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>, ReadError>> + Send + 'a>>;
+
+/// Random access to the bytes of one file; faked in tests.
+pub trait ByteSource: Send + Sync {
+    /// Reads up to `len` bytes starting at `start`; fewer only at end of file.
+    fn read(&self, start: u64, len: usize) -> ReadFuture<'_>;
+}
+
+/// A successful first read: its report, the bytes, and the file for more reads.
+/// No `Debug`: the file holds the resolved URL.
+pub struct Opened {
+    pub report: RangeReport,
+    pub head: Vec<u8>,
+    pub file: Box<dyn ByteSource>,
+}
+
+pub type OpenFuture<'a> = Pin<Box<dyn Future<Output = Result<Opened, RangeError>> + Send + 'a>>;
+
+/// Opens a stream URL by reading its first bytes; faked in tests.
 pub trait RangeReader: Send + Sync {
-    fn read_head<'a>(
+    fn open<'a>(
         &'a self,
         url: &'a str,
         source_host: &'a str,
         expected_size: Option<u64>,
-    ) -> RangeFuture<'a>;
+    ) -> OpenFuture<'a>;
 }
 
 pub struct HttpRangeReader {
@@ -190,13 +218,30 @@ fn classify(err: &reqwest::Error, hops: Vec<HostKind>) -> RangeError {
     }
 }
 
+/// Reads at most `limit` bytes of a body; dropping the response afterwards
+/// closes the connection, so a server that ignores the range costs no more.
+async fn read_capped(
+    response: &mut reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, reqwest::Error> {
+    let mut body = Vec::with_capacity(limit.min(HEAD_BYTES));
+    while body.len() < limit {
+        match response.chunk().await? {
+            Some(chunk) => body.extend_from_slice(&chunk),
+            None => break,
+        }
+    }
+    body.truncate(limit);
+    Ok(body)
+}
+
 impl RangeReader for HttpRangeReader {
-    fn read_head<'a>(
+    fn open<'a>(
         &'a self,
         url: &'a str,
         source_host: &'a str,
         expected_size: Option<u64>,
-    ) -> RangeFuture<'a> {
+    ) -> OpenFuture<'a> {
         Box::pin(async move {
             let started = Instant::now();
             let mut hops = Vec::new();
@@ -232,28 +277,61 @@ impl RangeReader for HttpRangeReader {
                 }
                 let status = response.status();
                 let headers = response.headers().clone();
-                // Stop at the budget even if the server ignored the range;
-                // dropping the response closes the connection.
-                let mut body = Vec::with_capacity(HEAD_BYTES);
-                while body.len() < HEAD_BYTES {
-                    match response.chunk().await {
-                        Ok(Some(chunk)) => body.extend_from_slice(&chunk),
-                        Ok(None) => break,
-                        Err(err) => return Err(classify(&err, hops)),
-                    }
-                }
-                body.truncate(HEAD_BYTES);
+                let head = match read_capped(&mut response, HEAD_BYTES).await {
+                    Ok(head) => head,
+                    Err(err) => return Err(classify(&err, hops)),
+                };
                 let elapsed_ms = started.elapsed().as_millis();
-                return Ok(analyze(
-                    hops,
-                    status,
-                    &headers,
-                    &body,
-                    expected_size,
-                    elapsed_ms,
-                ));
+                let report = analyze(hops, status, &headers, &head, expected_size, elapsed_ms);
+                let file = Box::new(HttpFile {
+                    client: self.client.clone(),
+                    url,
+                });
+                return Ok(Opened { report, head, file });
             }
         })
+    }
+}
+
+/// The final URL after redirects. No `Debug`: it is a playable link.
+struct HttpFile {
+    client: reqwest::Client,
+    url: Url,
+}
+
+impl ByteSource for HttpFile {
+    fn read(&self, start: u64, len: usize) -> ReadFuture<'_> {
+        Box::pin(async move {
+            if len == 0 {
+                return Ok(Vec::new());
+            }
+            let end = start.saturating_add(len as u64 - 1);
+            let mut response = self
+                .client
+                .get(self.url.clone())
+                .header(RANGE, format!("bytes={start}-{end}"))
+                .send()
+                .await
+                .map_err(|err| read_error(&err))?;
+            match response.status() {
+                StatusCode::PARTIAL_CONTENT => {}
+                StatusCode::OK => return Err(ReadError::RangeIgnored),
+                status => return Err(ReadError::Status(status.as_u16())),
+            }
+            read_capped(&mut response, len)
+                .await
+                .map_err(|err| read_error(&err))
+        })
+    }
+}
+
+fn read_error(err: &reqwest::Error) -> ReadError {
+    if err.is_timeout() {
+        ReadError::Timeout
+    } else if err.is_connect() {
+        ReadError::Connect
+    } else {
+        ReadError::Other
     }
 }
 

@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use crate::extra::PlaybackHints;
+use crate::mkv::{self, MkvOutcome};
 use crate::range::{RangeOutcome, RangeReader};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -168,6 +169,9 @@ pub enum ProbeOutcome {
         /// Present only when the range read is enabled and the single match
         /// has an HTTP URL.
         range: Option<RangeOutcome>,
+        /// Tracks and Cues of the matched file; only after a partial read
+        /// that starts with the EBML header.
+        mkv: Option<Box<MkvOutcome>>,
     },
     Failed {
         elapsed_ms: u128,
@@ -193,16 +197,29 @@ pub async fn probe(
         Err(error) => return ProbeOutcome::Failed { elapsed_ms, error },
     };
     let (report, single) = match_streams(hints, &streams, source.host());
-    let range = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
+    let (range, mkv) = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
         (Some(reader), Some(Target::Http { .. }), Some(url)) => {
-            Some(reader.read_head(url, source.host(), hints.video_size).await)
+            match reader.open(url, source.host(), hints.video_size).await {
+                Ok(opened) => {
+                    let mkv = if opened.report.partial && opened.report.ebml_magic {
+                        Some(Box::new(
+                            mkv::inspect(opened.file.as_ref(), &opened.head).await,
+                        ))
+                    } else {
+                        None
+                    };
+                    (Some(Ok(opened.report)), mkv)
+                }
+                Err(err) => (Some(Err(err)), None),
+            }
         }
-        _ => None,
+        _ => (None, None),
     };
     ProbeOutcome::Matched {
         elapsed_ms,
         report,
         range,
+        mkv,
     }
 }
 
@@ -520,12 +537,12 @@ mod tests {
     struct FakeRange(std::sync::Mutex<Vec<(String, Option<u64>)>>);
 
     impl RangeReader for FakeRange {
-        fn read_head<'a>(
+        fn open<'a>(
             &'a self,
             url: &'a str,
             _source_host: &'a str,
             expected_size: Option<u64>,
-        ) -> crate::range::RangeFuture<'a> {
+        ) -> crate::range::OpenFuture<'a> {
             self.0.lock().unwrap().push((url.to_owned(), expected_size));
             Box::pin(async { Err(crate::range::RangeError::Other { hops: Vec::new() }) })
         }

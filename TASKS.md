@@ -11,7 +11,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 
 - [~] **SS-003** K1: Masaüstü, Android TV ve Apple TV'nin gönderdiği alanları ölç (istek logu yalnız var/yok basıyor) — kanıt: `docs/spikes/k1-playback-hints.md` (masaüstü ve Android TV bitti; Apple TV bekliyor, Tailscale Funnel ile ölçülecek)
 - [x] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (Real-Debrid, masaüstü: 5/5 `both: 1`; URL tek yönlendirmeyle RD'ye gidiyor, 206 Range). TorBox → SS-007
-- [ ] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği (RD: evet, ev IP'sinden — K2 notu); 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md`
+- [~] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği (RD: evet, ev IP'sinden — K2 notu); 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md` (probe yazıldı, yerel MKV ile denendi; gerçek dosya ölçümleri bekliyor)
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
 - [ ] **SS-007** TorBox ile K2 eşleşme ve K3 Range ölçümlerini tekrarla (abonelik yenilenince) — kanıt: K2/K3 notlarında TorBox satırları
 
@@ -33,6 +33,9 @@ Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
   `SUBSYNC_RANGE_PROBE=1` verilirse eşleşen URL'den ilk 64 KB okunur. Loglar
   yalnız sayı ve tür taşır. TorBox'ta URL çağırma indirme başlatabilir;
   TorBox gelince (SS-007) ilk denemeyi kullanıcı onayıyla yap.
+- **SS-005 (K3):** `SUBSYNC_RANGE_PROBE=1` ile her eşleşen MKV'de Tracks ve
+  Cues okunur; `k2 probe` satırının `mkv:` kısmı K3 notuna işlenir. 10+ dosya
+  gerekli; farklı kaynaklar (WEB-DL, BluRay remux, encode) karışık olmalı.
 - **SS-005 (K3) riski:** Range okumaları VPS'in IP'sinden, oynatma evin
   IP'sinden yapılacak. Real-Debrid aynı linkin farklı IP'lerden kullanılmasını
   ya da veri merkezi IP'lerini kısıtlayabilir; K3'te ayrıca bakılmalı.
