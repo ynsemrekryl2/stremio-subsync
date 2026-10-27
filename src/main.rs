@@ -1,5 +1,6 @@
 mod addon;
 mod align;
+mod dump;
 mod extra;
 mod mkv;
 mod range;
@@ -24,6 +25,16 @@ const MIN_TOKEN_LEN: usize = 32;
 
 #[tokio::main]
 async fn main() {
+    // `stremio-subsync calibrate [dir]` replays saved dumps; no server.
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("calibrate") {
+        let dir = args.next().unwrap_or_else(|| "dumps".to_owned());
+        if let Err(err) = dump::calibrate(std::path::Path::new(&dir)) {
+            eprintln!("calibrate {dir}: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let token = std::env::var("SUBSYNC_TOKEN").unwrap_or_default();
     if token.len() < MIN_TOKEN_LEN {
         eprintln!("SUBSYNC_TOKEN must be set to at least {MIN_TOKEN_LEN} characters");
@@ -95,6 +106,13 @@ async fn main() {
         state = state.with_subtitle_sources(found, lang);
     } else {
         eprintln!("sources probe: off");
+    }
+    match std::env::var("SUBSYNC_DUMP_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => {
+            eprintln!("timing dump: on ({dir})");
+            state = state.with_dump_dir(dir.trim().into());
+        }
+        _ => eprintln!("timing dump: off"),
     }
     let listener = tokio::net::TcpListener::bind(bind)
         .await

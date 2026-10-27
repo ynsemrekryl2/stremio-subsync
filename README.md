@@ -34,6 +34,7 @@ http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_LANG` | `tur` | Aranan altyazı dili (ISO 639-2, OpenSubtitles adlarıyla: `tur`, `eng`, `pob`). |
 | `SUBSYNC_SOURCES_PROBE` | kapalı | `1` ise her istekte aday altyazılar aranır ve en iyi 3'ü indirilir (M3 ölçümü). |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. |
+| `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
 
 Sunucu kurulumu: [`docs/deploy.md`](docs/deploy.md)
 

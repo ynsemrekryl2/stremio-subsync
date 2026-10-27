@@ -1,1 +1,3 @@
 /target
+# Probe timing dumps: local only, they describe what was watched.
+/dumps

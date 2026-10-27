@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::align;
+use crate::dump::{self, Dump};
 use crate::extra::PlaybackHints;
 use crate::range::RangeReader;
 use crate::sources::{self, Query, SubtitleSource};
@@ -28,6 +29,8 @@ pub struct AppState {
     subtitle_sources: Vec<Arc<dyn SubtitleSource>>,
     /// ISO 639-2 language subtitles are looked for in.
     lang: String,
+    /// Where probe timings are saved for calibration, if anywhere.
+    dump_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             range: None,
             subtitle_sources: Vec::new(),
             lang: String::new(),
+            dump_dir: None,
         })
     }
 
@@ -62,6 +66,12 @@ impl AppState {
     ) -> Self {
         self.subtitle_sources = sources;
         self.lang = lang;
+        self
+    }
+
+    /// Saves ruler and candidate timings of every aligned request under `dir`.
+    pub fn with_dump_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.dump_dir = Some(dir);
         self
     }
 
@@ -181,6 +191,7 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     if stream_source.is_some() || (subtitle_sources.is_some() && query.is_some()) {
         // Runs beside the response so Stremio is not kept waiting.
         let range = state.range.clone();
+        let dump_dir = state.dump_dir.clone();
         let (kind, id) = (kind.to_owned(), id.to_owned());
         tokio::spawn(async move {
             let filename = hints.filename.clone();
@@ -195,22 +206,37 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
                 let (sources, query) = (subtitle_sources?, query?);
                 let (outcome, times) = sources::probe(&sources, &query, filename.as_deref()).await;
                 eprintln!("m3 probe query={query:?} outcome={outcome:?}");
-                Some(times)
+                let scores: Vec<Option<i32>> = outcome
+                    .downloads
+                    .iter()
+                    .map(|d| d.as_ref().ok().map(|stats| stats.score))
+                    .collect();
+                Some((times, scores))
             };
-            let (k2, times) = tokio::join!(k2, m3);
+            let (k2, m3) = tokio::join!(k2, m3);
             let rulers = match k2 {
                 Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) => {
                     (*mkv).ok().map(|report| report.rulers.0)
                 }
                 _ => None,
             };
-            // Alignment is CPU work; keep it off the async workers.
-            if let (Some(rulers), Some(times)) = (rulers, times)
+            // Alignment and the dump are CPU and disk work; keep them off the
+            // async workers.
+            if let (Some(rulers), Some((times, scores))) = (rulers, m3)
                 && !rulers.is_empty()
                 && times.iter().any(Option::is_some)
-                && let Ok(trials) =
-                    tokio::task::spawn_blocking(move || align::trials(&rulers, &times)).await
+                && let Ok((trials, dumped)) = tokio::task::spawn_blocking(move || {
+                    let dumped = dump_dir
+                        .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)));
+                    (align::trials(&rulers, &times), dumped)
+                })
+                .await
             {
+                match dumped {
+                    Some(Ok(name)) => eprintln!("dump written file={name}"),
+                    Some(Err(err)) => eprintln!("dump failed error={:?}", err.kind()),
+                    None => {}
+                }
                 for trial in trials {
                     eprintln!("m4 probe {trial:?}");
                 }

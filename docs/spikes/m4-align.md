@@ -18,8 +18,11 @@ yoksa `alass-core` 2.0.0'ı (GPL-3.0) mı kullanalım?
    - en az 20 cetvel satırı (`ThinWindow`),
    - pencerenin kendi en iyi kaydırması (global ±60 sn içinde aranır)
      globalden en fazla 300 ms uzakta (`Disagree`),
-   - cetvel satırlarının en az %50'si 300 ms içinde bir aday satırla
-     karşılanıyor (`LowHits`).
+   - aday satırı sayısı cetvel satırlarının en az %40'ı (`Sparse`; CD1 gibi
+     yarım altyazılar),
+   - satırların en az %50'si 300 ms içinde karşılanıyor; oran **satırı az
+     olan tarafa** göre (`LowHits`). İlk sürüm cetvele bölüyordu; satırları
+     birleştiren çeviriler haksız yere düşüyordu (aşağıda Bölüm 1).
    Biri tutmazsa altyazı sunulmaz.
 
 Eşikler sentetik veriyle seçildi; gerçek dosyalarla SS-014'te ayarlanacak.
@@ -40,6 +43,8 @@ efekti satırı, %12 birleştirme.
 | `drift` | ret | listede olmayan 1.003 ölçek (2 saatte ~20 sn kayma) |
 | `scrambled` | ret | her satır ±2.5 sn rastgele kaymış |
 | `forced-ruler` | ret | cetvel yalnız ~30 satırlık zorunlu iz |
+| `translated`, `translated-pal` | kabul | 4 sn'ye kadar aralıklı satırların %60'ı birleşik; satır sayısı cetvelin %60–73'ü (gerçek bölümde %62) |
+| `cd1` | ret | çevirinin yalnız ilk %55'i (iki CD'lik altyazının ilk parçası) |
 
 ## Karşılaştırma (2026-10-27)
 
@@ -101,6 +106,13 @@ izleyerek verdiği karardır; boşsa henüz etiketlenmedi.
   Adayın satırlarına göre oran ~%58.
 - Sentetik sette aday ve cetvel satır sayıları yakındı; bu yanlılık orada
   görünmedi.
+
+### Kalibrasyon düzeni
+
+`SUBSYNC_DUMP_DIR=dumps` ile her hizalanan istek `dumps/<unix ms>.json`
+olarak saklanır: yalnız cetvel ve aday satır zamanları ile sıralama puanı
+(kimlik, ad, metin yok; `dumps/` git'e girmez). `cargo run -- calibrate dumps`
+hepsini güncel kodla yeniden hizalar ve deneme başına bir satır basar.
 
 ## Açık
 

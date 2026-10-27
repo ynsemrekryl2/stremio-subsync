@@ -66,6 +66,8 @@ pub struct Style {
     pub extra: f64,
     /// Chance of joining a line to the previous one when they are close.
     pub merge: f64,
+    /// How close "close" is: the gap after the previous line.
+    pub merge_gap_ms: u64,
 }
 
 impl Style {
@@ -75,6 +77,7 @@ impl Style {
         drop: 0.0,
         extra: 0.0,
         merge: 0.05,
+        merge_gap_ms: 1_500,
     };
     /// A subtitle from somewhere else, timed for another release.
     pub const OTHER: Style = Style {
@@ -82,6 +85,16 @@ impl Style {
         drop: 0.08,
         extra: 0.05,
         merge: 0.12,
+        merge_gap_ms: 1_500,
+    };
+    /// A translation that joins close lines: about 60% of the ruler's line
+    /// count, as seen on a real episode (619 lines against 1006).
+    pub const TRANSLATED: Style = Style {
+        jitter_ms: 200,
+        drop: 0.05,
+        extra: 0.02,
+        merge: 0.6,
+        merge_gap_ms: 4_000,
     };
 }
 
@@ -99,7 +112,7 @@ pub fn lines(rng: &mut Rng, speech: &[Event], style: &Style) -> Vec<Event> {
         let start = jitter(rng, said.start_ms, style.jitter_ms);
         let end = jitter(rng, said.end_ms, style.jitter_ms).max(start + 300);
         if let Some(prev) = out.last_mut()
-            && start < prev.end_ms + 1_500
+            && start < prev.end_ms + style.merge_gap_ms
             && rng.chance(style.merge)
         {
             prev.end_ms = prev.end_ms.max(end);
@@ -172,9 +185,16 @@ pub fn labeled_set(seed: u64) -> Vec<Case> {
         ("pal-fast", fix(25_025, 24_000, rng.signed(30_000))),
         ("pal-slow", fix(24_000, 25_025, rng.signed(30_000))),
         ("ntsc24", fix(1_001, 1_000, rng.signed(30_000))),
+        ("translated", fix(1, 1, rng.signed(90_000))),
+        ("translated-pal", fix(25_025, 24_000, rng.signed(30_000))),
     ];
     for (name, truth) in positives {
-        let other = lines(&mut rng, &speech, &Style::OTHER);
+        let style = if name.starts_with("translated") {
+            &Style::TRANSLATED
+        } else {
+            &Style::OTHER
+        };
+        let other = lines(&mut rng, &speech, style);
         cases.push(Case {
             name,
             ruler: ruler.clone(),
@@ -230,6 +250,14 @@ pub fn labeled_set(seed: u64) -> Vec<Case> {
         .filter(|e| e.start_ms < end * 45 / 100)
         .collect();
     negative("partial", ruler.clone(), partial);
+
+    // The first of two parts, as old two-CD subtitles come.
+    let other = lines(&mut rng, &speech, &Style::TRANSLATED);
+    let first_cd = other
+        .into_iter()
+        .filter(|e| e.start_ms < end * 55 / 100)
+        .collect();
+    negative("cd1", ruler.clone(), first_cd);
 
     // A steady drift no listed frame-rate fix explains.
     let other = lines(&mut rng, &speech, &Style::OTHER);

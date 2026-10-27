@@ -20,8 +20,13 @@ const MIN_WINDOW_EVENTS: usize = 20;
 const AGREE_MS: i64 = 300;
 /// A ruler line is hit when an aligned candidate line starts this close.
 const HIT_MS: i64 = 300;
-/// Share of ruler lines each window must hit at the global fix.
+/// Share of lines each window must hit at the global fix, counted on the
+/// side with fewer lines: a translation that joins two lines into one can
+/// hit at most one of the pair.
 const MIN_HIT_RATE: f64 = 0.5;
+/// Candidate lines each window must have, as a share of its ruler lines.
+/// Keeps a half subtitle (CD1 of two) from passing on its few last lines.
+const MIN_COVERAGE: f64 = 0.4;
 
 /// Frame-rate fixes tried, as `time * num / den`: a subtitle timed for one
 /// rate laid over a release that plays at another.
@@ -59,6 +64,8 @@ pub enum Reject {
     NoOverlap,
     /// Too few ruler lines in this window to judge it.
     ThinWindow(usize),
+    /// Too few candidate lines in this window for its ruler lines.
+    Sparse(usize),
     /// This window's own best shift is somewhere else.
     Disagree(usize),
     /// Too few ruler lines in this window are hit at the fix.
@@ -69,16 +76,21 @@ pub enum Reject {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowCheck {
     pub ruler_events: usize,
+    /// Aligned candidate lines that start in this window.
+    pub candidate_events: usize,
     /// The window's own best shift, searched around the global one.
     pub best_shift_ms: Option<i64>,
+    /// Hits over the smaller of the two line counts.
     pub hit_rate: f64,
+    /// Candidate lines over ruler lines.
+    pub coverage: f64,
 }
 
 /// Outcome of laying one candidate over the ruler. Safe to log.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Verdict {
     pub fix: Option<Fix>,
-    /// Share of all ruler lines hit at the fix.
+    /// Hits over the smaller of the two line counts, whole film.
     pub hit_rate: f64,
     pub windows: Vec<WindowCheck>,
     pub reject: Option<Reject>,
@@ -156,14 +168,24 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
             center + reach,
         );
         let best_shift_ms = peak(&curve).map(|i| (center - reach + i as i64) * STEP_MS);
-        let hit_rate = rate(hits(&part, &starts).len(), part.len());
+        let (lo_ms, hi_ms) = (lo as i64, hi as i64);
+        let candidate_events = starts
+            .iter()
+            .filter(|&&s| s >= lo_ms && (s < hi_ms || w + 1 == WINDOWS))
+            .count();
+        let hit_rate = rate(hits(&part, &starts).len(), part.len().min(candidate_events));
+        let coverage = rate(candidate_events, part.len());
         windows.push(WindowCheck {
             ruler_events: part.len(),
+            candidate_events,
             best_shift_ms,
             hit_rate,
+            coverage,
         });
         let failed = if part.len() < MIN_WINDOW_EVENTS {
             Some(Reject::ThinWindow(w))
+        } else if coverage < MIN_COVERAGE {
+            Some(Reject::Sparse(w))
         } else if best_shift_ms.is_none_or(|s| (s - fix.shift_ms).abs() > AGREE_MS) {
             Some(Reject::Disagree(w))
         } else if hit_rate < MIN_HIT_RATE {
@@ -176,7 +198,10 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
 
     Verdict {
         fix: Some(fix),
-        hit_rate: rate(hits(&ruler, &starts).len(), ruler.len()),
+        hit_rate: rate(
+            hits(&ruler, &starts).len(),
+            ruler.len().min(candidate.len()),
+        ),
         windows,
         reject,
     }
@@ -222,7 +247,7 @@ fn rate(part: usize, whole: usize) -> f64 {
     if whole == 0 {
         0.0
     } else {
-        part as f64 / whole as f64
+        (part as f64 / whole as f64).min(1.0)
     }
 }
 
