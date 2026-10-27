@@ -41,7 +41,9 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
 
 | Tarih | İstemci | İçerik | Debrid | streams | both | filename_exact | size | target | elapsed_ms |
 |---|---|---|---|---|---|---|---|---|---|
-| 2026-10-27 | Stremio masaüstü, macOS | film | ? | 38 | 1 | 1 | 1 | `Http { same_host: false }` | 1469 |
+| 2026-10-27 | Stremio masaüstü, macOS | film | Real-Debrid | 38 | 1 | 1 | 1 | `Http { same_host: false }` | 1469 |
+| 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü | Real-Debrid | 20 | 1 | 1 | 1 | `Http { same_host: false }` | 376 |
+| 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü | Real-Debrid | 14 | 1 | 1 | 1 | `Http { same_host: false }` | 416 |
 
 ## Notlar
 
@@ -52,7 +54,11 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
   (`same_host: false`). Ya doğrudan debrid linki ya da başka bir alan adındaki
   playback yolu; hangisi olduğu ve çağrılınca ne tetiklediği ayrı denemede
   (kullanıcı onayıyla) bakılacak. K3'teki Range okumaları bu URL'ye yapılacak.
-- Stream listesi ~1,5 sn'de geldi; altyazı yanıtını bekletmediği için oynatmayı
+- **Dizi bölümleri (2 örnek):** aynı tablo; her ikisinde de `both: 1`. Şu ana
+  kadar 3/3 örnekte filename + boyut tek stream'i kesin seçiyor, `filename_loose`
+  hiçbirinde ek aday getirmedi.
+- TorBox aboneliği bitti; tüm örnekler Real-Debrid. TorBox ölçümü SS-007'de.
+- Stream listesi ilk istekte ~1,5 sn, sonrakilerde ~0,4 sn'de geldi; altyazı yanıtını bekletmediği için oynatmayı
   etkilemedi. Gerçek akışta bu süre altyazı gecikmesine eklenecek; cache gerekli.
 - Aynı oturumda iki `route=none token=bad status=404` isteği düştü. Funnel genel
   adres olduğu için tarayıcı/bot istekleri olabilir; add-on'u etkilemiyor.
