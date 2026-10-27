@@ -104,6 +104,9 @@ pub enum CuesState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MkvReport {
     pub requests: usize,
+    /// Reads that failed once and were tried again (included in `requests`
+    /// only once).
+    pub retries: usize,
     pub bytes_read: usize,
     pub elapsed_ms: u128,
     pub seek_entries: usize,
@@ -116,7 +119,7 @@ pub struct MkvReport {
     pub english_text_indexed: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MkvError {
     Read(ReadError),
     Malformed(&'static str),
@@ -520,6 +523,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
 
     Ok(MkvReport {
         requests: budget.requests,
+        retries: file.retries(),
         bytes_read: budget.bytes_read,
         elapsed_ms: started.elapsed().as_millis(),
         seek_entries: scan.seek.len(),

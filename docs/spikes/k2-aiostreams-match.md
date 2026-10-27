@@ -76,6 +76,9 @@ Range okuma sonuçları:
 | bölüm, 1. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 1246 |
 | bölüm, 2. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 658 |
 
+İkinci tur (2026-10-27, range ve K3 açık): 16 istek daha (film ve dizi,
+9–41 stream); **hepsinde `both: 1`**. Ayrıntılar K3 notunda.
+
 ## Sonuç (Real-Debrid, masaüstü)
 
 - **Eşleşme:** 5/5 örnekte `filename` + `videoSize` tek stream'i kesin seçti
@@ -85,6 +88,10 @@ Range okuma sonuçları:
   host'ta; tek yönlendirmeyle Real-Debrid indirme host'una gidiyor. Orada
   Range'e uyuluyor (206), bildirilen boyut `videoSize` ile aynı, dosya MKV.
   İlk 64 KB 0,7–1,2 sn'de geldi.
+- Debrid'de hazır olmayan dosyalar da eşleşiyor; URL'leri gerçek dosya yerine
+  başka bir host'tan, boyutu tutmayan, MKV olmayan bir video veriyor
+  (`hops: [Other, Other]`). Range okuması bunu `size_matches: false` ile ayırt
+  ediyor.
 - Debrid tarafında ne tetiklendiği (ör. Real-Debrid'in "Downloads" geçmişine
   kayıt düşmesi) buradan görülemiyor; oynatmanın kendisi de aynı yolu
   kullandığı için ek bir yan etki beklenmiyor.

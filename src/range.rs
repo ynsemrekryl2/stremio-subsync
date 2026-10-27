@@ -10,6 +10,7 @@ use reqwest::header::{
 use reqwest::{StatusCode, Url, redirect};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// How much of the file one probe may read.
@@ -154,14 +155,19 @@ pub enum RangeError {
 pub type RangeOutcome = Result<RangeReport, RangeError>;
 
 /// Why a later range read failed. Carries no URL.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadError {
     Timeout,
     Connect,
     Status(u16),
     /// The server answered 200 instead of 206; nothing more is read.
     RangeIgnored,
-    Other,
+    /// `stage` is "send" or "body"; `detail` is the error's cause chain with
+    /// the URL removed.
+    Other {
+        stage: &'static str,
+        detail: String,
+    },
 }
 
 pub type ReadFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>, ReadError>> + Send + 'a>>;
@@ -170,6 +176,11 @@ pub type ReadFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>, ReadError>
 pub trait ByteSource: Send + Sync {
     /// Reads up to `len` bytes starting at `start`; fewer only at end of file.
     fn read(&self, start: u64, len: usize) -> ReadFuture<'_>;
+
+    /// Reads that failed once and were tried again.
+    fn retries(&self) -> usize {
+        0
+    }
 }
 
 /// A successful first read: its report, the bytes, and the file for more reads.
@@ -286,6 +297,7 @@ impl RangeReader for HttpRangeReader {
                 let file = Box::new(HttpFile {
                     client: self.client.clone(),
                     url,
+                    retries: AtomicUsize::new(0),
                 });
                 return Ok(Opened { report, head, file });
             }
@@ -297,6 +309,28 @@ impl RangeReader for HttpRangeReader {
 struct HttpFile {
     client: reqwest::Client,
     url: Url,
+    retries: AtomicUsize,
+}
+
+impl HttpFile {
+    async fn read_once(&self, start: u64, len: usize) -> Result<Vec<u8>, ReadError> {
+        let end = start.saturating_add(len as u64 - 1);
+        let mut response = self
+            .client
+            .get(self.url.clone())
+            .header(RANGE, format!("bytes={start}-{end}"))
+            .send()
+            .await
+            .map_err(|err| read_error(err, "send"))?;
+        match response.status() {
+            StatusCode::PARTIAL_CONTENT => {}
+            StatusCode::OK => return Err(ReadError::RangeIgnored),
+            status => return Err(ReadError::Status(status.as_u16())),
+        }
+        read_capped(&mut response, len)
+            .await
+            .map_err(|err| read_error(err, "body"))
+    }
 }
 
 impl ByteSource for HttpFile {
@@ -305,33 +339,55 @@ impl ByteSource for HttpFile {
             if len == 0 {
                 return Ok(Vec::new());
             }
-            let end = start.saturating_add(len as u64 - 1);
-            let mut response = self
-                .client
-                .get(self.url.clone())
-                .header(RANGE, format!("bytes={start}-{end}"))
-                .send()
-                .await
-                .map_err(|err| read_error(&err))?;
-            match response.status() {
-                StatusCode::PARTIAL_CONTENT => {}
-                StatusCode::OK => return Err(ReadError::RangeIgnored),
-                status => return Err(ReadError::Status(status.as_u16())),
+            match self.read_once(start, len).await {
+                Err(ReadError::Timeout | ReadError::Connect | ReadError::Other { .. }) => {
+                    self.retries.fetch_add(1, Ordering::Relaxed);
+                    self.read_once(start, len).await
+                }
+                result => result,
             }
-            read_capped(&mut response, len)
-                .await
-                .map_err(|err| read_error(&err))
         })
+    }
+
+    fn retries(&self) -> usize {
+        self.retries.load(Ordering::Relaxed)
     }
 }
 
-fn read_error(err: &reqwest::Error) -> ReadError {
+const DETAIL_MAX: usize = 160;
+
+/// The cause chain of an error, without any URL, for the log.
+fn error_detail(err: reqwest::Error) -> String {
+    let err = err.without_url();
+    let mut parts = vec![err.to_string()];
+    let mut source = std::error::Error::source(&err);
+    while let Some(cause) = source {
+        parts.push(cause.to_string());
+        source = cause.source();
+    }
+    scrub(&parts.join(": "))
+}
+
+/// Replaces anything URL-shaped and caps the length.
+fn scrub(text: &str) -> String {
+    let cleaned = text
+        .split_whitespace()
+        .map(|word| if word.contains("://") { "<url>" } else { word })
+        .collect::<Vec<_>>()
+        .join(" ");
+    cleaned.chars().take(DETAIL_MAX).collect()
+}
+
+fn read_error(err: reqwest::Error, stage: &'static str) -> ReadError {
     if err.is_timeout() {
         ReadError::Timeout
     } else if err.is_connect() {
         ReadError::Connect
     } else {
-        ReadError::Other
+        ReadError::Other {
+            stage,
+            detail: error_detail(err),
+        }
     }
 }
 
@@ -346,6 +402,15 @@ mod tests {
             map.insert(*name, HeaderValue::from_static(value));
         }
         map
+    }
+
+    #[test]
+    fn scrub_removes_urls_and_caps_length() {
+        assert_eq!(
+            scrub("error sending request for url (https://x.test/secret): connection closed"),
+            "error sending request for url <url> connection closed"
+        );
+        assert_eq!(scrub(&"a ".repeat(200)).chars().count(), DETAIL_MAX);
     }
 
     #[test]
