@@ -23,10 +23,17 @@ async fn main() {
             std::process::exit(2);
         });
 
-    let mut state = addon::AppState::new(token).expect("token checked above");
+    let mut state = addon::AppState::new(token.clone()).expect("token checked above");
     // The manifest link embeds the AIOStreams configuration; it is never printed.
     match std::env::var("SUBSYNC_AIOSTREAMS_URL") {
         Ok(raw) if !raw.trim().is_empty() => {
+            if raw.contains(token.as_str()) {
+                eprintln!(
+                    "SUBSYNC_AIOSTREAMS_URL refused: this is SubSync's own install link, \
+                     not the AIOStreams one"
+                );
+                std::process::exit(2);
+            }
             let source = match streams::AioStreams::from_manifest_url(&raw) {
                 Ok(source) => source,
                 Err(reason) => {
