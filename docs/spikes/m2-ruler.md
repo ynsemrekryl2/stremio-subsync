@@ -33,10 +33,39 @@ birebir aynı.
 
 ## Sonuçlar
 
+Gerçek oynatma, 2026-10-27, masaüstü Stremio 5.1.30 + AIOStreams + Real-Debrid.
+
 | # | İçerik | İz (codec) | cue_refs | with_duration | events | median_ms | overlaps | scale_known |
 |---|---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | — | — |
+| 1 | Film, ~99 dk | 4 (ASS; tek İngilizce iz, "forced" işaretli) | 1107 | 1107 | 1107 | 1435 | 0 | evet |
+| 2 | Film, ~160 dk | 10 (SRT) | 1061 | 1061 | 1061 | 2294 | 0 | evet |
+| 3 | Film, ~144 dk | 3 (SRT) | 2008 | 2008 | 2008 | 2335 | 0 | evet |
+| 4 | Film, ~127 dk | 5 (SRT; iki İngilizce izden satırı çok olan) | 2356 | 2356 | 2356 | 1919 | 0 | evet |
+| 5 | Dizi bölümü, ~44 dk | 5 (SRT) | 1006 | 1006 | 1006 | 2002 | 0 | evet |
+
+Okuma maliyeti (Cues dahil, ilk 64 KB'tan sonra):
+
+| # | Okunan | İstek | Süre | Dosyadaki altyazı izi |
+|---|---|---|---|---|
+| 1 | 44 KB | 1 | 0.45 sn | 1 |
+| 2 | 188 KB | 1 | 0.53 sn | 6 (3'ü PGS) |
+| 3 | 625 KB | 2 | 1.1–1.3 sn | 7 (6'sı PGS) |
+| 4 | 1.28 MB | 2 | 1.3–1.4 sn | 31 SRT |
+| 5 | 74 KB | 1 | 0.48 sn | 2 |
 
 ## Notlar
 
-- (ölçümden sonra doldurulacak)
+- **SS-009 cevabı: evet.** 5 dosyanın 5'inde metin altyazı izlerinin her cue
+  noktası `CueDuration` taşıyor (`with_duration` = `cue_refs`). Cetvel ek
+  okuma olmadan Cues'tan çıkıyor; altyazı blokları okunmuyor.
+- Diğer metin izleri de aynı: tüm SRT/ASS izlerinde `cue_durations` =
+  `cue_points`. PGS izlerinde 0; zaten kullanılmıyorlar.
+- Maliyet Cues boyutuyla büyüyor; 31 altyazı izli dosyada 1.28 MB, 2 istek.
+  Bütçe gerekirse yalnız İngilizce izin cue noktalarını tutacak şekilde
+  okuma sınırlanabilir; şimdilik sorun değil.
+- Dosya 4'te iki İngilizce SRT var (2068 ve 2356 satır); seçim kuralı satırı
+  çok olanı aldı, büyük olasılıkla SDH. SDH'deki ses efekti satırları
+  hizalamada gürültü olabilir; SS-014'te iki izle ayrı ayrı denenmeli.
+- Dosya 1'in tek İngilizce izi "forced" işaretli ama 1107 satır; işaret
+  güvenilir değil. Tek iz olduğu için yine seçildi, doğru davranış.
+- Hiçbir izde `overlaps` yok; ASS izinde de satırlar üst üste binmiyor.

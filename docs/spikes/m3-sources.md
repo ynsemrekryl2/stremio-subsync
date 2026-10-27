@@ -34,6 +34,24 @@ WEB / TV / DVD) 20 + aynı çözünürlük 5. CAM/TS sürümleri −200.
 
 Her arama + 3 indirme 0.8–1.2 sn sürdü.
 
+## Gerçek oynatma (2026-10-27, M2 ölçümüyle aynı oturum)
+
+Aynı dosyalarda `m3 probe` (yalnız OpenSubtitles, `tur`). Cetvel M2 tablosundan.
+
+| # | Türkçe aday | Puan | İndirilen satır / aralık | Cetvel aralığı | Not |
+|---|---|---|---|---|---|
+| Film 1 | 0 | — | — | 443–5949 sn | Türkçe yok |
+| Film 2 | 1 | 4 | 668 / 636–5361 sn | 592–9585 sn | Film ~160 dk, altyazı ~89 dk'da bitiyor: büyük olasılıkla CD1 |
+| Film 3 | 2 | 20, 20 | 746 / 106–4328 sn; 1619 / 1–8660 sn | 89–8666 sn | Biri CD1, diğeri tam; tam olanın sonu cetvelle 6 sn farkla aynı |
+| Film 4 | 1 | 40 | 2253 / 7–7613 sn | 4–7631 sn | Uyumlu görünüyor |
+| Bölüm 1 | 1 | 10 | 619 / 9–2648 sn | 6–2651 sn | Uyumlu görünüyor |
+| Bölüm 2 | 1 | 6 | 211 / 89–1356 sn | — | K2 eşleşmedi, cetvel yok |
+
+- Eski filmlerde **iki parçalı (CD1/CD2) altyazı** yaygın; tek parça şimdilik
+  `partial` gibi reddedilir. Birleştirme ayrı iş (SS-019).
+- Puanlar düşük (4–40): OpenSubtitles'taki Türkçe sürüm adları dosyaya pek
+  benzemiyor. Sıralama yine de CAM/TS'yi geride tutuyor.
+
 ## Notlar
 
 - OpenSubtitles v3 tek istekte tüm dilleri dönüyor (~90 kayıt); filtre bizde.

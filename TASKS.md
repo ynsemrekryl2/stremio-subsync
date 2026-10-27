@@ -13,6 +13,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [x] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (Real-Debrid, masaüstü: 5/5 `both: 1`; URL tek yönlendirmeyle RD'ye gidiyor, 206 Range). TorBox → SS-007
 - [x] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği; 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md` (RD: Range var; İngilizce metin izi 12 dosyanın 11'inde indekslenmiş). TorBox → SS-007, VPS IP → SS-008
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
+- [ ] **SS-020** K2: bir dizi bölümünde AIOStreams listesindeki 12 stream'in hiçbiri dosya adıyla eşleşmedi (boyut 2'sinde tuttu); nedenini bul — kanıt: K2 notunda açıklama
 - [ ] **SS-007** TorBox ile K2 eşleşme ve K3 Range ölçümlerini tekrarla (abonelik yenilenince) — kanıt: K2/K3 notlarında TorBox satırları
 - [ ] **SS-008** VPS IP'sinden Real-Debrid Range okuması (oynatma ev IP'sinden sürerken) — kanıt: K3 notunda VPS satırı
 
@@ -20,8 +21,8 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 
 ## M2 — Cetvel
 
-- [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
-- [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
+- [x] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md` (5/5 dosyada her cue noktası süreli → evet)
+- [x] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + `docs/spikes/m2-ruler.md` (1006–2356 olay; 44 KB–1.28 MB, 1–2 istek, ≤1.4 sn)
 
 ## M3 — Kaynaklar
 
@@ -31,6 +32,7 @@ gerçek servis yalnız elle açılan probe'da çağrılır.
 - [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
 - [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
 - [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca)
+- [ ] **SS-019** İki parçalı (CD1/CD2) altyazıları birleştir: aynı sürümün parçaları art arda eklenip tek aday olarak hizalanır — kanıt: testler + gerçek bir CD1/CD2 örneği
 - [x] **SS-018** Adayları dosya adına benzerliğe göre sırala (sürüm grubu, kaynak, çözünürlük; CAM/TS en sona) — kanıt: `cargo test rank` + gerçek denemede aynı sürüm 165 puanla başta
 
 ## M4 — Hizalama
@@ -43,17 +45,15 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [x] **SS-013** Kabul testi (baş / orta / son aynı kaydırmada tutmalı) + sentetik etiketli test seti; yanlış kabul yok — kanıt: `labeled_set_has_no_false_accepts` (8 tohum × 11 durum; 40/40 pozitif kabul, 48/48 negatif ret)
 - [ ] **SS-014** Gerçek etiketli set: M2 cetvelleri + M3 adaylarıyla eşikleri ayarla (gerçek dosyalar elle etiketlenir) — kanıt: `docs/spikes/m4-align.md` tablosu
 
-## Devam notları (2026-10-27, akşam)
+## Devam notları (2026-10-27, gece)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
-- **Şu an sırada: SS-009 / SS-010 ölçümü.** Kod hazır (`src/ruler.rs`,
-  `src/mkv.rs`). Kullanıcı sunucuyu `SUBSYNC_RANGE_PROBE=1 cargo run` ile
-  başlatıp İngilizce SRT/ASS izli 5–6 dosya açacak; `k2 probe` satırlarındaki
-  `cue_durations` ve `ruler: Some(RulerReport { … })` değerleri
-  `docs/spikes/m2-ruler.md` tablosuna işlenecek. `with_duration` ≈ `cue_refs`
-  ise cetvel ek okuma olmadan Cues'tan çıkıyor (SS-009 evet). Değilse süreler
-  bloklardan okunmalı; plan değişir, önce ölçüm notuna yaz.
+- **Şu an sırada: SS-014 (gerçek etiketli set).** M2 cetveli ve M3 adayları
+  gerçek dosyada çalışıyor (`docs/spikes/m2-ruler.md`, `m3-sources.md`).
+  Sıradaki adım probe'da ikisini birleştirmek: cetvel olaylarını ve indirilen
+  adayların satırlarını `align::align`'a verip `Verdict`'i (kabul/ret, isabet
+  oranları, pencere kaydırmaları) loglamak. Sonra elle izleyip etiketlemek.
 - **M3 probe:** `SUBSYNC_SOURCES_PROBE=1` ile her istekte OpenSubtitles v3
   (+ `SUBDL_API_KEY` varsa SubDL) aranır, en iyi 3 aday indirilir;
   `m3 probe` satırı yalnız sayı/puan taşır. AIOStreams'ten bağımsız çalışır.
