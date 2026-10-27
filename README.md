@@ -35,7 +35,7 @@ http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_SOURCES_PROBE` | kapalı | `1` ise her istekte aday altyazılar aranır ve en iyi 3'ü indirilir (M3 ölçümü). |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. |
 | `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
-| `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
+| `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Kaydırması olan her adayın bir de `yerel` sürümü gelir (SS-021: kayma filmin içinde değişiyorsa satırları çevresine göre ayrıca kaydırır). Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
 
 Sunucu kurulumu: [`docs/deploy.md`](docs/deploy.md)
 

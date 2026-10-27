@@ -148,21 +148,31 @@ pub fn events(cues: &[Cue]) -> Vec<Event> {
 /// SRT text with every cue moved by `fix`. Cues that end before the film
 /// starts are dropped; one that straddles the start is cut at zero.
 pub fn render(cues: &[Cue], fix: Fix) -> String {
+    render_local(cues, fix, &[])
+}
+
+/// Like [`render`], with `extra[i]` added to cue `i` on top of `fix` (a
+/// missing entry is 0). Cues are written in their new start order.
+pub fn render_local(cues: &[Cue], fix: Fix, extra: &[i64]) -> String {
+    let mut moved: Vec<(i64, i64, &str)> = cues
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cue)| {
+            let more = extra.get(i).copied().unwrap_or(0);
+            let end = fix.apply(cue.end_ms).saturating_add(more);
+            let start = fix.apply(cue.start_ms).saturating_add(more).max(0);
+            (end > 0).then_some((start, end, cue.text.as_str()))
+        })
+        .collect();
+    moved.sort_by_key(|&(start, _, _)| start);
     let mut out = String::new();
-    let mut index = 0;
-    for cue in cues {
-        let end = fix.apply(cue.end_ms);
-        if end <= 0 {
-            continue;
-        }
-        let start = fix.apply(cue.start_ms).max(0);
-        index += 1;
+    for (index, (start, end, text)) in moved.into_iter().enumerate() {
         let _ = write!(
             out,
-            "{index}\n{} --> {}\n{}\n\n",
+            "{}\n{} --> {}\n{text}\n\n",
+            index + 1,
             clock(start),
-            clock(end),
-            cue.text
+            clock(end)
         );
     }
     out
@@ -274,6 +284,24 @@ mod tests {
             },
         );
         assert_eq!(straddle, "1\n00:00:00,000 --> 00:00:02,000\nD\n\n");
+    }
+
+    #[test]
+    fn render_local_adds_per_cue_shift_and_keeps_order() {
+        let cues = vec![
+            cue(1_000, 2_000, "A"),
+            cue(3_000, 4_000, "B"),
+            cue(5_000, 6_000, "C"),
+        ];
+        let out = render_local(&cues, SAME, &[500, -2_500, 0]);
+        // B moves before A; numbering follows the new order.
+        assert_eq!(
+            out,
+            "1\n00:00:00,500 --> 00:00:01,500\nB\n\n\
+             2\n00:00:01,500 --> 00:00:02,500\nA\n\n\
+             3\n00:00:05,000 --> 00:00:06,000\nC\n\n"
+        );
+        assert_eq!(render_local(&cues, SAME, &[]), render(&cues, SAME));
     }
 
     #[test]

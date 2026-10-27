@@ -5,7 +5,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::align::{Fix, Trial};
+use crate::align::{self, Fix, Trial};
+use crate::ruler::Event;
 use crate::srt::{self, Cue};
 
 /// Requests whose subtitles are kept.
@@ -32,10 +33,11 @@ impl std::fmt::Debug for LabelSub {
     }
 }
 
-/// Menu text, e.g. `SubSync 2 ✓ +1.60s fps · 7530`: rank (1 = best named),
-/// verdict, shift, a frame-rate fix if any, and the last digits of the dump
-/// file so a label can be matched to `calibrate` output.
-pub fn label(trial: &Trial, dump: Option<&str>) -> String {
+/// Menu text, e.g. `SubSync 2 ✓ +1.60s fps yerel · 7530`: rank (1 = best
+/// named), verdict, shift, a frame-rate fix if any, `yerel` for the local
+/// sync variant, and the last digits of the dump file so a label can be
+/// matched to `calibrate` output.
+pub fn label(trial: &Trial, local: bool, dump: Option<&str>) -> String {
     let mark = if trial.accepted { "✓" } else { "✗" };
     let mut text = format!("SubSync {} {mark}", trial.candidate + 1);
     if let Some(fix) = trial.verdict.fix {
@@ -43,6 +45,9 @@ pub fn label(trial: &Trial, dump: Option<&str>) -> String {
         if fix.num != fix.den {
             text.push_str(" fps");
         }
+    }
+    if local {
+        text.push_str(" yerel");
     }
     if let Some(name) = dump {
         let stem = name.trim_end_matches(".json");
@@ -52,23 +57,36 @@ pub fn label(trial: &Trial, dump: Option<&str>) -> String {
     text
 }
 
-/// Menu entries for the first ruler track's trials, each candidate moved by
-/// its fix; a rejected one too, so a wrong reject can be seen in sync.
-pub fn build(trials: &[Trial], cues: &[Option<Vec<Cue>>], dump: Option<&str>) -> Vec<LabelSub> {
-    let Some(track) = trials.first().map(|t| t.track) else {
-        return Vec::new();
-    };
-    trials
-        .iter()
-        .filter(|t| t.track == track)
-        .filter_map(|trial| {
-            let cues = cues.get(trial.candidate)?.as_ref()?;
-            Some(LabelSub {
-                label: label(trial, dump),
-                srt: srt::render(cues, trial.verdict.fix.unwrap_or(SAME)),
-            })
-        })
-        .collect()
+/// Menu entries for the trials on `ruler` (the first ruler track), each
+/// candidate moved by its fix; a rejected one too, so a wrong reject can be
+/// seen in sync. A candidate with a fix also gets a `yerel` entry that
+/// follows the ruler's local drift on top of it (SS-021).
+pub fn build(
+    trials: &[Trial],
+    ruler: (u64, &[Event]),
+    cues: &[Option<Vec<Cue>>],
+    dump: Option<&str>,
+) -> Vec<LabelSub> {
+    let (track, ruler) = ruler;
+    let mut subs = Vec::new();
+    for trial in trials.iter().filter(|t| t.track == track) {
+        let Some(cues) = cues.get(trial.candidate).and_then(Option::as_ref) else {
+            continue;
+        };
+        let fix = trial.verdict.fix.unwrap_or(SAME);
+        subs.push(LabelSub {
+            label: label(trial, false, dump),
+            srt: srt::render(cues, fix),
+        });
+        if trial.verdict.fix.is_some() {
+            let extra = align::local_shifts(ruler, &srt::events(cues), fix);
+            subs.push(LabelSub {
+                label: label(trial, true, dump),
+                srt: srt::render_local(cues, fix, &extra),
+            });
+        }
+    }
+    subs
 }
 
 /// Labeled subtitles of recent requests. The request key (kind, id, file
@@ -149,8 +167,20 @@ mod tests {
             shift_ms: 1_597,
         };
         assert_eq!(
-            label(&trial(4, 2, true, Some(pal)), Some("1793127057530.json")),
+            label(
+                &trial(4, 2, true, Some(pal)),
+                false,
+                Some("1793127057530.json")
+            ),
             "SubSync 3 ✓ +1.60s fps · 7530"
+        );
+        assert_eq!(
+            label(
+                &trial(4, 2, true, Some(pal)),
+                true,
+                Some("1793127057530.json")
+            ),
+            "SubSync 3 ✓ +1.60s fps yerel · 7530"
         );
         let back = Fix {
             num: 1,
@@ -158,10 +188,10 @@ mod tests {
             shift_ms: -34,
         };
         assert_eq!(
-            label(&trial(4, 0, false, Some(back)), None),
+            label(&trial(4, 0, false, Some(back)), false, None),
             "SubSync 1 ✗ -0.03s"
         );
-        assert_eq!(label(&trial(4, 1, false, None), None), "SubSync 2 ✗");
+        assert_eq!(label(&trial(4, 1, false, None), false, None), "SubSync 2 ✗");
     }
 
     #[test]
@@ -182,13 +212,27 @@ mod tests {
             None,
             Some(vec![cue(2_000, 2_500, "c")]),
         ];
-        let subs = build(&trials, &cues, None);
+        // No ruler lines near them: the local variant equals the plain one.
+        let ruler = [Event {
+            start_ms: 900_000,
+            end_ms: 901_000,
+        }];
+        let subs = build(&trials, (5, &ruler), &cues, None);
         let labels: Vec<&str> = subs.iter().map(|s| s.label.as_str()).collect();
-        assert_eq!(labels, vec!["SubSync 1 ✓ +1.00s", "SubSync 3 ✗ +1.00s"]);
+        assert_eq!(
+            labels,
+            vec![
+                "SubSync 1 ✓ +1.00s",
+                "SubSync 1 ✓ +1.00s yerel",
+                "SubSync 3 ✗ +1.00s",
+                "SubSync 3 ✗ +1.00s yerel",
+            ]
+        );
         assert_eq!(subs[0].srt, "1\n00:00:01,000 --> 00:00:01,500\na\n\n");
-        assert_eq!(subs[1].srt, "1\n00:00:03,000 --> 00:00:03,500\nc\n\n");
+        assert_eq!(subs[1].srt, subs[0].srt);
+        assert_eq!(subs[2].srt, "1\n00:00:03,000 --> 00:00:03,500\nc\n\n");
         assert!(!format!("{:?}", subs[0]).contains("00:00"));
-        assert!(build(&[], &cues, None).is_empty());
+        assert!(build(&[], (5, &ruler), &cues, None).is_empty());
     }
 
     fn one(text: &str) -> Vec<LabelSub> {

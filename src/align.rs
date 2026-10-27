@@ -27,6 +27,13 @@ const MIN_HIT_RATE: f64 = 0.5;
 /// Candidate lines each window must have, as a share of its ruler lines.
 /// Keeps a half subtitle (CD1 of two) from passing on its few last lines.
 const MIN_COVERAGE: f64 = 0.4;
+/// Local sync (SS-021): a candidate line pairs with a ruler line that starts
+/// this close after the global fix.
+const LOCAL_PAIR_MS: i64 = 700;
+/// Lines on each side whose pairs set one line's local shift.
+const LOCAL_SPAN: usize = 10;
+/// Pairs needed among them; with fewer, the line keeps the global fix.
+const LOCAL_MIN_PAIRS: usize = 5;
 
 /// Frame-rate fixes tried, as `time * num / den`: a subtitle timed for one
 /// rate laid over a release that plays at another.
@@ -238,6 +245,61 @@ pub fn trials(rulers: &[(u64, Vec<Event>)], candidates: &[Option<Vec<Event>>]) -
     out
 }
 
+/// Extra shift for each candidate line, on top of `fix`, that follows a
+/// slowly changing offset (SS-021). Each line pairs with the nearest ruler
+/// line start within `LOCAL_PAIR_MS` (a ruler line keeps only its closest
+/// candidate line); a line's shift is the median gap of the pairs among its
+/// `LOCAL_SPAN` neighbours on each side. One wrong pair cannot throw a line
+/// off; a stretch with too few pairs keeps the global fix (0).
+///
+/// The result is in `candidate`'s order.
+pub fn local_shifts(ruler: &[Event], candidate: &[Event], fix: Fix) -> Vec<i64> {
+    let mut ruler_starts: Vec<i64> = ruler
+        .iter()
+        .filter_map(|e| i64::try_from(e.start_ms).ok())
+        .collect();
+    ruler_starts.sort_unstable();
+    let aligned: Vec<i64> = candidate.iter().map(|e| fix.apply(e.start_ms)).collect();
+    let mut order: Vec<usize> = (0..candidate.len()).collect();
+    order.sort_by_key(|&i| aligned[i]);
+
+    // gap per position in `order`; owner: ruler index -> (position, |gap|).
+    let mut gaps: Vec<Option<i64>> = vec![None; order.len()];
+    let mut owner: std::collections::HashMap<usize, (usize, i64)> = Default::default();
+    for (pos, &i) in order.iter().enumerate() {
+        let t = aligned[i];
+        let at = ruler_starts.partition_point(|&r| r < t);
+        let Some((j, gap)) = [at.checked_sub(1), Some(at)]
+            .into_iter()
+            .flatten()
+            .filter_map(|j| ruler_starts.get(j).map(|&r| (j, r - t)))
+            .min_by_key(|(_, gap)| gap.abs())
+            .filter(|(_, gap)| gap.abs() <= LOCAL_PAIR_MS)
+        else {
+            continue;
+        };
+        match owner.get(&j) {
+            Some(&(_, held)) if held <= gap.abs() => continue,
+            Some(&(other, _)) => gaps[other] = None,
+            None => {}
+        }
+        owner.insert(j, (pos, gap.abs()));
+        gaps[pos] = Some(gap);
+    }
+
+    let mut out = vec![0; candidate.len()];
+    for pos in 0..order.len() {
+        let from = pos.saturating_sub(LOCAL_SPAN);
+        let to = (pos + LOCAL_SPAN + 1).min(order.len());
+        let mut near: Vec<i64> = gaps[from..to].iter().flatten().copied().collect();
+        if near.len() >= LOCAL_MIN_PAIRS {
+            near.sort_unstable();
+            out[order[pos]] = near[near.len() / 2];
+        }
+    }
+    out
+}
+
 fn scale(ms: u64, num: u64, den: u64) -> i64 {
     let scaled = (u128::from(ms) * u128::from(num) + u128::from(den) / 2) / u128::from(den);
     i64::try_from(scaled).unwrap_or(i64::MAX)
@@ -431,6 +493,62 @@ mod tests {
             shift_ms: 1,
         };
         assert_eq!(huge.apply(u64::MAX), i64::MAX);
+    }
+
+    #[test]
+    fn local_shifts_follow_a_slow_drift() {
+        // The candidate runs 0.02% slow: 1.2 s apart after 100 minutes. The
+        // global fix sits in the middle, so the ends are ~0.6 s off either way.
+        let mut rng = synth::Rng::new(5);
+        let speech = synth::speech(&mut rng, 100);
+        let ruler = synth::lines(&mut rng, &speech, &synth::Style::RULER);
+        let other = synth::lines(&mut rng, &speech, &synth::Style::OTHER);
+        let drift = Fix {
+            num: 10_002,
+            den: 10_000,
+            shift_ms: 0,
+        };
+        let candidate = synth::distort(&other, drift);
+        let global = Fix {
+            num: 1,
+            den: 1,
+            shift_ms: 600,
+        };
+        let error = |shifts: &[i64]| {
+            let mut errors: Vec<i64> = candidate
+                .iter()
+                .zip(&other)
+                .zip(shifts)
+                .map(|((c, truth), extra)| {
+                    (global.apply(c.start_ms) + extra - truth.start_ms as i64).abs()
+                })
+                .collect();
+            errors.sort_unstable();
+            (errors[errors.len() / 2], errors[errors.len() * 9 / 10])
+        };
+        let (median, p90) = error(&local_shifts(&ruler, &candidate, global));
+        assert!(
+            median <= 120 && p90 <= 250,
+            "local: median {median} ms, p90 {p90} ms"
+        );
+        let (median, p90) = error(&vec![0; candidate.len()]);
+        assert!(
+            median >= 200 && p90 >= 450,
+            "global only: median {median} ms, p90 {p90} ms"
+        );
+    }
+
+    #[test]
+    fn local_shifts_stay_zero_without_pairs() {
+        let ruler = [ev(100_000, 101_000)];
+        let candidate = [ev(1_000, 2_000), ev(5_000, 6_000)];
+        let same = Fix {
+            num: 1,
+            den: 1,
+            shift_ms: 0,
+        };
+        assert_eq!(local_shifts(&ruler, &candidate, same), vec![0, 0]);
+        assert!(local_shifts(&ruler, &[], same).is_empty());
     }
 
     #[test]

@@ -350,37 +350,42 @@ async fn run_probes(
     if rulers.is_empty() || times.iter().all(Option::is_none) {
         return;
     }
-    // Alignment and the dump are CPU and disk work; keep them off the async
-    // workers.
+    // Alignment, the dump and the label files are CPU and disk work; keep
+    // them off the async workers.
     let dump_dir = state.dump_dir.clone();
-    let Ok((trials, dumped)) = tokio::task::spawn_blocking(move || {
-        let dumped =
-            dump_dir.map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)));
-        (align::trials(&rulers, &times), dumped)
+    let labeling = state.labels.is_some();
+    let Ok((trials, labels)) = tokio::task::spawn_blocking(move || {
+        let dump_name = match dump_dir
+            .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
+        {
+            Some(Ok(name)) => {
+                eprintln!("dump written file={name}");
+                Some(name)
+            }
+            Some(Err(err)) => {
+                eprintln!("dump failed error={:?}", err.kind());
+                None
+            }
+            None => None,
+        };
+        let trials = align::trials(&rulers, &times);
+        let labels = labeling.then(|| {
+            let (track, events) = &rulers[0];
+            label::build(&trials, (*track, events), &cues, dump_name.as_deref())
+        });
+        (trials, labels)
     })
     .await
     else {
         return;
     };
-    let dump_name = match dumped {
-        Some(Ok(name)) => {
-            eprintln!("dump written file={name}");
-            Some(name)
-        }
-        Some(Err(err)) => {
-            eprintln!("dump failed error={:?}", err.kind());
-            None
-        }
-        None => None,
-    };
     for trial in &trials {
         eprintln!("m4 probe {trial:?}");
     }
-    if let Some(labels) = &state.labels {
-        let subs = label::build(&trials, &cues, dump_name.as_deref());
+    if let (Some(subs), Some(cache)) = (labels, &state.labels) {
         eprintln!("labels ready entries={}", subs.len());
-        if let Ok(mut labels) = labels.lock() {
-            labels.insert(request, subs);
+        if let Ok(mut cache) = cache.lock() {
+            cache.insert(request, subs);
         }
     }
 }

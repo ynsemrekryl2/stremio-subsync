@@ -193,6 +193,15 @@ dump dosya adının son 4 hanesi. Kabul edilenler de reddedilenler de kendi en
 iyi fix'iyle kaydırılmış gelir: ✗ işaretli biri senkronlu görünüyorsa o bir
 yanlış ret. Altyazılar yalnız bellekte (son 32 istek).
 
+**Yerel senkron (SS-021):** Kaydırması olan her aday menüde bir de `yerel`
+sürümüyle gelir. Global fix'ten sonra her satır, 700 ms içindeki en yakın
+cetvel satırıyla eşlenir (bir cetvel satırı yalnız en yakın adayla); satırın
+ek kaydırması, iki yanındaki 10'ar satırın eşleşme farklarının ortancasıdır.
+Yakınında 5'ten az eşleşme olan satır yalnız global fix'le kalır. Tek bir
+yanlış eşleşme bir satırı fırlatamaz; 0.7 sn'den büyük yerel kayma
+izlenemez. Sentetik testte 0.02%'lik kayma (100 dk'da 1.2 sn) ortanca
+120 ms'nin altına iniyor.
+
 Etiket sözlüğü: **senkron** (baştan sona tutuyor) · **kaymış** (sabit bir
 gecikme var) · **kayıyor** (zamanla açılıyor) · **yanlış** (başka sürüm/kurgu,
 yer yer tutmuyor).
