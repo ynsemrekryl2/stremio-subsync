@@ -140,7 +140,7 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
 
 | Dump | Aday | Karar | Fix | Pencere kaydırmaları (global'e göre) | İsabet | Kullanıcı etiketi |
 |---|---|---|---|---|---|---|
-| …265984 (bölüm, ~22 dk) | 1 (puan 75), 532 satır / cetvel 551 | ret `Disagree(0)` | 1/1, −500 ms | −450, +50, +60 | %36 / %46 / %28 | "çok az erken" (izlenen yer: belirtilmedi) |
+| …265984 (bölüm, ~22 dk) | 1 (puan 75), 532 satır / cetvel 551 | ret `Disagree(0)` | 1/1, −500 ms | −450, +50, +60 | %36 / %46 / %28 | **kullanılabilir**: ortada çok az erken, başta biraz daha erken → **yanlış ret** (temkinli yönde) |
 
 - Orta ve son pencere −450 / −440 ms diyor; global −500 ms bunlardan ~60 ms
   erken. Kullanıcının "çok az erken" demesi bununla uyumlu.
@@ -149,6 +149,17 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
   tahmini yanlış ve bu bir yanlış ret.
 - İsabet düşük (%28–46) ama satır sayıları neredeyse eşit: bu çevirinin satır
   başlangıçları İngilizce izden belirgin farklı zamanlanmış.
+- Kullanıcı başı **daha erken** buldu; baş penceresi tahmini ise altyazının
+  başta **geç** kaldığını söylüyordu. Yani baş penceresinin −450 ms'lik
+  sapması gerçek değil, tahmin gürültüsü.
+- Deneme: pencere kaydırmasını örtüşme tepesi yerine satır başlangıçlarının
+  en yoğun ±300 ms kümesinden hesaplamak. Sentetik set geçti ama gerçek
+  dosyalarda kararlar değişmedi; bu aday yine `Disagree` (−639, −95, −565 ms)
+  ve iyi adaylarda tutarlılık belirgin artmadı. **Geri alındı.**
+- Ders: isabet ~%45'in altındayken pencere kaydırma tahminleri ±0.5 sn
+  oynuyor; bu bölgede ret kararı güvenilir ama "gerçekten kayıyor" anlamına
+  gelmiyor. Eşikleri gevşetmek için daha çok etiket gerekli, özellikle
+  isabeti %35–55 olan adaylar.
 
 ### Kalibrasyon düzeni
 
