@@ -41,8 +41,18 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
 
 | Tarih | İstemci | İçerik | Debrid | streams | both | filename_exact | size | target | elapsed_ms |
 |---|---|---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | — | — | — |
+| 2026-10-27 | Stremio masaüstü, macOS | film | ? | 38 | 1 | 1 | 1 | `Http { same_host: false }` | 1469 |
 
 ## Notlar
 
-- (ölçümden sonra doldurulacak)
+- **İlk ölçüm (masaüstü, film):** 38 stream'in hepsi `filename` ve `videoSize`
+  taşıyor. Dosya adı da boyut da tek başına yalnız bir stream'e uyuyor, ikisi
+  birlikte de tam bir stream'e (`both: 1`). Bu örnekte eşleşme kesin.
+- Eşleşen stream'in URL'si AIOStreams'in kendi host'unda değil
+  (`same_host: false`). Ya doğrudan debrid linki ya da başka bir alan adındaki
+  playback yolu; hangisi olduğu ve çağrılınca ne tetiklediği ayrı denemede
+  (kullanıcı onayıyla) bakılacak. K3'teki Range okumaları bu URL'ye yapılacak.
+- Stream listesi ~1,5 sn'de geldi; altyazı yanıtını bekletmediği için oynatmayı
+  etkilemedi. Gerçek akışta bu süre altyazı gecikmesine eklenecek; cache gerekli.
+- Aynı oturumda iki `route=none token=bad status=404` isteği düştü. Funnel genel
+  adres olduğu için tarayıcı/bot istekleri olabilir; add-on'u etkilemiyor.
