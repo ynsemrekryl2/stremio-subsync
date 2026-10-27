@@ -11,9 +11,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+use crate::blocks;
 use crate::extra::PlaybackHints;
 use crate::mkv::{self, MkvOutcome};
-use crate::range::{RangeOutcome, RangeReader};
+use crate::range::{ByteSource, Opened, RangeOutcome, RangeReader};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -179,9 +180,12 @@ pub enum ProbeOutcome {
     },
 }
 
+/// With `block_probe`, the ruler track's blocks are then read in the
+/// background and logged on their own line (SS-025).
 pub async fn probe(
     source: &dyn StreamSource,
     range: Option<&dyn RangeReader>,
+    block_probe: bool,
     kind: &str,
     id: &str,
     hints: &PlaybackHints,
@@ -200,15 +204,25 @@ pub async fn probe(
     let (range, mkv) = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
         (Some(reader), Some(Target::Http { .. }), Some(url)) => {
             match reader.open(url, source.host(), hints.video_size).await {
-                Ok(opened) => {
-                    let mkv = if opened.report.partial && opened.report.ebml_magic {
-                        Some(Box::new(
-                            mkv::inspect(opened.file.as_ref(), &opened.head).await,
-                        ))
+                Ok(Opened { report, head, file }) => {
+                    let file: std::sync::Arc<dyn ByteSource> = file.into();
+                    let mkv = if report.partial && report.ebml_magic {
+                        Some(Box::new(mkv::inspect(file.as_ref(), &head).await))
                     } else {
                         None
                     };
-                    (Some(Ok(opened.report)), mkv)
+                    let targets = mkv
+                        .as_deref()
+                        .and_then(|outcome| outcome.as_ref().ok())
+                        .and_then(|report| report.blocks.clone());
+                    if block_probe && let Some(targets) = targets {
+                        let kind = kind.to_owned();
+                        tokio::spawn(async move {
+                            let report = blocks::run(file, targets).await;
+                            eprintln!("m6 blocks kind={kind} report={report:?}");
+                        });
+                    }
+                    (Some(Ok(report)), mkv)
                 }
                 Err(err) => (Some(Err(err)), None),
             }
@@ -555,7 +569,15 @@ mod tests {
             { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
             { "url": "https://d.test/two", "behaviorHints": { "filename": "B.mkv", "videoSize": 5 } }
         ]})));
-        let outcome = probe(&source, Some(&reader), "movie", "tt1", &hints("A.mkv", 5)).await;
+        let outcome = probe(
+            &source,
+            Some(&reader),
+            false,
+            "movie",
+            "tt1",
+            &hints("A.mkv", 5),
+        )
+        .await;
         assert!(matches!(
             outcome,
             ProbeOutcome::Matched {
@@ -574,7 +596,15 @@ mod tests {
             { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
             { "url": "https://d.test/two", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
         ]})));
-        let outcome = probe(&source, Some(&reader), "movie", "tt1", &hints("A.mkv", 5)).await;
+        let outcome = probe(
+            &source,
+            Some(&reader),
+            false,
+            "movie",
+            "tt1",
+            &hints("A.mkv", 5),
+        )
+        .await;
         assert!(matches!(outcome, ProbeOutcome::Matched { range: None, .. }));
         assert!(reader.0.lock().unwrap().is_empty());
     }
@@ -582,14 +612,22 @@ mod tests {
     #[tokio::test]
     async fn probe_skips_fetch_without_hints() {
         let source = FakeSource(Err(FetchError::Other));
-        let outcome = probe(&source, None, "movie", "tt1", &PlaybackHints::default()).await;
+        let outcome = probe(
+            &source,
+            None,
+            false,
+            "movie",
+            "tt1",
+            &PlaybackHints::default(),
+        )
+        .await;
         assert_eq!(outcome, ProbeOutcome::NoHints);
     }
 
     #[tokio::test]
     async fn probe_reports_fetch_failure() {
         let source = FakeSource(Err(FetchError::Status(502)));
-        let outcome = probe(&source, None, "movie", "tt1", &hints("A.mkv", 5)).await;
+        let outcome = probe(&source, None, false, "movie", "tt1", &hints("A.mkv", 5)).await;
         assert!(matches!(
             outcome,
             ProbeOutcome::Failed {
@@ -605,7 +643,15 @@ mod tests {
             { "url": "https://secret-host.test/Secret.Title.mkv",
               "behaviorHints": { "filename": "Secret.Title.mkv", "videoSize": 5 } }
         ]})));
-        let outcome = probe(&source, None, "movie", "tt1", &hints("Secret.Title.mkv", 5)).await;
+        let outcome = probe(
+            &source,
+            None,
+            false,
+            "movie",
+            "tt1",
+            &hints("Secret.Title.mkv", 5),
+        )
+        .await;
         let printed = format!("{outcome:?}");
         assert!(!printed.contains("Secret"), "{printed}");
         assert!(!printed.contains("secret-host"), "{printed}");

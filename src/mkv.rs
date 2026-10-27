@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::blocks::{BlockPos, BlockTargets};
 use crate::range::{ByteSource, ReadError};
 use crate::ruler::{self, CueRef, Event, RulerReport};
 
@@ -33,6 +34,8 @@ const CUE_TRACK: u32 = 0xF7;
 const CUE_TIME: u32 = 0xB3;
 const CUE_RELATIVE_POSITION: u32 = 0xF0;
 const CUE_DURATION: u32 = 0xB2;
+const CUE_CLUSTER_POSITION: u32 = 0xF1;
+const CONTENT_ENCODINGS: u32 = 0x6D80;
 const INFO: u32 = 0x1549_A966;
 const TIMESTAMP_SCALE: u32 = 0x2A_D7B1;
 /// Matroska default: one tick is one millisecond.
@@ -92,6 +95,9 @@ pub struct SubTrack {
     pub cue_points: usize,
     /// Of those, the ones with `CueDuration`.
     pub cue_durations: usize,
+    /// The track declares `ContentEncodings` (compression or header
+    /// stripping), so block payloads are not plain text.
+    pub encoded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +139,8 @@ pub struct MkvReport {
     pub ruler: Option<RulerReport>,
     /// Times for alignment; logged as counts only.
     pub rulers: Rulers,
+    /// Where the chosen ruler track's blocks sit, for the M6 block probe.
+    pub blocks: Option<BlockTargets>,
 }
 
 /// Event times of every indexed English text track, the chosen ruler track
@@ -160,18 +168,18 @@ pub type MkvOutcome = Result<MkvReport, MkvError>;
 
 /// Element header: ID, data size (`None` for unknown size) and header length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Header {
-    id: u32,
-    size: Option<u64>,
-    len: usize,
+pub(crate) struct Header {
+    pub(crate) id: u32,
+    pub(crate) size: Option<u64>,
+    pub(crate) len: usize,
 }
 
-fn vint_len(first: u8) -> Option<usize> {
+pub(crate) fn vint_len(first: u8) -> Option<usize> {
     let len = first.leading_zeros() as usize + 1;
     (len <= 8).then_some(len)
 }
 
-fn parse_header(buf: &[u8]) -> Option<Header> {
+pub(crate) fn parse_header(buf: &[u8]) -> Option<Header> {
     let id_len = vint_len(*buf.first()?)?;
     if id_len > 4 || buf.len() < id_len {
         return None;
@@ -200,7 +208,7 @@ fn parse_header(buf: &[u8]) -> Option<Header> {
 
 /// Child elements of a master element's data. Stops at the first header
 /// that is malformed, of unknown size, or runs past the data.
-fn children(data: &[u8]) -> Vec<(u32, &[u8])> {
+pub(crate) fn children(data: &[u8]) -> Vec<(u32, &[u8])> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     while pos < data.len() {
@@ -277,6 +285,7 @@ fn parse_tracks(data: &[u8]) -> TrackList {
         let mut bcp47 = None;
         let mut default = true;
         let mut forced = false;
+        let mut encoded = false;
         for (id, value) in children(entry) {
             match id {
                 TRACK_NUMBER => number = uint(value),
@@ -286,6 +295,7 @@ fn parse_tracks(data: &[u8]) -> TrackList {
                 LANGUAGE_BCP47 => bcp47 = Some(text(value)),
                 FLAG_DEFAULT => default = uint(value).is_some_and(|v| v != 0),
                 FLAG_FORCED => forced = uint(value).is_some_and(|v| v != 0),
+                CONTENT_ENCODINGS => encoded = !value.is_empty(),
                 _ => {}
             }
         }
@@ -306,6 +316,7 @@ fn parse_tracks(data: &[u8]) -> TrackList {
                     forced,
                     cue_points: 0,
                     cue_durations: 0,
+                    encoded,
                 });
             }
             _ => {}
@@ -340,12 +351,14 @@ fn parse_cues(data: &[u8]) -> CueCounts {
                 time,
                 duration: None,
                 relative: None,
+                cluster: None,
             };
             for (id, value) in children(positions) {
                 match id {
                     CUE_TRACK => track = uint(value),
                     CUE_DURATION => cue.duration = uint(value),
                     CUE_RELATIVE_POSITION => cue.relative = uint(value),
+                    CUE_CLUSTER_POSITION => cue.cluster = uint(value),
                     _ => {}
                 }
             }
@@ -559,6 +572,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
     let mut subtitles = tracks.subtitles;
     let mut ruler_report = None;
     let mut rulers = Rulers::default();
+    let mut blocks = None;
     let cues = match cues {
         Ok((bytes, (points, per_track))) => {
             for sub in &mut subtitles {
@@ -577,6 +591,11 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
             ruler_report = chosen.map(|number| {
                 let refs = per_track.get(&number).map_or(&[][..], Vec::as_slice);
                 ruler::build(number, refs, scale).0
+            });
+            blocks = chosen.map(|number| {
+                let refs = per_track.get(&number).map_or(&[][..], Vec::as_slice);
+                let encoded = subtitles.iter().any(|s| s.number == number && s.encoded);
+                block_targets(number, encoded, refs, scan.segment_data)
             });
             let mut english: Vec<u64> = subtitles
                 .iter()
@@ -623,7 +642,32 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
         scale_known: scan.scale.is_some(),
         ruler: ruler_report,
         rulers,
+        blocks,
     })
+}
+
+/// Absolute block positions of one track's cue points that carry both a
+/// cluster and a relative position; duplicates removed.
+fn block_targets(track: u64, encoded: bool, refs: &[CueRef], segment_data: u64) -> BlockTargets {
+    let mut positions: Vec<BlockPos> = refs
+        .iter()
+        .filter_map(|r| {
+            Some(BlockPos {
+                cluster: segment_data.checked_add(r.cluster?)?,
+                relative: r.relative?,
+            })
+        })
+        .collect();
+    positions.sort_unstable();
+    positions.dedup();
+    BlockTargets {
+        track,
+        encoded,
+        cue_refs: refs.len(),
+        with_cluster: refs.iter().filter(|r| r.cluster.is_some()).count(),
+        with_relative: refs.iter().filter(|r| r.relative.is_some()).count(),
+        positions,
+    }
 }
 
 #[cfg(test)]
@@ -780,6 +824,12 @@ mod tests {
                 (4, Codec::Srt, "tur", false, 0),
             ]
         );
+        let blocks = report.blocks.expect("ruler track has block targets");
+        assert_eq!(
+            (blocks.track, blocks.cue_refs, blocks.with_cluster),
+            (2, 2, 2)
+        );
+        assert!(blocks.positions.is_empty(), "no CueRelativePosition");
         assert_eq!(report.english_text_indexed, Some(true));
     }
 
@@ -935,5 +985,45 @@ mod tests {
         assert!(sub.english);
         assert_eq!(sub.codec, Codec::WebVtt);
         assert_eq!(sub.lang, "en-USx");
+    }
+
+    #[test]
+    fn block_targets_are_absolute_and_need_both_positions() {
+        let cue = |time, cluster, relative| CueRef {
+            time,
+            duration: Some(10),
+            relative,
+            cluster,
+        };
+        let refs = [
+            cue(0, Some(100), Some(7)),
+            cue(5, Some(100), Some(7)),
+            cue(9, Some(400), None),
+            cue(12, None, Some(3)),
+            cue(20, Some(50), Some(2)),
+        ];
+        let targets = block_targets(4, true, &refs, 1_000);
+        assert_eq!(
+            (
+                targets.cue_refs,
+                targets.with_cluster,
+                targets.with_relative
+            ),
+            (5, 4, 4)
+        );
+        assert!(targets.encoded);
+        assert_eq!(
+            targets.positions,
+            vec![
+                BlockPos {
+                    cluster: 1_050,
+                    relative: 2
+                },
+                BlockPos {
+                    cluster: 1_100,
+                    relative: 7
+                },
+            ]
+        );
     }
 }

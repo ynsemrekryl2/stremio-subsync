@@ -58,12 +58,17 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 > hedef dile çevrilir. Karar: `docs/decisions.md` (çeviri yedeği). SS-009
 > süreleri ölçtü ama `with_relative` sayısını kaydetmedi; SS-025 önce onu ölçer.
 
-- [ ] **SS-025** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya)
+- [~] **SS-025** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya)
 - [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri
 
 ## Devam notları (2026-10-28)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
+
+- **Şu an sırada: SS-025 ölçümü.** Kod hazır (`src/blocks.rs`). Sunucu
+  `SUBSYNC_BLOCK_PROBE=1` ile başlatılır; İngilizce SRT/ASS izli 5+ farklı
+  dosya açılır (cache'ten gelen dosyada probe çalışmaz). `m6 blocks` satırları
+  `docs/spikes/m6-block-text.md` tablosuna işlenir.
 
 - **M5 teslim çalışıyor (yerel).** Stremio'da kabul edilen Türkçe altyazı
   senkron geldi, tekrar açılışlar cache'ten. Sunucu: Terminal sekmesinde

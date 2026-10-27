@@ -30,6 +30,8 @@ pub struct AppState {
     token: String,
     streams: Option<Arc<dyn StreamSource>>,
     range: Option<Arc<dyn RangeReader>>,
+    /// Read the ruler track's blocks after each K2 probe (SS-025).
+    block_probe: bool,
     subtitle_sources: Vec<Arc<dyn SubtitleSource>>,
     /// ISO 639-2 language subtitles are looked for in.
     lang: String,
@@ -51,6 +53,7 @@ impl AppState {
             token,
             streams: None,
             range: None,
+            block_probe: false,
             subtitle_sources: Vec::new(),
             lang: String::new(),
             dump_dir: None,
@@ -69,6 +72,12 @@ impl AppState {
     /// Lets the K2 probe read the first bytes of the single matched stream.
     pub fn with_range_reader(mut self, reader: Arc<dyn RangeReader>) -> Self {
         self.range = Some(reader);
+        self
+    }
+
+    /// After each K2 probe, reads the ruler track's blocks in the background.
+    pub fn with_block_probe(mut self) -> Self {
+        self.block_probe = true;
         self
     }
 
@@ -358,8 +367,15 @@ async fn run_probes(
     let filename = hints.filename.clone();
     let k2 = async {
         let source = state.streams.clone()?;
-        let outcome =
-            streams::probe(source.as_ref(), state.range.as_deref(), &kind, &id, &hints).await;
+        let outcome = streams::probe(
+            source.as_ref(),
+            state.range.as_deref(),
+            state.block_probe,
+            &kind,
+            &id,
+            &hints,
+        )
+        .await;
         eprintln!("k2 probe kind={kind} outcome={outcome:?}");
         Some(outcome)
     };

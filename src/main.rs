@@ -1,5 +1,6 @@
 mod addon;
 mod align;
+mod blocks;
 mod dump;
 mod extra;
 mod label;
@@ -78,6 +79,15 @@ async fn main() {
                 });
                 state = state.with_range_reader(std::sync::Arc::new(reader));
                 eprintln!("range probe: on ({} bytes per match)", range::HEAD_BYTES);
+                // Reads one small range per subtitle line; off by default.
+                if std::env::var("SUBSYNC_BLOCK_PROBE").as_deref() == Ok("1") {
+                    state = state.with_block_probe();
+                    eprintln!(
+                        "block probe: on (up to {} blocks, {} at a time)",
+                        blocks::MAX_BLOCKS,
+                        blocks::CONCURRENCY
+                    );
+                }
             } else {
                 eprintln!("range probe: off");
             }
