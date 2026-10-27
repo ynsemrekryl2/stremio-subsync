@@ -141,7 +141,16 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
 | Dump | Aday | Karar | Fix | Pencere kaydırmaları (global'e göre) | İsabet | Kullanıcı etiketi |
 |---|---|---|---|---|---|---|
 | …265984 (bölüm, ~22 dk) | 1 (puan 75), 532 satır / cetvel 551 | ret `Disagree(0)` | 1/1, −500 ms | −450, +50, +60 | %36 / %46 / %28 | **kullanılabilir**: ortada çok az erken, başta biraz daha erken → **yanlış ret** (temkinli yönde) |
+| …055228 (bölüm) | 1 (puan 75), 524 satır / cetvel 687 | kabul | 1/1, +233 ms | +47, −43, +47 | %96 / %96 / %98 | **senkron** (baş, orta, son) |
+| | 2 (puan 75), 524 satır | kabul | 1/1, **−12.8 sn** | +47, −43, +47 | %96 / %96 / %98 | **senkron** |
+| | 3 (puan 64), 524 satır | kabul | 1/1, **+4.1 sn** | +43, −47, +43 | %96 / %96 / %98 | **senkron** |
 
+- **…055228:** Aynı çeviri üç farklı sürüm için yayınlanmış (hepsi 524
+  satır); kaydırmalar −12.8 sn ile +4.1 sn arasında. Üçü de kabul edildi ve
+  kullanıcı üçünü de baş, orta ve sonda senkron buldu. Kaydırma düzeltmesi
+  büyük farklarda da doğru çalışıyor.
+- **Şu ana kadar:** 4 etiketli aday; 3 doğru kabul, 1 yanlış ret (temkinli
+  yönde), **0 yanlış kabul**.
 - Orta ve son pencere −450 / −440 ms diyor; global −500 ms bunlardan ~60 ms
   erken. Kullanıcının "çok az erken" demesi bununla uyumlu.
 - Baş penceresi −950 ms diyor: ilk ~7 dakikada altyazı −500 ile ~0.45 sn geç

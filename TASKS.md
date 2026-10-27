@@ -49,11 +49,16 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
-- **Şu an sırada: SS-014 (gerçek etiketli set).** M2 cetveli ve M3 adayları
-  gerçek dosyada çalışıyor (`docs/spikes/m2-ruler.md`, `m3-sources.md`).
-  Sıradaki adım probe'da ikisini birleştirmek: cetvel olaylarını ve indirilen
-  adayların satırlarını `align::align`'a verip `Verdict`'i (kabul/ret, isabet
-  oranları, pencere kaydırmaları) loglamak. Sonra elle izleyip etiketlemek.
+- **Şu an sırada: SS-014 (gerçek etiketli set) sürüyor.** Etiketleme modu
+  (`SUBSYNC_LABEL_MODE=1`) adayları Stremio menüsünde "SubSync 2 ✓ +1.60s ·
+  7530" diye gösteriyor; kullanıcı izleyip etiketliyor. Zamanlar
+  `SUBSYNC_DUMP_DIR=dumps` ile saklanıyor, `cargo run -- calibrate dumps`
+  yeniden hizalıyor. Şimdilik 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış
+  kabul (`docs/spikes/m4-align.md`). Eşikler değişmedi; en değerli etiketler
+  ✓ olanlar (yanlış kabul var mı) ve kaydırması küçük ✗ olanlar.
+  Sunucu: `SUBSYNC_RANGE_PROBE=1 SUBSYNC_SOURCES_PROBE=1 SUBSYNC_DUMP_DIR=dumps
+  SUBSYNC_LABEL_MODE=1 cargo run` (Terminal sekmesine elle; Run düğmesi o
+  sekmenin ortamını görmüyor).
 - **M3 probe:** `SUBSYNC_SOURCES_PROBE=1` ile her istekte OpenSubtitles v3
   (+ `SUBDL_API_KEY` varsa SubDL) aranır, en iyi 3 aday indirilir;
   `m3 probe` satırı yalnız sayı/puan taşır. AIOStreams'ten bağımsız çalışır.
