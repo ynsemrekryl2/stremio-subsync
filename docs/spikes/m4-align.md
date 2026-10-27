@@ -107,6 +107,35 @@ izleyerek verdiği karardır; boşsa henüz etiketlenmedi.
 - Sentetik sette aday ve cetvel satır sayıları yakındı; bu yanlılık orada
   görünmedi.
 
+### İkinci tur (2026-10-27 gece, yeni ölçütle, `calibrate dumps`)
+
+7 istek → 4 dump; biri aynı dosyanın tekrarı, yani **3 farklı dosya**. Diğer
+3 istekte cetvel yoktu (2'sinde K2 eşleşmedi, 1'inde İngilizce metin izi yok).
+Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
+
+| Dump | İz | Aday (puan) | Satır | Karar | Fix | İsabet | Pencere kaydırmaları | Etiket |
+|---|---|---|---|---|---|---|---|---|
+| …938389 (bölüm) | 5 | 0 (10) | 1006/619 | kabul | 1/1, 0 ms | %51 / %65 / %60 | 0, 0, +40 | — |
+| …057530 (film A) | 4 (1835 satır) | 0 (97) | 1835/1359 | ret `LowHits` | 1/1, +362 ms | %42 / %37 / %43 | −82, +278, +168 | — |
+| | | 1 (81) | 1835/1498 | kabul | 1/1, −34 ms | %99 / %98 / %99 | +24, +24, +24 | — |
+| | | 2 (22) | 1835/1359 | kabul | 1001/1000, +1.6 sn | %63 / %62 / %57 | +43, +93, +113 | — |
+| | 3 (1498 satır) | 0, 1, 2 | | aynı kararlar | | | | |
+| …242878 (film B) | 9 | 0 (64) | 2312/1652 | kabul | 1/1, −43 ms | %84 / %77 / %89 | −37, −67, −7 | — |
+| | | 1 (33) | 2312/1881 | kabul | 1001/1000, +0.7 sn | %55 / %52 / %56 | +31, +61, +61 | — |
+| | 3 (25 satır, forced) | 0, 1 | | ret `ThinWindow` | | | | |
+
+- **Bölüm 1 artık kabul** (ölçüt düzeltmesi işe yaradı), ama baş penceresi
+  %51 ile eşiğin hemen üstünde.
+- Film A'da aday 1, cetvelin 3. iziyle **birebir aynı satır sayısında**
+  (1498) ve %99 isabetli: büyük olasılıkla aynı İngilizce altyazıdan çevrilmiş.
+- Film A'da **adı en çok benzeyen aday (puan 97) reddedildi**: kaydırmalar
+  pencereden pencereye 360 ms oynuyor, isabet %40. Ya zamanlaması özensiz ya
+  da başka bir kurgu; etiket gerekli. Sıralama puanı tek başına doğruluk
+  göstergesi değil.
+- İki İngilizce izi olan dosyada (normal + SDH) kararlar iz değişince
+  değişmedi; SDH'de kapsama düşük, isabet benzer.
+- Sınırdaki kabuller (%52–61 isabet) etiketlenmeden eşik değiştirilmemeli.
+
 ### Kalibrasyon düzeni
 
 `SUBSYNC_DUMP_DIR=dumps` ile her hizalanan istek `dumps/<unix ms>.json`
