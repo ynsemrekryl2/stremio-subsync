@@ -193,6 +193,24 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
   (Stremio İngilizce altyazıyı gösteriyor). Ayrı neden: "⚠ İng. resim".
   PGS'ten cetvel çıkarma fikri SS-025.
 
+### Kapsama (2026-10-28, tüm oturumların logu)
+
+21 farklı dosya (log izi/Cues boyutuyla ayırt edildi; ad yok):
+
+| Durum | Dosya | Pay |
+|---|---|---|
+| Cetvel var (İngilizce metin izi) | 10 | %48 |
+| İngilizce yalnız resim (PGS) | 6 | %29 |
+| K2: dosya listede eşleşmedi | 3 | %14 |
+| İngilizce hiç yok | 1 | %5 |
+| İngilizce metin var, dizinlenmemiş | 1 | %5 |
+
+Türkçe aday bulunamayan arama: 38 aramanın 3'ü. Asıl kayıp cetvelde:
+dosyaların yarısında cetvel yok. En büyük iki kazanç adayı: PGS'ten cetvel
+(SS-025; SRT + PGS içeren iki dosyada PGS cue noktası SRT satırının ~2 katı:
+2008 → 4020, 1061 → 2406, yani gösterme + temizleme çiftleri) ve K2'de
+boyutla eşleşme (SS-020; eşleşmeyen bölümde boyut 2 stream'de tutuyordu).
+
 ### Kalibrasyon düzeni
 
 `SUBSYNC_DUMP_DIR=dumps` ile her hizalanan istek `dumps/<unix ms>.json`
