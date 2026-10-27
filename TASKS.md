@@ -52,6 +52,15 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [x] **SS-023** Sonucu cache'le: bellek + disk (`SUBSYNC_CACHE_DIR`, varsayılan `cache`); dosya adı istek anahtarının özeti, kimlik/dosya adı yok; kabul 30 gün, "uygun aday yok" 1 gün geçerli — kanıt: testler + gerçek oturumda tekrar açılışlar `served from=memory`, `cache/`'te 2 dosya (diskten okuma yalnız testte denendi)
 - [ ] **SS-024** Cetvel çıkmayan ya da aday bulunamayan istekleri de kısa süre cache'le (geçici hata ile kalıcı nedeni ayır). Gerçek oturumda 7 dosyanın 4'ünde cetvel yoktu (3'ünde İngilizce metin izi yok, 1'inde K2 eşleşmedi); bunlar her açılışta yeniden probe'lanıyor — kanıt: testler
 
+## Çeviri yedeği (M6'dan öne çekildi)
+
+> M5 bir istek için kabul edilen aday sunamıyorsa, gömülü İngilizce metin izi
+> hedef dile çevrilir. Karar: `docs/decisions.md` (çeviri yedeği). SS-009
+> süreleri ölçtü ama `with_relative` sayısını kaydetmedi; SS-025 önce onu ölçer.
+
+- [ ] **SS-025** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya)
+- [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri
+
 ## Devam notları (2026-10-28)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
