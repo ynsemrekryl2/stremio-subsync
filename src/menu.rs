@@ -16,9 +16,95 @@ use crate::srt::{self, Cue};
 const CAPACITY: usize = 32;
 /// At most this many subtitles are offered for one file.
 const MAX_OFFERED: usize = 3;
-/// How long an answer stays good: one with subtitles, and "none fit".
-const KEEP_FOUND_S: u64 = 30 * 24 * 3600;
-const KEEP_NONE_S: u64 = 24 * 3600;
+/// How long an answer stays good: one with subtitles; one that says why
+/// there are none (the file has no English track, nothing fits...); and a
+/// passing one (a timeout, a source down), kept only so its notice can be
+/// fetched.
+pub const KEEP_FOUND_S: u64 = 30 * 24 * 3600;
+pub const KEEP_NONE_S: u64 = 24 * 3600;
+pub const KEEP_PASSING_S: u64 = 60;
+
+/// Why no subtitle is offered. Shown in Stremio's menu as one entry, so the
+/// viewer is not left waiting for nothing; the entry's "subtitle" explains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    /// The file has no English text subtitle to align against.
+    NoEnglishTrack,
+    /// It has one, but Cues do not index it; reading it means the whole file.
+    NotIndexed,
+    /// The played file was not found in the stream list.
+    NoStreamMatch,
+    /// No subtitle in the wanted language exists for this title.
+    NoCandidates,
+    /// Some exist, none fits this file from start to end.
+    NoneAccepted,
+    /// Not an MKV, or the debrid service is not serving it yet.
+    NotMkv,
+    /// A source or the file could not be reached this time.
+    Failed,
+    /// Still working; the next open will have the answer.
+    NotReady,
+}
+
+impl Notice {
+    fn text(self) -> (&'static str, &'static str) {
+        match self {
+            Self::NoEnglishTrack => (
+                "SubSync: İngilizce iz yok",
+                "Bu dosyada İngilizce metin altyazısı yok, senkron için cetvel bulunamadı. \
+                 Başka bir sürüm (BluRay, WEB-DL) deneyin.",
+            ),
+            Self::NotIndexed => (
+                "SubSync: iz okunamıyor",
+                "Bu dosyanın İngilizce altyazısı dizinlenmemiş; okumak için dosyanın \
+                 tamamı gerekir. Başka bir sürüm deneyin.",
+            ),
+            Self::NoStreamMatch => (
+                "SubSync: dosya bulunamadı",
+                "Oynatılan dosya AIOStreams listesinde bulunamadı.",
+            ),
+            Self::NoCandidates => (
+                "SubSync: aday altyazı yok",
+                "Bu yapım için aranan dilde altyazı bulunamadı.",
+            ),
+            Self::NoneAccepted => (
+                "SubSync: uyan altyazı yok",
+                "Bulunan altyazıların hiçbiri bu dosyaya baştan sona oturmadı.",
+            ),
+            Self::NotMkv => (
+                "SubSync: MKV değil",
+                "Dosya MKV değil ya da debrid servisi henüz hazırlamadı. \
+                 Hazırsa videoyu biraz sonra yeniden açın.",
+            ),
+            Self::Failed => (
+                "SubSync: geçici hata",
+                "Bir kaynağa ulaşılamadı. Videoyu biraz sonra yeniden açın.",
+            ),
+            Self::NotReady => (
+                "SubSync: hazırlanıyor",
+                "Altyazı hâlâ hazırlanıyor. Videoyu birkaç saniye sonra yeniden açın.",
+            ),
+        }
+    }
+
+    /// The menu entry: the reason as its name, the explanation as a
+    /// subtitle shown for the first ten seconds.
+    pub fn entry(self) -> MenuEntry {
+        let (lang, message) = self.text();
+        MenuEntry {
+            lang: lang.to_owned(),
+            srt: format!("1\n00:00:01,000 --> 00:00:10,000\n{message}\n\n"),
+        }
+    }
+
+    /// How long this answer stays good.
+    pub fn keep_s(self) -> u64 {
+        match self {
+            Self::NotMkv | Self::Failed | Self::NotReady => KEEP_PASSING_S,
+            _ => KEEP_NONE_S,
+        }
+    }
+}
 
 /// One menu entry: `lang` is what Stremio shows (a language code, or a
 /// label in labeling mode).
@@ -35,15 +121,6 @@ impl std::fmt::Debug for MenuEntry {
             .field("srt_len", &self.srt.len())
             .finish()
     }
-}
-
-fn fresh(created: u64, entries: &[MenuEntry], now: u64) -> bool {
-    let keep = if entries.is_empty() {
-        KEEP_NONE_S
-    } else {
-        KEEP_FOUND_S
-    };
-    now.saturating_sub(created) < keep
 }
 
 /// Accepted candidates on `track`, best hit rate first, each moved by its
@@ -92,6 +169,7 @@ fn fnv(text: &str) -> u64 {
 
 struct Kept {
     created: u64,
+    keep_s: u64,
     entries: Vec<MenuEntry>,
 }
 
@@ -109,19 +187,32 @@ impl MenuCache {
     pub fn find(&self, request: &str, now: u64) -> Option<(u64, &[MenuEntry])> {
         let entry = *self.by_request.get(request)?;
         let kept = self.entries.get(&entry)?;
-        fresh(kept.created, &kept.entries, now).then_some((entry, kept.entries.as_slice()))
+        (now.saturating_sub(kept.created) < kept.keep_s).then_some((entry, kept.entries.as_slice()))
     }
 
-    /// Stores `entries` for `request` as made at `created`, dropping the
-    /// oldest request when full.
-    pub fn insert(&mut self, request: String, entries: Vec<MenuEntry>, created: u64) -> u64 {
+    /// Stores `entries` for `request` as made at `created`, good for
+    /// `keep_s`, dropping the oldest request when full.
+    pub fn insert(
+        &mut self,
+        request: String,
+        entries: Vec<MenuEntry>,
+        created: u64,
+        keep_s: u64,
+    ) -> u64 {
         let entry = self.next;
         self.next += 1;
         if let Some(old) = self.by_request.insert(request, entry) {
             self.entries.remove(&old);
             self.order.retain(|&e| e != old);
         }
-        self.entries.insert(entry, Kept { created, entries });
+        self.entries.insert(
+            entry,
+            Kept {
+                created,
+                keep_s,
+                entries,
+            },
+        );
         self.order.push_back(entry);
         while self.order.len() > CAPACITY {
             if let Some(oldest) = self.order.pop_front() {
@@ -142,6 +233,7 @@ impl MenuCache {
 #[derive(Serialize, Deserialize)]
 struct Stored {
     created: u64,
+    keep_s: u64,
     entries: Vec<MenuEntry>,
 }
 
@@ -149,17 +241,29 @@ fn stored_path(dir: &Path, request: &str) -> PathBuf {
     dir.join(format!("{:016x}.json", fnv(request)))
 }
 
-/// A fresh menu for `request` saved under `dir`, with when it was made.
-pub fn load(dir: &Path, request: &str, now: u64) -> Option<(u64, Vec<MenuEntry>)> {
+/// A fresh menu for `request` saved under `dir`: when it was made, how long
+/// it is good for, and its entries.
+pub fn load(dir: &Path, request: &str, now: u64) -> Option<(u64, u64, Vec<MenuEntry>)> {
     let bytes = std::fs::read(stored_path(dir, request)).ok()?;
     let stored: Stored = serde_json::from_slice(&bytes).ok()?;
-    fresh(stored.created, &stored.entries, now).then_some((stored.created, stored.entries))
+    (now.saturating_sub(stored.created) < stored.keep_s).then_some((
+        stored.created,
+        stored.keep_s,
+        stored.entries,
+    ))
 }
 
-pub fn save(dir: &Path, request: &str, entries: &[MenuEntry], now: u64) -> std::io::Result<()> {
+pub fn save(
+    dir: &Path,
+    request: &str,
+    entries: &[MenuEntry],
+    now: u64,
+    keep_s: u64,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let stored = Stored {
         created: now,
+        keep_s,
         entries: entries.to_vec(),
     };
     let body = serde_json::to_vec(&stored).map_err(std::io::Error::other)?;
@@ -256,7 +360,7 @@ mod tests {
     #[test]
     fn cache_honours_freshness_and_evicts() {
         let mut cache = MenuCache::default();
-        let found = cache.insert("a".to_owned(), vec![entry("x")], 1_000);
+        let found = cache.insert("a".to_owned(), vec![entry("x")], 1_000, KEEP_FOUND_S);
         assert_eq!(
             cache.find("a", 1_000 + KEEP_FOUND_S - 1).map(|f| f.0),
             Some(found)
@@ -265,15 +369,29 @@ mod tests {
         assert_eq!(cache.srt(found, 1), Some("x"));
         assert_eq!(cache.srt(found, 2), None);
 
-        cache.insert("none".to_owned(), Vec::new(), 1_000);
+        let notice = Notice::NoEnglishTrack;
+        cache.insert(
+            "none".to_owned(),
+            vec![notice.entry()],
+            1_000,
+            notice.keep_s(),
+        );
         assert!(cache.find("none", 1_000 + KEEP_NONE_S - 1).is_some());
         assert!(cache.find("none", 1_000 + KEEP_NONE_S).is_none());
+        let passing = Notice::Failed;
+        cache.insert(
+            "down".to_owned(),
+            vec![passing.entry()],
+            1_000,
+            passing.keep_s(),
+        );
+        assert!(cache.find("down", 1_000 + KEEP_PASSING_S).is_none());
 
-        let again = cache.insert("a".to_owned(), vec![entry("y")], 2_000);
+        let again = cache.insert("a".to_owned(), vec![entry("y")], 2_000, KEEP_FOUND_S);
         assert_eq!(cache.srt(found, 1), None, "replaced entry is gone");
         assert_eq!(cache.srt(again, 1), Some("y"));
         for i in 0..CAPACITY {
-            cache.insert(format!("r{i}"), vec![entry("z")], 2_000);
+            cache.insert(format!("r{i}"), vec![entry("z")], 2_000, KEEP_FOUND_S);
         }
         assert!(cache.find("a", 2_000).is_none(), "oldest request evicted");
         assert_eq!(cache.entries.len(), CAPACITY);
@@ -288,7 +406,7 @@ mod tests {
             now_s()
         ));
         let request = "movie/tt1/Some.Film.2020.mkv/123";
-        save(&dir, request, &[entry("x")], 5_000).unwrap();
+        save(&dir, request, &[entry("x")], 5_000, KEEP_FOUND_S).unwrap();
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -298,12 +416,29 @@ mod tests {
             !names[0].contains("tt1") && !names[0].contains("Film"),
             "{names:?}"
         );
-        assert_eq!(load(&dir, request, 5_001), Some((5_000, vec![entry("x")])));
+        assert_eq!(
+            load(&dir, request, 5_001),
+            Some((5_000, KEEP_FOUND_S, vec![entry("x")]))
+        );
         assert_eq!(load(&dir, request, 5_000 + KEEP_FOUND_S), None);
         assert_eq!(load(&dir, "other", 5_001), None);
-        save(&dir, request, &[], 6_000).unwrap();
-        assert_eq!(load(&dir, request, 6_001), Some((6_000, Vec::new())));
+        let none = vec![Notice::NoneAccepted.entry()];
+        save(&dir, request, &none, 6_000, KEEP_NONE_S).unwrap();
+        assert_eq!(load(&dir, request, 6_001), Some((6_000, KEEP_NONE_S, none)));
+        assert_eq!(load(&dir, request, 6_000 + KEEP_NONE_S), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn notice_entry_names_the_reason_and_explains() {
+        let entry = Notice::NoEnglishTrack.entry();
+        assert_eq!(entry.lang, "SubSync: İngilizce iz yok");
+        let cues = srt::parse(&entry.srt);
+        assert_eq!(cues.len(), 1);
+        assert_eq!((cues[0].start_ms, cues[0].end_ms), (1_000, 10_000));
+        assert!(cues[0].text.contains("İngilizce metin altyazısı yok"));
+        assert_eq!(Notice::NotReady.keep_s(), KEEP_PASSING_S);
+        assert_eq!(Notice::NoneAccepted.keep_s(), KEEP_NONE_S);
     }
 
     #[test]

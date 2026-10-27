@@ -18,7 +18,7 @@ use crate::align;
 use crate::dump::{self, Dump};
 use crate::extra::PlaybackHints;
 use crate::label;
-use crate::menu::{self, MenuCache};
+use crate::menu::{self, MenuCache, Notice};
 use crate::range::RangeReader;
 use crate::ruler::Event;
 use crate::sources::{self, Query, SubtitleSource};
@@ -246,11 +246,11 @@ async fn respond(
         && let Some(dir) = state.cache_dir.clone()
     {
         let key = request.clone();
-        if let Ok(Some((created, entries))) =
+        if let Ok(Some((created, keep_s, entries))) =
             tokio::task::spawn_blocking(move || menu::load(&dir, &key, now)).await
         {
             if let Ok(mut menus) = state.menus.lock() {
-                menus.insert(request.clone(), entries, created);
+                menus.insert(request.clone(), entries, created, keep_s);
             }
             if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
                 eprintln!("subtitles served from=disk offered={offered}");
@@ -269,7 +269,16 @@ async fn respond(
         // Stremio waits for the menu; give the probes time to fill it. If
         // they take longer they still finish, and the next open is served
         // from the cache.
-        let _ = tokio::time::timeout(MENU_WAIT, work).await;
+        if tokio::time::timeout(MENU_WAIT, work).await.is_err() {
+            // Say so instead of an empty menu; the probes still finish and
+            // replace this notice.
+            let notice = Notice::NotReady;
+            if let Ok(mut menus) = state.menus.lock()
+                && menus.find(&request, now).is_none()
+            {
+                menus.insert(request.clone(), vec![notice.entry()], now, notice.keep_s());
+            }
+        }
         if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
             eprintln!("subtitles served from=probes offered={offered}");
             return list;
@@ -345,8 +354,8 @@ async fn menu_srt(
     }
 }
 
-/// K2 and M3 probes side by side, then alignment, the timing dump and, in
-/// labeling mode, the menu entries for `request`.
+/// Probes for `request` and stores the answer: the subtitles to offer, or a
+/// notice saying why there are none.
 async fn run_probes(
     state: Arc<AppState>,
     kind: String,
@@ -354,54 +363,131 @@ async fn run_probes(
     hints: PlaybackHints,
     request: String,
 ) {
-    let query = Query::new(&kind, &id, &state.lang);
-    let filename = hints.filename.clone();
-    let k2 = async {
-        let source = state.streams.clone()?;
-        let outcome =
-            streams::probe(source.as_ref(), state.range.as_deref(), &kind, &id, &hints).await;
-        eprintln!("k2 probe kind={kind} outcome={outcome:?}");
-        Some(outcome)
-    };
-    let m3 = async {
-        let query = query.as_ref()?;
-        if state.subtitle_sources.is_empty() {
-            return None;
+    let now = menu::now_s();
+    let (entries, keep_s, notice) = match build_menu(&state, kind, id, hints).await {
+        Ok(entries) if !entries.is_empty() => (entries, menu::KEEP_FOUND_S, None),
+        Ok(_) => {
+            let notice = Notice::NoneAccepted;
+            (vec![notice.entry()], notice.keep_s(), Some(notice))
         }
-        let (outcome, cues) =
-            sources::probe(&state.subtitle_sources, query, filename.as_deref()).await;
-        eprintln!("m3 probe query={query:?} outcome={outcome:?}");
-        let scores: Vec<Option<i32>> = outcome
-            .downloads
-            .iter()
-            .map(|d| d.as_ref().ok().map(|stats| stats.score))
-            .collect();
-        Some((cues, scores))
+        Err(notice) => (vec![notice.entry()], notice.keep_s(), Some(notice)),
     };
-    let (k2, m3) = tokio::join!(k2, m3);
-    let rulers = match k2 {
-        Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) => {
-            (*mkv).ok().map(|report| report.rulers.0)
+    eprintln!(
+        "menu ready entries={} notice={notice:?} label_mode={}",
+        entries.len(),
+        state.label_mode
+    );
+    // Passing answers and labeling menus stay in memory only.
+    if !state.label_mode
+        && keep_s >= menu::KEEP_NONE_S
+        && let Some(dir) = state.cache_dir.clone()
+    {
+        let (key, saved) = (request.clone(), entries.clone());
+        let written =
+            tokio::task::spawn_blocking(move || menu::save(&dir, &key, &saved, now, keep_s)).await;
+        if let Ok(Err(err)) = written {
+            eprintln!("cache write failed error={:?}", err.kind());
+        }
+    }
+    if let Ok(mut menus) = state.menus.lock() {
+        menus.insert(request, entries, now, keep_s);
+    }
+}
+
+/// The ruler tracks of a K2 probe, or why there are none.
+fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>, Notice> {
+    let (report, range, mkv) = match k2 {
+        Some(streams::ProbeOutcome::Matched {
+            report, range, mkv, ..
+        }) => (report, range, mkv),
+        Some(streams::ProbeOutcome::NoHints) => return Err(Notice::NoStreamMatch),
+        Some(streams::ProbeOutcome::Failed { .. }) | None => return Err(Notice::Failed),
+    };
+    if report.both != 1 {
+        return Err(Notice::NoStreamMatch);
+    }
+    match (range, mkv) {
+        (_, Some(mkv)) => match *mkv {
+            Ok(report) if !report.rulers.0.is_empty() => Ok(report.rulers.0),
+            Ok(report) if report.english_text_indexed == Some(false) => Err(Notice::NotIndexed),
+            Ok(_) => Err(Notice::NoEnglishTrack),
+            Err(_) => Err(Notice::Failed),
+        },
+        (Some(Ok(range)), None) if !range.ebml_magic => Err(Notice::NotMkv),
+        _ => Err(Notice::Failed),
+    }
+}
+
+/// K2 and M3 probes side by side, then alignment, the timing dump and the
+/// menu: accepted subtitles, or in labeling mode every candidate, marked.
+/// A missing ruler answers at once, without waiting for M3.
+async fn build_menu(
+    state: &Arc<AppState>,
+    kind: String,
+    id: String,
+    hints: PlaybackHints,
+) -> Result<Vec<menu::MenuEntry>, Notice> {
+    let query = Query::new(&kind, &id, &state.lang);
+    let m3 = match query {
+        Some(query) if !state.subtitle_sources.is_empty() => {
+            let sources = state.subtitle_sources.clone();
+            let filename = hints.filename.clone();
+            Some(tokio::spawn(async move {
+                let (outcome, cues) = sources::probe(&sources, &query, filename.as_deref()).await;
+                eprintln!("m3 probe query={query:?} outcome={outcome:?}");
+                (outcome, cues)
+            }))
         }
         _ => None,
     };
-    let (Some(rulers), Some((cues, scores))) = (rulers, m3) else {
-        return;
+    let k2 = match state.streams.clone() {
+        Some(source) => {
+            let outcome =
+                streams::probe(source.as_ref(), state.range.as_deref(), &kind, &id, &hints).await;
+            eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+            Some(outcome)
+        }
+        None => None,
     };
+    let rulers = match rulers_of(k2) {
+        Ok(rulers) => rulers,
+        Err(notice) => {
+            if let Some(m3) = m3 {
+                m3.abort();
+            }
+            return Err(notice);
+        }
+    };
+    let (outcome, cues) = match m3 {
+        Some(m3) => m3.await.map_err(|_| Notice::Failed)?,
+        None => return Err(Notice::Failed),
+    };
+    if outcome.searches.iter().all(|(_, found)| found.is_err()) {
+        return Err(Notice::Failed);
+    }
+    if outcome
+        .searches
+        .iter()
+        .all(|(_, found)| matches!(found, Ok(0) | Err(_)))
+    {
+        return Err(Notice::NoCandidates);
+    }
+    let scores: Vec<Option<i32>> = outcome
+        .downloads
+        .iter()
+        .map(|d| d.as_ref().ok().map(|stats| stats.score))
+        .collect();
     let times: Vec<Option<Vec<Event>>> =
         cues.iter().map(|c| c.as_deref().map(srt::events)).collect();
-    if rulers.is_empty() || times.iter().all(Option::is_none) {
-        return;
+    if times.iter().all(Option::is_none) {
+        return Err(Notice::Failed);
     }
-    // Alignment, the dump, the menu and the disk cache are CPU and disk
-    // work; keep them off the async workers.
+    // Alignment, the dump and the menu are CPU and disk work; keep them off
+    // the async workers.
     let dump_dir = state.dump_dir.clone();
-    let cache_dir = state.cache_dir.clone();
     let label_mode = state.label_mode;
     let lang = state.lang.clone();
-    let cache_key = request.clone();
-    let now = menu::now_s();
-    let Ok((trials, entries)) = tokio::task::spawn_blocking(move || {
+    let (trials, entries) = tokio::task::spawn_blocking(move || {
         let dump_name = match dump_dir
             .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
         {
@@ -420,30 +506,16 @@ async fn run_probes(
         let entries = if label_mode {
             label::build(&trials, (*track, events), &cues, dump_name.as_deref())
         } else {
-            let entries = menu::accepted(&trials, *track, &cues, &lang);
-            if let Some(dir) = cache_dir
-                && let Err(err) = menu::save(&dir, &cache_key, &entries, now)
-            {
-                eprintln!("cache write failed error={:?}", err.kind());
-            }
-            entries
+            menu::accepted(&trials, *track, &cues, &lang)
         };
         (trials, entries)
     })
     .await
-    else {
-        return;
-    };
+    .map_err(|_| Notice::Failed)?;
     for trial in &trials {
         eprintln!("m4 probe {trial:?}");
     }
-    eprintln!(
-        "menu ready entries={} label_mode={label_mode}",
-        entries.len()
-    );
-    if let Ok(mut menus) = state.menus.lock() {
-        menus.insert(request, entries, now);
-    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -578,26 +650,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subtitles_request_triggers_sources_probe() {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let source: Arc<dyn SubtitleSource> =
-            Arc::new(SignalSubtitles(std::sync::Mutex::new(Some(tx))));
+    async fn missing_ruler_answers_at_once_with_a_notice() {
+        // The stream list has no match for the file, so there is no ruler.
+        let (streams_tx, _streams_rx) = tokio::sync::oneshot::channel();
+        let (search_tx, _search_rx) = tokio::sync::oneshot::channel();
+        let subtitles: Arc<dyn SubtitleSource> =
+            Arc::new(SignalSubtitles(std::sync::Mutex::new(Some(search_tx))));
         let app = router(
             AppState::new(TOKEN.to_owned())
                 .unwrap()
-                .with_subtitle_sources(vec![source], "tur".to_owned()),
+                .with_stream_source(Arc::new(SignalSource(std::sync::Mutex::new(Some(
+                    streams_tx,
+                )))))
+                .with_subtitle_sources(vec![subtitles], "tur".to_owned()),
         );
         let uri = format!("/{TOKEN}/subtitles/series/tt0944947:1:2/filename=A.mkv.json");
-        let response = app
-            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let query = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
-            .await
+        let started = std::time::Instant::now();
+        let (status, body) = call(&app, uri.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let list: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(list["subtitles"][0]["lang"], "SubSync: dosya bulunamadı");
+        let path = list["subtitles"][0]["url"]
+            .as_str()
             .unwrap()
-            .unwrap();
-        assert_eq!(query, Query::new("series", "tt0944947:1:2", "tur").unwrap());
+            .trim_start_matches("http://127.0.0.1:7000")
+            .to_owned();
+        let (status, srt) = call(&app, path).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(srt.contains("AIOStreams listesinde bulunamadı"), "{srt}");
+        // The reason lasts a day: the next open is answered from memory.
+        assert_eq!(call(&app, uri).await.1, body);
     }
 
     async fn call(app: &Router, uri: String) -> (StatusCode, String) {
@@ -627,6 +710,7 @@ mod tests {
             "movie/tt1/A.mkv/0".to_owned(),
             offered(),
             menu::now_s(),
+            menu::KEEP_FOUND_S,
         );
         let app = router(state);
 
@@ -669,7 +753,14 @@ mod tests {
             std::process::id(),
             menu::now_s()
         ));
-        menu::save(&dir, "series/tt2:1:3/B.mkv/7", &offered(), menu::now_s()).unwrap();
+        menu::save(
+            &dir,
+            "series/tt2:1:3/B.mkv/7",
+            &offered(),
+            menu::now_s(),
+            menu::KEEP_FOUND_S,
+        )
+        .unwrap();
         // No sources at all: only the cache can answer.
         let app = router(
             AppState::new(TOKEN.to_owned())

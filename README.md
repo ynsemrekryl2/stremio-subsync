@@ -14,7 +14,8 @@ içindekiler tablosunu ve altyazı bloklarını HTTP Range ile okur.
 OpenSubtitles (ve anahtar varsa SubDL) adaylarını hizalar, baş / orta / son
 testini geçenleri kaydırılmış olarak Stremio'ya sunar ve sonucu cache'ler.
 İlk açılışta yanıt birkaç saniye sürebilir (en çok 15 sn); sonraki açılışlar
-cache'ten gelir. VPS kurulumu henüz yapılmadı (SS-006).
+cache'ten gelir. Altyazı üretilemezse menüde nedeni yazan tek bir "SubSync: …"
+girdisi görünür (örneğin "İngilizce iz yok"). VPS kurulumu henüz yapılmadı (SS-006).
 Plan: [`docs/plan.md`](docs/plan.md) · Kararlar: [`docs/decisions.md`](docs/decisions.md)
 · İş listesi: [`TASKS.md`](TASKS.md)
 
