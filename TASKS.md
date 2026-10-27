@@ -48,21 +48,22 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 
 ## M5 — Teslim
 
-- [~] **SS-022** Kabul edilen altyazıları Stremio'da normal sun: istek probe'ları bekler (en çok 15 sn), yalnız kabul edilenler `tur` dilinde, fix uygulanmış olarak listelenir; aynı çevirinin kopyaları tek girdi — kanıt: testler + Stremio'da gerçek bir dosyada Türkçe altyazının senkron gelmesi
-- [~] **SS-023** Sonucu cache'le: bellek + disk (`SUBSYNC_CACHE_DIR`, varsayılan `cache`); dosya adı istek anahtarının özeti, kimlik/dosya adı yok; kabul 30 gün, "uygun aday yok" 1 gün geçerli — kanıt: testler + ikinci açılışta probe'suz yanıt (log)
-- [ ] **SS-024** Cetvel çıkmayan ya da aday bulunamayan istekleri de kısa süre cache'le (geçici hata ile kalıcı nedeni ayır) — kanıt: testler
+- [x] **SS-022** Kabul edilen altyazıları Stremio'da normal sun: istek probe'ları bekler (en çok 15 sn), yalnız kabul edilenler `tur` dilinde, fix uygulanmış olarak listelenir; aynı çevirinin kopyaları tek girdi — kanıt: testler + 2026-10-28 Stremio'da kullanıcı "Türkçe altyazı geldi ve senkrondu" (bölüm: 3 kabulden kopyalar teke indi, 1 sunuldu; film: 2 sunuldu)
+- [x] **SS-023** Sonucu cache'le: bellek + disk (`SUBSYNC_CACHE_DIR`, varsayılan `cache`); dosya adı istek anahtarının özeti, kimlik/dosya adı yok; kabul 30 gün, "uygun aday yok" 1 gün geçerli — kanıt: testler + gerçek oturumda tekrar açılışlar `served from=memory`, `cache/`'te 2 dosya (diskten okuma yalnız testte denendi)
+- [ ] **SS-024** Cetvel çıkmayan ya da aday bulunamayan istekleri de kısa süre cache'le (geçici hata ile kalıcı nedeni ayır). Gerçek oturumda 7 dosyanın 4'ünde cetvel yoktu (3'ünde İngilizce metin izi yok, 1'inde K2 eşleşmedi); bunlar her açılışta yeniden probe'lanıyor — kanıt: testler
 
-## Devam notları (2026-10-27, gece)
+## Devam notları (2026-10-28)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
-- **Şu an sırada: SS-022 / SS-023 gerçek deneme.** Teslim ve cache kodu
-  hazır, testli; Stremio'da denenmedi. Sunucu artık bayraksız da çalışır:
-  `cargo run` (Terminal sekmesinde, `SUBSYNC_TOKEN` ve
-  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlıyken). Beklenen: ilk açılışta
-  birkaç saniye sonra menüde "Turkish" altyazı; ikinci açılışta log
-  `subtitles served from=memory` (yeniden başlatınca `from=disk`).
-  Etiketlemeye dönmek için `SUBSYNC_LABEL_MODE=1 SUBSYNC_DUMP_DIR=dumps`.
+- **M5 teslim çalışıyor (yerel).** Stremio'da kabul edilen Türkçe altyazı
+  senkron geldi, tekrar açılışlar cache'ten. Sunucu: Terminal sekmesinde
+  `SUBSYNC_DUMP_DIR=dumps cargo run` (`SUBSYNC_TOKEN` ve
+  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlı). Sıradaki adaylar: SS-024
+  (cetvelsiz istekleri cache'le), SS-020 (K2 eşleşmeyen bölüm), SS-006 (VPS,
+  M5'in son parçası), SS-017 (SubDL anahtarı).
+  Not: gerçek kullanımda dosyaların önemli kısmında İngilizce metin izi yok;
+  bunlarda altyazı sunulamıyor (karar gereği).
 - **SS-014 durumu:** 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış kabul
   (`docs/spikes/m4-align.md`). `cargo run -- calibrate dumps` kayıtları
   yeniden hizalar.
