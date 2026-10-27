@@ -66,6 +66,30 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
 | 2026-10-27 | Stremio masaüstü, macOS | film | Real-Debrid | 38 | 1 | 1 | 1 | `Http { same_host: false }` | 1469 |
 | 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü | Real-Debrid | 20 | 1 | 1 | 1 | `Http { same_host: false }` | 376 |
 | 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü | Real-Debrid | 14 | 1 | 1 | 1 | `Http { same_host: false }` | 416 |
+| 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü (range açık) | Real-Debrid | 16 | 1 | 1 | 1 | `Http { same_host: false }` | 601 |
+| 2026-10-27 | Stremio masaüstü, macOS | aynı bölüm, 2. istek | Real-Debrid | 16 | 1 | 1 | 1 | `Http { same_host: false }` | 760 |
+
+Range okuma sonuçları:
+
+| Örnek | hops | status | partial | accept_ranges | size_matches | content | bytes_read | ebml_magic | elapsed_ms |
+|---|---|---|---|---|---|---|---|---|---|
+| bölüm, 1. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 1246 |
+| bölüm, 2. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 658 |
+
+## Sonuç (Real-Debrid, masaüstü)
+
+- **Eşleşme:** 5/5 örnekte `filename` + `videoSize` tek stream'i kesin seçti
+  (14–38 stream arasında). Eşleşme sunucuda, oynatıcının gönderdiği alanlarla
+  yapılıyor; K1'e göre Android TV de aynı alanları gönderiyor.
+- **URL davranışı:** Stream URL'si AIOStreams manifest host'undan farklı bir
+  host'ta; tek yönlendirmeyle Real-Debrid indirme host'una gidiyor. Orada
+  Range'e uyuluyor (206), bildirilen boyut `videoSize` ile aynı, dosya MKV.
+  İlk 64 KB 0,7–1,2 sn'de geldi.
+- Debrid tarafında ne tetiklendiği (ör. Real-Debrid'in "Downloads" geçmişine
+  kayıt düşmesi) buradan görülemiyor; oynatmanın kendisi de aynı yolu
+  kullandığı için ek bir yan etki beklenmiyor.
+- Range okumaları şimdilik oynatmayla **aynı IP'den** (ev) yapıldı. VPS'ten
+  okuma (farklı IP) K3/SS-006'da ayrıca denenmeli.
 
 ## Notlar
 
@@ -82,5 +106,8 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
 - TorBox aboneliği bitti; tüm örnekler Real-Debrid. TorBox ölçümü SS-007'de.
 - Stream listesi ilk istekte ~1,5 sn, sonrakilerde ~0,4 sn'de geldi; altyazı yanıtını bekletmediği için oynatmayı
   etkilemedi. Gerçek akışta bu süre altyazı gecikmesine eklenecek; cache gerekli.
+- `content: Other`: Real-Debrid `Content-Type` olarak video/octet-stream dışı
+  bir değer gönderiyor; MKV olduğu EBML başlığından anlaşılıyor, tür başlığına
+  güvenilmemeli.
 - Aynı oturumda iki `route=none token=bad status=404` isteği düştü. Funnel genel
   adres olduğu için tarayıcı/bot istekleri olabilir; add-on'u etkilemiyor.

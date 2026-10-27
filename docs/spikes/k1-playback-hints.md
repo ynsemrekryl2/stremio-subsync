@@ -32,5 +32,8 @@ yapıldı. Add-on masaüstüne kuruldu, Stremio hesabı üzerinden TV'ye geçti.
 - Masaüstünde üç alan da geliyor. Dosya tanıma (K2) için `filename` ile
   `videoSize` yeterli görünüyor.
 - Android TV'de de üç alan geliyor. `kind=movie` isteği de aynı alanları taşıyor.
+- Masaüstünde aynı bölüm için iki istek geldi: ilkinde `videoHash` **yok**,
+  ikincisinde var (2026-10-27, K2 ölçümü sırasında). Hash ilk istekte
+  hazır olmayabiliyor; dosya tanıma hash'e dayanmamalı.
 - Apple TV (Stremio Lite) henüz ölçülmedi; cihaza erişim olunca aynı yolla
   ölçülecek. `videoHash` gelmeyebileceği beklentisi orada test edilecek.

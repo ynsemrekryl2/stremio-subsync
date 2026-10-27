@@ -10,8 +10,8 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 ## M1 — Keşif
 
 - [~] **SS-003** K1: Masaüstü, Android TV ve Apple TV'nin gönderdiği alanları ölç (istek logu yalnız var/yok basıyor) — kanıt: `docs/spikes/k1-playback-hints.md` (masaüstü ve Android TV bitti; Apple TV bekliyor, Tailscale Funnel ile ölçülecek)
-- [~] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (probe yazıldı; masaüstünde 3/3 örnek `both: 1`, Real-Debrid. URL çağırma denemesi ve TV örneği bekliyor)
-- [ ] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği; 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md`
+- [x] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (Real-Debrid, masaüstü: 5/5 `both: 1`; URL tek yönlendirmeyle RD'ye gidiyor, 206 Range). TorBox → SS-007
+- [ ] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği (RD: evet, ev IP'sinden — K2 notu); 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md`
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
 - [ ] **SS-007** TorBox ile K2 eşleşme ve K3 Range ölçümlerini tekrarla (abonelik yenilenince) — kanıt: K2/K3 notlarında TorBox satırları
 
@@ -28,11 +28,11 @@ Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
   kurulur. Funnel'ı kapatmak: `tailscale funnel --https=443 off`.
 - **SS-003:** Kalan tek ölçüm Apple TV (Stremio Lite). Sunucu + Funnel açıkken
   film aç, terminaldeki `subtitles request` satırını K1 notuna ekle.
-- **SS-004 (K2):** Probe hazır. Sunucu `SUBSYNC_AIOSTREAMS_URL` ile
-  başlatılınca her altyazı isteğinde stream listesi okunur ve `k2 probe`
-  satırı yalnız sayıları loglar. Stream URL'lerine istek atılmaz, çünkü
-  TorBox'ta indirme başlatabilir; URL çağırma ayrı ve kullanıcı onayıyla
-  denenir. Ölçüm adımları `docs/spikes/k2-aiostreams-match.md`.
+- **SS-004 (K2):** Bitti (Real-Debrid). Sunucu `SUBSYNC_AIOSTREAMS_URL` ile
+  başlatılınca her altyazı isteğinde stream listesi okunur; ayrıca
+  `SUBSYNC_RANGE_PROBE=1` verilirse eşleşen URL'den ilk 64 KB okunur. Loglar
+  yalnız sayı ve tür taşır. TorBox'ta URL çağırma indirme başlatabilir;
+  TorBox gelince (SS-007) ilk denemeyi kullanıcı onayıyla yap.
 - **SS-005 (K3) riski:** Range okumaları VPS'in IP'sinden, oynatma evin
   IP'sinden yapılacak. Real-Debrid aynı linkin farklı IP'lerden kullanılmasını
   ya da veri merkezi IP'lerini kısıtlayabilir; K3'te ayrıca bakılmalı.
