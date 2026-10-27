@@ -10,6 +10,8 @@ pub struct CueRef {
     pub duration: Option<u64>,
     /// `CueRelativePosition`: where the block sits inside its cluster.
     pub relative: Option<u64>,
+    /// `CueClusterPosition`: the cluster, relative to the Segment data.
+    pub cluster: Option<u64>,
 }
 
 /// One subtitle line on screen, in milliseconds.
@@ -90,6 +92,7 @@ mod tests {
             time,
             duration,
             relative: Some(10),
+            cluster: Some(0),
         }
     }
 
@@ -135,6 +138,7 @@ mod tests {
                 time: 12_000,
                 duration: None,
                 relative: None,
+                cluster: None,
             },
         ];
         let (report, events) = build(3, &refs, MS);

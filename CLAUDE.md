@@ -10,13 +10,18 @@ gerekirse `docs/plan.md` ve `docs/decisions.md` okunur.
 
 ## Kurallar
 
-1. Her iş `TASKS.md`'de bir satırla başlar (`SS-###`). Yol üstünde görülen
+1. Güncel kod ve iş listesi `main` üzerindedir. Yeni işe başlamadan önce
+   `git status`, `git worktree list` ve dalların durumunu kontrol et. SS
+   numaraları yalnız `main`'deki `TASKS.md` üzerinden ayrılır; paralel dal
+   kendi başına numara üretmez. Geçmiş numara eşlemeleri
+   `docs/history/branch-consolidation.md` içindedir.
+2. Her iş `TASKS.md`'de bir satırla başlar (`SS-###`). Yol üstünde görülen
    başka iş yeni satır olur, mevcut işe eklenmez.
-2. Bir iş, kanıtı olmadan bitmiş sayılmaz: logic → test, spike → ölçüm notu
+3. Bir iş, kanıtı olmadan bitmiş sayılmaz: logic → test, spike → ölçüm notu
    (`docs/spikes/`), deploy → çalışan link kontrolü.
-3. Büyük kararlar `docs/decisions.md`'ye tarih ve gerekçeyle yazılır.
-4. Testler gerçek provider kotası, debrid trafiği veya ağ kullanmaz; fake zorunlu.
-5. Commit, testler yeşilken ve iş kendi başına anlamlıyken atılır.
+4. Büyük kararlar `docs/decisions.md`'ye tarih ve gerekçeyle yazılır.
+5. Testler gerçek provider kotası, debrid trafiği veya ağ kullanmaz; fake zorunlu.
+6. Commit, testler yeşilken ve iş kendi başına anlamlıyken atılır.
    Mesaj formatı: `feat(mkv): read subtitle cues (SS-004)`.
 
 ## Asla loglanmayacaklar

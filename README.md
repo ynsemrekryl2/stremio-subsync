@@ -6,7 +6,8 @@ kaynaklardan bulunan altyazıları bu cetvele kaydırır ve yalnız filmin baş�
 ortasında ve sonunda aynı kaydırmayla tutanları sunar.
 
 Ses analizi yapmaz. Filmi indirmez veya proxy'lemez; dosyanın yalnız
-içindekiler tablosunu ve altyazı bloklarını HTTP Range ile okur.
+içindekiler tablosunu HTTP Range ile okur. Blok okuma denemesi ayrıca
+açılır (SS-028); otomatik çeviri henüz uygulanmadı.
 
 ## Durum
 
@@ -40,6 +41,7 @@ http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_AIOSTREAMS_URL` | — | AIOStreams manifest linki; oynatılan dosyayı bulmak için. Yoksa cetvel çıkmaz, altyazı sunulmaz. Loglanmaz. |
 | `SUBSYNC_RANGE_PROBE` | açık | `0` ise dosyadan cetvel okunmaz (altyazı da sunulmaz). |
 | `SUBSYNC_SOURCES_PROBE` | açık | `0` ise aday altyazı aranmaz. Açıkken en iyi 3 aday indirilir. |
+| `SUBSYNC_BLOCK_PROBE` | kapalı | `1` ise cetvel izinin bloklarını arka planda ölçer (SS-028); metin saklanmaz. Gerçek okuma maliyeti henüz doğrulanmadı. |
 | `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. |
 | `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
@@ -50,6 +52,7 @@ Sunucu kurulumu: [`docs/deploy.md`](docs/deploy.md)
 ## Test
 
 ```bash
+cargo fmt --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```

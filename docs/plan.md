@@ -9,7 +9,7 @@ Stremio ──GET /{token}/subtitles/{type}/{id}/{extra}──▶ add-on
 1. Dosyayı tanı     AIOStreams /stream/{type}/{id}.json → filename + boyutu
                     tutan stream → oynatma URL'si (arkada Real-Debrid veya TorBox)
 2. Cetveli oku      HTTP Range: EBML başlığı → SeekHead → Tracks + Cues →
-                    İngilizce metin izinin bloklarını tek tek oku → cue zamanları
+                    İngilizce metin izinin CueTime + CueDuration'ı → cue zamanları
 3. Adayları topla   OpenSubtitles v3 (anahtarsız) + SubDL (ücretsiz anahtar);
                     sürüm adı dosyaya en çok benzeyen önce
 4. Hizala ve test   satır örtüşmesi (10 ms ızgara, tam hesap) her fps adayı için;
@@ -40,7 +40,16 @@ aşılırsa o dosya için senkronlu altyazı üretilmez.
 | **K2** | AIOStreams'in stream listesinde bu alanlarla tek bir stream'i kesin eşleyebiliyor muyuz? URL'yi çağırmak debrid tarafında ne tetikliyor? | Real-Debrid ve TorBox'a ayrı API yazmadan ikisini de kapsamanın yolu bu. |
 | **K3** | Real-Debrid ve TorBox linkleri Range isteğini destekliyor mu, ve gerçek MKV'lerin Cues'u altyazı izini indeksliyor mu? (en az 10 dosya) | Indekslemiyorsa "birkaç MB okuma" mümkün değil; bu dosyalar desteklenmez. |
 
+## Güncel durum ve açık uzantılar
+
+M0 ve M2 tamamlandı; M3/M4 çekirdeği ve yerel M5 teslimi çalışıyor.
+M1'in Apple TV/TorBox/VPS ölçümleri, SubDL gerçek denemesi, gerçek etiket
+kalibrasyonu ve kalıcı sunucu kurulumu açık. Güncel işler `../TASKS.md`'de.
+PGS'ten yalnız zaman cetveli çıkarma SS-025 ile araştırılacak. Gömülü metin
+bloklarını okuma ölçümü SS-028; maliyet uygunsa SS-026 çeviri yedeği yapılır.
+İkisi ayrı yoldur; henüz PGS desteği veya otomatik çeviri sunulmaz.
+
 ## Kapsam dışı (şimdilik)
 
-Ses analizi · MP4/tx3g ve görüntü tabanlı (PGS) altyazılar · çok kullanıcı ·
+Ses analizi · MP4/tx3g ve PGS'ten metin çıkarma/OCR · çok kullanıcı ·
 hesap sistemi · web ayar sayfası · AIOStreams olmadan doğrudan debrid API'leri.

@@ -59,3 +59,10 @@ Aynı dosyalarda `m3 probe` (yalnız OpenSubtitles, `tur`). Cetvel M2 tablosunda
   ikinci kaynak olarak önemli.
 - Puanın hizalamaya etkisi SS-014'te ölçülecek: yüksek puanlı aday daha sık
   kabul ediliyor mu?
+
+## Paralel dalın ek ölçümü
+
+`claude/m3e-basha-a4d3a4` dalındaki API alanları ve 6 başlık / 15 SRT
+indirme ölçümü [`m3-sources-legacy.md`](m3-sources-legacy.md) içinde korunur.
+Bu, farklı sıralama koduyla alınmış tarihsel bir örneklemdir; puanları bu
+dosyadaki güncel puanlarla karşılaştırılmaz.

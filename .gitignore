@@ -3,3 +3,7 @@
 /dumps
 # Served subtitles: local only.
 /cache
+
+# Worktrees and preserved local runtime data.
+/.claude/
+/.local/

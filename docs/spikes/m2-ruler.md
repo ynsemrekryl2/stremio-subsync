@@ -69,3 +69,36 @@ Okuma maliyeti (Cues dahil, ilk 64 KB'tan sonra):
 - Dosya 1'in tek İngilizce izi "forced" işaretli ama 1107 satır; işaret
   güvenilir değil. Tek iz olduğu için yine seçildi, doğru davranış.
 - Hiçbir izde `overlaps` yok; ASS izinde de satırlar üst üste binmiyor.
+
+## Paralel M2 kaydı (673f3ff)
+
+Aşağıdaki ayrı kayıt `claude/devam-edelim-2bac6b` dalından korunmuştur.
+Ana tabloyla aynı dosyalar bulunabilir; iki örneklem toplanarak “10 farklı
+dosya” denmez. Bu not `with_relative == cue_refs` gözlemini de içerir;
+blok okuma maliyeti henüz ölçülmemiştir (SS-028).
+
+### Ölçüm
+
+| # | İçerik | İz (codec) | cue_refs | with_duration | events | median_ms | overlaps | scale_known |
+|---|---|---|---|---|---|---|---|---|
+| 1 | film, RD | 4 (SRT) | 1769 | 1769 | 1769 | 2263 | 0 | evet |
+| 2 | film, RD | 3 (SRT) | 2110 | 2110 | 2110 | 1877 | 0 | evet |
+| 3 | film, RD | 3 (SRT) | 2008 | 2008 | 2008 | 2335 | 0 | evet |
+| 4 | film, RD | 10 (SRT) | 1061 | 1061 | 1061 | 2294 | 0 | evet |
+| 5 | film, RD | 4 (ASS) | 1107 | 1107 | 1107 | 1435 | 0 | evet |
+
+5 farklı dosya (1. ve 3. dosya birer kez daha açıldı, aynı sayılar çıktı; bir
+açılışta eşleşme olmadı, ölçüm yok). Cetvel için ek okuma: yok; Cues okuması
+43–625 KB, 1–2 istek, ~0,4–1,2 sn.
+
+### Notlar
+
+- **SS-009: evet.** Metin izlerinde `with_duration == cue_refs` ve `with_relative
+  == cue_refs`, 5/5 dosya. Cetvel yalnız Cues'tan çıkıyor; blok okumak gerekmiyor.
+- PGS (görüntü) izlerinde `CueDuration` yok (`cue_durations: 0`); zaten cetvel
+  adayı değil, seçici metin izlerini alıyor.
+- Seçici doğru çalıştı: forced olmayan İngilizce metin izi tercih edildi
+  (dosya 1'de forced iz 3 yerine iz 4).
+- `overlaps: 0` ASS dahil her dosyada; iki satırlı/katmanlı çakışma bu örneklemde yok.
+- Ortanca olay süresi 1,4–2,3 sn; olay sayısı 1000–2100 aralığında.
+- Sınırlama: yalnız Real-Debrid, yalnız film; dizi ve TorBox ölçülmedi.

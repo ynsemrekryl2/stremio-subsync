@@ -1,7 +1,7 @@
 //! K2/K3 range read: asks the matched stream URL for its first bytes only,
 //! following redirects by hand so each hop's host kind can be recorded.
 //!
-//! Off unless `SUBSYNC_RANGE_PROBE=1`. URLs never leave this module; reports
+//! Enabled by default; `SUBSYNC_RANGE_PROBE=0` disables it. URLs never leave this module; reports
 //! carry host kinds, status codes, counts and booleans.
 
 use reqwest::header::{
@@ -180,6 +180,42 @@ pub trait ByteSource: Send + Sync {
     /// Reads that failed once and were tried again.
     fn retries(&self) -> usize {
         0
+    }
+
+    /// Asks once for several ranges in one request and reports what the
+    /// server did; the body is not read.
+    fn multi_range(&self, _ranges: Vec<(u64, u64)>) -> MultiFuture<'_> {
+        Box::pin(async { MultiRange::NotTried })
+    }
+}
+
+/// What a server does with one request for several ranges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiRange {
+    /// 206 with `multipart/byteranges`: one request can carry many blocks.
+    Multipart,
+    /// 206 with a single range.
+    SingleOnly,
+    /// 200: the whole file would follow.
+    Ignored,
+    Status(u16),
+    Failed,
+    /// This byte source cannot be asked (fakes).
+    NotTried,
+}
+
+pub type MultiFuture<'a> = Pin<Box<dyn Future<Output = MultiRange> + Send + 'a>>;
+
+fn classify_multi(status: StatusCode, headers: &HeaderMap) -> MultiRange {
+    let multipart = headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/byteranges"));
+    match status {
+        StatusCode::PARTIAL_CONTENT if multipart => MultiRange::Multipart,
+        StatusCode::PARTIAL_CONTENT => MultiRange::SingleOnly,
+        StatusCode::OK => MultiRange::Ignored,
+        status => MultiRange::Status(status.as_u16()),
     }
 }
 
@@ -360,6 +396,27 @@ impl ByteSource for HttpFile {
     fn retries(&self) -> usize {
         self.retries.load(Ordering::Relaxed)
     }
+
+    fn multi_range(&self, ranges: Vec<(u64, u64)>) -> MultiFuture<'_> {
+        Box::pin(async move {
+            let spec = ranges
+                .iter()
+                .map(|(first, last)| format!("{first}-{last}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            // Dropping the response unread closes it, whatever the answer.
+            match self
+                .client
+                .get(self.url.clone())
+                .header(RANGE, format!("bytes={spec}"))
+                .send()
+                .await
+            {
+                Ok(response) => classify_multi(response.status(), response.headers()),
+                Err(_) => MultiRange::Failed,
+            }
+        })
+    }
 }
 
 /// Last byte to ask for, kept inside the file; `None` when nothing is left.
@@ -531,5 +588,24 @@ mod tests {
         );
         assert_eq!(report.size_matches, None);
         assert_eq!(report.status, 403);
+    }
+
+    #[test]
+    fn multi_range_answers_are_told_apart() {
+        let multipart = headers(&[("content-type", "multipart/byteranges; boundary=x")]);
+        let single = headers(&[("content-type", "video/x-matroska")]);
+        assert_eq!(
+            classify_multi(StatusCode::PARTIAL_CONTENT, &multipart),
+            MultiRange::Multipart
+        );
+        assert_eq!(
+            classify_multi(StatusCode::PARTIAL_CONTENT, &single),
+            MultiRange::SingleOnly
+        );
+        assert_eq!(classify_multi(StatusCode::OK, &single), MultiRange::Ignored);
+        assert_eq!(
+            classify_multi(StatusCode::RANGE_NOT_SATISFIABLE, &single),
+            MultiRange::Status(416)
+        );
     }
 }

@@ -2,6 +2,11 @@
 
 Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 
+Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
+tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
+[`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
+Sonraki boş numara: **SS-029**.
+
 ## M0 — İskelet
 
 - [x] **SS-001** Token'lı manifest + subtitles route'ları, `extra` ayrıştırma — kanıt: `cargo test` (10 test, yanlış token → 404 negatif testi dahil)
@@ -17,7 +22,8 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [ ] **SS-007** TorBox ile K2 eşleşme ve K3 Range ölçümlerini tekrarla (abonelik yenilenince) — kanıt: K2/K3 notlarında TorBox satırları
 - [ ] **SS-008** VPS IP'sinden Real-Debrid Range okuması (oynatma ev IP'sinden sürerken) — kanıt: K3 notunda VPS satırı
 
-> M1 sonucu planı değiştirebilir. M2+ işleri keşif bittikten sonra açılır.
+> Real-Debrid keşfi M2–M5 için yeterliydi. Apple TV, TorBox ve VPS ölçümleri
+> açık; bunlar yerelde tamamlanan işleri geri açmaz.
 
 ## M2 — Cetvel
 
@@ -27,7 +33,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 ## M3 — Kaynaklar
 
 Hedef dil `SUBSYNC_LANG` (ISO 639-2, varsayılan `tur`). Testler fake ile;
-gerçek servis yalnız elle açılan probe'da çağrılır.
+gerçek servis normal kullanımda çağrılır (M5); testler sağlayıcı ağı kullanmaz.
 
 - [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
 - [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
@@ -38,7 +44,8 @@ gerçek servis yalnız elle açılan probe'da çağrılır.
 ## M4 — Hizalama
 
 Girdi iki zaman listesi: cetvel olayları (M2) ve aday altyazının satırları.
-M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
+Çekirdek teslim akışına bağlıdır. Gerçek eşik kalibrasyonu SS-014
+kapsamında sürer.
 
 - [x] **SS-011** Hizalama çekirdeği: kendimiz mi, `alass-core` mu? Küçük karşılaştırma — kanıt: `docs/spikes/m4-align.md` (220 sentetik hizalamada doğruluk aynı, bizimki ~27× hızlı ve kabul testli → kendimiz) + `docs/decisions.md` satırı
 - [x] **SS-012** Kaydırma + fps düzeltmesi: aday satırlarını cetvele en iyi oturtan (ölçek, kaydırma) — kanıt: `cargo test align` (örtüşme eğrisi kaba kuvvetle birebir; etiketli sette fps hep doğru, kaydırma ≤100 ms)
@@ -53,58 +60,62 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [~] **SS-024** Sonuç çıkmazsa boş bekletme: menüde nedeni gösteren tek girdi ("SubSync: İngilizce iz yok", "dosya bulunamadı", "aday altyazı yok", "uyan altyazı yok", "MKV değil", "geçici hata", "hazırlanıyor"); seçilince açıklama altyazı olarak görünür. Cetvel yoksa Türkçe aramayı beklemeden hemen cevap. Kalıcı nedenler 1 gün (disk dahil), geçiciler 60 sn yalnız bellekte; 15 sn aşılırsa "hazırlanıyor" — kanıt: testler + Stremio'da cetvelsiz bir dosyada nedenin görünmesi
 - [ ] **SS-025** PGS (resim) İngilizce izden cetvel. Kapsama sayımında 21 dosyanın 6'sı (%29) yalnız PGS İngilizce içeriyordu; en büyük kazanç. Cues'ta PGS izlerinin süresiz cue noktaları var; hem SRT hem PGS İngilizce içeren iki dosyada PGS noktası SRT satırının ~2 katı (2008 → 4020, 1061 → 2406) → her satır "göster" + "temizle" çifti. Adımlar: (1) PGS cue zamanlarını dump'a ekle, (2) SRT + PGS içeren bir dosyada PGS çiftlerinden çıkan satırları aynı dosyanın SRT'siyle hizala (beklenen: fix 1/1, ~0 ms, yüksek isabet), (3) tutarsa PGS'i cetvel olarak kullan (metin izi yoksa) — kanıt: ölçüm notu + testler + PGS'li bir dosyada kabul edilen altyazı. **Öncelik 2** (kullanıcının SRT + PGS içeren bir dosyayı bir kez açması gerekir)
 
-## Devam notları (2026-10-28)
+## Çeviri yedeği (M6'dan öne çekildi)
 
-Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
+> M5 bir istek için kabul edilen aday sunamıyorsa, gömülü İngilizce metin izi
+> hedef dile çevrilmesi planlanır; henüz uygulanmadı. Karar:
+> `docs/decisions.md` (çeviri yedeği). Önce SS-028 ile blokların gerçekten
+> okunabildiği ve maliyeti ölçülür. PGS cetveli (SS-025) ayrı bir iştir.
 
-- **M5 teslim çalışıyor (yerel).** Stremio'da kabul edilen Türkçe altyazı
-  senkron geliyor, tekrar açılışlar cache'ten; sonuç çıkmazsa menüde kısa
-  neden ("⚠ İng. resim", "⚠ Uyan yok"…). Sunucu: Terminal sekmesinde
-  `SUBSYNC_DUMP_DIR=dumps cargo run` (`SUBSYNC_TOKEN` ve
-  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlı; Run düğmesi o ortamı görmüyor).
-- **Bulgu (2026-10-28): sistem dosyaların yarısında çalışamıyor, sorun
-  cetvelde.** 21 farklı dosyanın yalnız 10'unda (%48) İngilizce metin izi
-  var. 6'sında (%29) İngilizce yalnız resim (PGS), 3'ünde (%14) dosya
-  AIOStreams listesinde eşleşmedi, 2'sinde İngilizce yok/okunamıyor. Türkçe
-  aday ise 38 aramanın 35'inde bulundu. Ayrıntı: `docs/spikes/m4-align.md`
-  "Kapsama".
-- **Sıradaki işler (öncelik sırasıyla):**
-  1. SS-020 — K2'de boyutla eşleşme (%14'ü kurtarır, küçük iş).
-  2. SS-025 — PGS'ten cetvel (%29'u kurtarabilir; önce ölçüm, kullanıcının
-     SRT + PGS İngilizce içeren bir dosyayı açması gerekir).
-  3. SS-006 — VPS (M5'in son parçası; Android TV / Apple TV için).
-  4. SS-017 — SubDL anahtarı (ikinci aday kaynağı).
-  İkisi (1 + 2) tutarsa cetvel çıkan dosya oranı örnekte ~%48'den ~%90'a
-  yaklaşır.
-- **SS-014 durumu:** 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış kabul
-  (`docs/spikes/m4-align.md`). `cargo run -- calibrate dumps` kayıtları
-  yeniden hizalar.
-- **M3 probe:** `SUBSYNC_SOURCES_PROBE=1` ile her istekte OpenSubtitles v3
-  (+ `SUBDL_API_KEY` varsa SubDL) aranır, en iyi 3 aday indirilir;
-  `m3 probe` satırı yalnız sayı/puan taşır. AIOStreams'ten bağımsız çalışır.
-  SubDL anahtarı henüz yok (SS-017).
-- **M4 çekirdeği hazır** (`src/align.rs`, sentetik set `src/synth.rs`).
-  Henüz route'a bağlı değil (M5). Eşikler sentetik; gerçek ayar SS-014'te,
-  M2 ölçümü ve M3 adayları gelince.
-- **Sunucuyu başlatma (aynı terminal sekmesinde ortam hazırsa):**
-  `SUBSYNC_RANGE_PROBE=1 cargo run`. Ortam kaybolduysa (yeni sekme) tek komut:
-  `read` ile AIOStreams linkini sorar, yeni token üretir, kurulum linkini
-  panoya kopyalar, sunucuyu başlatır; sonra masaüstü Stremio'da eski SubSync
-  kaldırılıp panodaki link kurulur. Linkler sohbete yapıştırılmamalı.
-- **Geçici yayın:** Mac'te `cargo run`, dışarıya **Tailscale Funnel**
-  (443 → `127.0.0.1:7000`). Funnel'ı kapatmak: `tailscale funnel --https=443 off`.
-- **Log satırları:** `http … route=… token=ok|bad` her istek; `subtitles request`
-  ipuçları; `k2 probe … report / range / mkv` K2-K3-M2 ölçümü. Hepsi yalnız
-  sayı ve tür taşır; URL, token, dosya adı, metin yok.
-- **Bilinenler:** K2 (RD) eşleşme kesin; URL tek yönlendirmeyle RD'ye gidiyor,
-  206 Range. K3 (RD) 12 MKV'nin 11'inde İngilizce metin izi Cues'ta. RD dosya
-  sonunu aşan Range'de bağlantıyı erken kesiyor; okumalar toplam boyutla
-  sınırlı. Debrid'de hazır olmayan dosya yer tutucu video döndürüyor
-  (`hops`'ta RD yok, `ebml_magic: false`).
-- **Açık M1 işleri:** SS-003 Apple TV · SS-006 VPS (Oracle ARM kapasitesi
-  yoktu; PAYG ya da Hetzner CAX11) · SS-007 TorBox (abonelik bitti; URL
-  çağırma indirme başlatabilir, ilk deneme kullanıcı onayıyla) · SS-008 VPS
-  IP'sinden RD okuması (kullanıcı M2'den sonraya bıraktı).
-- **Güvenlik:** SubSync token'ı ve AIOStreams manifest linki önceki sohbette
-  açığa çıktı. VPS'e geçince yeni token; AIOStreams şifresi K-ölçümleri
-  bitince değiştirilmeli.
+- [~] **SS-028** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya)
+- [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri
+
+## Bakım
+
+- [~] **SS-027** Dalları `main` üzerinde birleştir; M5 menü/hata önbelleğini ve blok probe'unu birlikte koru. Paralel M2/M3 ölçümlerini aktar, eski numaraları eşle, yinelenen devam notlarını düzelt, yerel cache/dump verisini koru ve eski worktree/dalları kapat — kanıt: `docs/history/branch-consolidation.md`, birleşik testler ve `git worktree list`.
+
+## Devam notları (2026-10-27, dallar birleştirildi)
+
+- **Yerel M5 çalışıyor.** Dosya eşleştirme → İngilizce metin cetveli → aday
+  indirme → kaydırma/FPS → kabul testi → Stremio'ya SRT + cache bağlıdır.
+  Altyazı üretilemezse kısa neden gösterilir. SS-024'ün kodu ve testleri
+  hazır; gerçek Stremio denemesi henüz kaydedilmediği için iş açık.
+- **Kapsama darboğazı cetvel:** 21 farklı dosyanın 10'unda İngilizce metin
+  izi, 6'sında yalnız PGS var; 3'ünde AIOStreams eşleşmedi, 2'sinde İngilizce
+  yok/okunamıyor. Türkçe aday 38 aramanın 35'inde bulundu. Kaynak ve örneklem
+  sınırları: `docs/spikes/m4-align.md`, “Kapsama”.
+- **Öncelikler:** SS-020 dosya eşleşmesi → SS-025 PGS cetvel ölçümü → SS-006
+  VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
+  SS-019 CD1/CD2 birleştirme de açık. Bu oturum yalnız dalları toparladı;
+  bu özellikler uygulanmadı.
+- **Çeviri yolu:** SS-028'in kodu `src/blocks.rs`'de hazır; 5+ gerçek SRT/ASS
+  izli dosyada maliyet ölçümü bekleniyor (`docs/spikes/m6-block-text.md`).
+  Sonuca göre SS-026 çeviri yedeği uygulanır. SS-025 PGS yalnız zaman cetveli
+  üretmeyi hedefler; metin çevirisi sağlamaz.
+- **M2 konum ölçümü:** ana ölçüm tablosu `with_relative` sayısını kaydetmedi;
+  paralel M2 kaydı 5/5 dosyada bulunduğunu bildiriyor. İki kayıt da
+  `docs/spikes/m2-ruler.md` içinde korunur; aynı dosyalar olabilir. Bu kayıt,
+  gerçek blok okuma başarısı ve maliyeti için SS-028'in yerini tutmaz.
+- **SS-014:** 4 kullanıcı etiketi: 3 doğru kabul, 1 yanlış ret, 0 yanlış
+  kabul. Yerel senkron (SS-021) fayda göstermedi; yalnız etiketleme modunda.
+  `cargo run -- calibrate dumps` yerel zaman kayıtlarını yeniden değerlendirir.
+- **Sunucu:** proje kökünde, ortam değişkenlerinin hazır olduğu terminalde
+  `SUBSYNC_DUMP_DIR=dumps cargo run`. `SUBSYNC_TOKEN` (en az 32 karakter) ve
+  `SUBSYNC_AIOSTREAMS_URL` gerekir. Range ve kaynaklar varsayılan açık,
+  `SUBSYNC_LANG=tur`; SubDL yalnız `SUBDL_API_KEY` varsa açılır.
+- **Blok ölçümü:** aynı komuta `SUBSYNC_BLOCK_PROBE=1` ekle. Probe arka planda
+  çalışır. Cache'ten yanıtlanan dosyada probe çalışmaz; ölçüm için daha önce
+  açılmamış dosyalar seç. Çıktı `m6 blocks`, yalnız sayı ve tür taşır.
+- **Yerel veriler:** 7 cache ve 14 dump dosyası hem köke hem
+  `.local/branch-backups/` altına kopyalanıp doğrulandı. Eski dallar
+  `codex/archive/` altında; worktree'ler açık Claude süreçleri kullandığı
+  için silinmedi. Güncel geliştirme kökteki `main` üzerinde yapılır.
+  Ayrıntı birleştirme kaydında.
+- **Geçici yayın:** Tailscale Funnel (443 → `127.0.0.1:7000`). Kapatmak:
+  `tailscale funnel --https=443 off`. Kalıcı VPS kurulumu henüz yok.
+- **Açık keşif:** SS-003 Apple TV, SS-007 TorBox (abonelik bekliyor; URL
+  çağrısı indirme başlatabilir, ilk gerçek deneme kullanıcı onayıyla),
+  SS-008 VPS IP'sinden RD okuması.
+- **Güvenlik notu:** önceki oturumda açığa çıkan SubSync token'ı VPS'e geçerken
+  yenilenmeli; AIOStreams şifresi keşif ölçümleri bitince değiştirilmeli.
+  Linkler sohbete veya loga yazılmaz.

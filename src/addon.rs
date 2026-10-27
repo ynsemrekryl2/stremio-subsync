@@ -30,6 +30,8 @@ pub struct AppState {
     token: String,
     streams: Option<Arc<dyn StreamSource>>,
     range: Option<Arc<dyn RangeReader>>,
+    /// Read the ruler track's blocks after each K2 probe (SS-028).
+    block_probe: bool,
     subtitle_sources: Vec<Arc<dyn SubtitleSource>>,
     /// ISO 639-2 language subtitles are looked for in.
     lang: String,
@@ -51,6 +53,7 @@ impl AppState {
             token,
             streams: None,
             range: None,
+            block_probe: false,
             subtitle_sources: Vec::new(),
             lang: String::new(),
             dump_dir: None,
@@ -69,6 +72,12 @@ impl AppState {
     /// Lets the K2 probe read the first bytes of the single matched stream.
     pub fn with_range_reader(mut self, reader: Arc<dyn RangeReader>) -> Self {
         self.range = Some(reader);
+        self
+    }
+
+    /// After each K2 probe, reads the ruler track's blocks in the background.
+    pub fn with_block_probe(mut self) -> Self {
+        self.block_probe = true;
         self
     }
 
@@ -443,8 +452,15 @@ async fn build_menu(
     };
     let k2 = match state.streams.clone() {
         Some(source) => {
-            let outcome =
-                streams::probe(source.as_ref(), state.range.as_deref(), &kind, &id, &hints).await;
+            let outcome = streams::probe(
+                source.as_ref(),
+                state.range.as_deref(),
+                state.block_probe,
+                &kind,
+                &id,
+                &hints,
+            )
+            .await;
             eprintln!("k2 probe kind={kind} outcome={outcome:?}");
             Some(outcome)
         }
@@ -681,6 +697,138 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(srt.contains("AIOStreams listesinde bulunamadı"), "{srt}");
         // The reason lasts a day: the next open is answered from memory.
+        assert_eq!(call(&app, uri).await.1, body);
+    }
+
+    /// All metadata is in the head; the only later read can be the block probe.
+    fn probe_head() -> Vec<u8> {
+        fn el(id: u32, data: &[u8]) -> Vec<u8> {
+            let bytes = id.to_be_bytes();
+            let skip = bytes.iter().take_while(|&&b| b == 0).count();
+            let mut out = bytes[skip..].to_vec();
+            out.push(1);
+            out.extend_from_slice(&(data.len() as u64).to_be_bytes()[1..]);
+            out.extend_from_slice(data);
+            out
+        }
+        let track = el(
+            0xAE,
+            &[
+                el(0xD7, &[2]),
+                el(0x83, &[17]),
+                el(0x86, b"S_TEXT/UTF8"),
+                el(0x22B59C, b"eng"),
+            ]
+            .concat(),
+        );
+        let cue = el(
+            0xBB,
+            &[
+                el(0xB3, &[0]),
+                el(
+                    0xB7,
+                    &[
+                        el(0xF7, &[2]),
+                        el(0xB2, &[100]),
+                        el(0xF1, &[0]),
+                        el(0xF0, &[0]),
+                    ]
+                    .concat(),
+                ),
+            ]
+            .concat(),
+        );
+        [
+            el(0x1A45DFA3, &el(0x4282, b"matroska")),
+            el(
+                0x18538067,
+                &[el(0x1654AE6B, &track), el(0x1C53BB6B, &cue)].concat(),
+            ),
+        ]
+        .concat()
+    }
+
+    struct ProbeStream;
+
+    impl StreamSource for ProbeStream {
+        fn fetch<'a>(&'a self, _kind: &'a str, _id: &'a str) -> streams::FetchFuture<'a> {
+            Box::pin(async {
+                streams::parse_stream_list(
+                    br#"{"streams":[{"url":"https://media.test/file","behaviorHints":{"filename":"A.mkv","videoSize":5}}]}"#,
+                )
+            })
+        }
+
+        fn host(&self) -> &str {
+            "aio.test"
+        }
+    }
+
+    struct PendingBlocks(Arc<tokio::sync::Notify>);
+
+    impl crate::range::ByteSource for PendingBlocks {
+        fn read(&self, _start: u64, _len: usize) -> crate::range::ReadFuture<'_> {
+            self.0.notify_one();
+            Box::pin(std::future::pending())
+        }
+    }
+
+    struct ProbeRange(Arc<tokio::sync::Notify>);
+
+    impl RangeReader for ProbeRange {
+        fn open<'a>(
+            &'a self,
+            _url: &'a str,
+            _host: &'a str,
+            _size: Option<u64>,
+        ) -> crate::range::OpenFuture<'a> {
+            let head = probe_head();
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_RANGE,
+                format!("bytes 0-{}/{}", head.len() - 1, head.len())
+                    .parse()
+                    .unwrap(),
+            );
+            let report = crate::range::analyze(
+                Vec::new(),
+                StatusCode::PARTIAL_CONTENT,
+                &headers,
+                &head,
+                None,
+                0,
+            );
+            let file = Box::new(PendingBlocks(self.0.clone()));
+            Box::pin(async { Ok(crate::range::Opened { report, head, file }) })
+        }
+    }
+
+    #[tokio::test]
+    async fn block_probe_does_not_delay_or_replace_cached_failure_notice() {
+        let read = Arc::new(tokio::sync::Notify::new());
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(read.clone())))
+                .with_subtitle_sources(
+                    vec![Arc::new(SignalSubtitles(Mutex::new(None)))],
+                    "tur".to_owned(),
+                )
+                .with_block_probe(),
+        );
+        let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
+        // Block reads never finish; delivery must still answer and cache its reason.
+        let (status, body) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), call(&app, uri.clone()))
+                .await
+                .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(list["subtitles"][0]["lang"], "⚠ Aday yok");
+        tokio::time::timeout(std::time::Duration::from_secs(1), read.notified())
+            .await
+            .expect("the request must also trigger the background block probe");
         assert_eq!(call(&app, uri).await.1, body);
     }
 
