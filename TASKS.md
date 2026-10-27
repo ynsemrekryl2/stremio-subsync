@@ -61,6 +61,10 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [~] **SS-025** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya)
 - [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri
 
+## Bakım
+
+- [ ] **SS-027** Dalları tek çizgide topla: `main` M1'de kaldı; M2–M5 ve çeviri yedeği yalnız `claude/m4-91d8d8` → `claude/embedded-subtitle-translation-9c857d` çizgisinde. Bu çizgi `main`'e alınır. Paralel dallar incelenir: `claude/devam-edelim-2bac6b` (SS-009 ölçümünün ikinci kaydı) ve `claude/m3e-basha-a4d3a4` (aynı numaralarla ikinci bir M3; SS-011…016 burada başka işler). Gereken parçası alınır, gerisi kapatılır. `main`'den ileri olmayan worktree'ler (`devam-edelim-2bebd5`, `real-debrid-vs-torbox-c0b02b`) silinir — kanıt: `main`'de tek ve çakışmasız SS numaralandırması + `git worktree list`
+
 ## Devam notları (2026-10-28)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
@@ -69,6 +73,37 @@ Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
   `SUBSYNC_BLOCK_PROBE=1` ile başlatılır; İngilizce SRT/ASS izli 5+ farklı
   dosya açılır (cache'ten gelen dosyada probe çalışmaz). `m6 blocks` satırları
   `docs/spikes/m6-block-text.md` tablosuna işlenir.
+- **Yapılacaklar sırası:** SS-025 ölçümü → sonuca göre SS-026 (okuma ucuzsa
+  çeviri yedeği; pahalıysa karar yeniden açılır) → SS-027 (dalları topla).
+  SS-024, SS-020, SS-006, SS-017 M5 tarafında açık.
+- **Yeni sekmede sunucu (tek komut):** linki gizli sorar, yeni token üretir,
+  kurulum linkini panoya kopyalar, sunucuyu blok probe'uyla başlatır. Sonra
+  Stremio'da eski SubSync kaldırılıp panodaki link kurulur.
+  `read -rs "SUBSYNC_AIOSTREAMS_URL?AIOStreams manifest link (hidden): " && echo && export SUBSYNC_AIOSTREAMS_URL && export SUBSYNC_TOKEN=$(openssl rand -hex 24) && echo "http://127.0.0.1:7000/$SUBSYNC_TOKEN/manifest.json" | pbcopy && SUBSYNC_BLOCK_PROBE=1 SUBSYNC_DUMP_DIR=dumps cargo run`
+
+### Bulgular (2026-10-27, çeviri yedeği oturumu)
+
+- **Nen Player'da gömülü altyazı çevirisi** iki parçalı: metin, medyanın
+  512 MiB'e kadar geçici diske indirilip FFmpeg ile açılmasıyla çıkarılıyor
+  (Nen ADR-0052; 440 sn'lik bölümde 235 MB okuma); çeviri OpenRouter ile iki
+  aşamalı (belge analizi + bağlam pencereli bloklar, doğrulama/onarım,
+  zamanlar modele gitmiyor). Çıkarma yolu SubSync'e uymuyor, çeviri çekirdeği
+  taşınabilir. Uçtan uca (Stremio → gömülü iz → internet üzerinden çeviri)
+  Nen'de de kanıtlanmadı: NEN-126 sidecar 24 cue, NEN-144 loopback.
+  Karar satırı: `docs/decisions.md` (çeviri yedeği).
+- **Dallar ayrışmış:** `main` M1 sonunda kalmış; M2–M5 yalnız
+  `claude/m4-91d8d8`'de. İki paralel dal aynı SS numaralarını başka işler için
+  kullanmış (ör. SS-011: burada hizalama çekirdeği, `m3e-basha`'da
+  OpenSubtitles ölçümü). Çeviri yedeği işleri ilk açıldığında SS-011/012
+  olarak çakıştı; bu dal `m4` üstüne taşınıp SS-025/026'ya çevrildi.
+  Ders: yeni SS numarası açmadan önce `git worktree list` ve dalların
+  `TASKS.md`'si kontrol edilir. Toparlama: SS-027.
+- **SS-009 `with_relative` kaydedilmedi:** ölçüm notu yalnız süreleri
+  (`with_duration` = `cue_refs`, 5/5) yazıyor. Blok konumunun Cues'ta olup
+  olmadığı SS-025'in ilk sorusu.
+- **M5 cache'i probe'ları atlatıyor:** bellek/disk cache'inden sunulan dosyada
+  K2 probe'u, dolayısıyla blok probe'u da çalışmaz. Ölçümde daha önce
+  açılmamış dosyalar kullanılır.
 
 - **M5 teslim çalışıyor (yerel).** Stremio'da kabul edilen Türkçe altyazı
   senkron geldi, tekrar açılışlar cache'ten. Sunucu: Terminal sekmesinde
