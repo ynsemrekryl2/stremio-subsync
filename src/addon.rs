@@ -3,8 +3,9 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{MatchedPath, Path, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -55,6 +56,7 @@ struct SubtitlesResponse {
 }
 
 pub fn router(state: AppState) -> Router {
+    let state = Arc::new(state);
     Router::new()
         .route("/{token}/manifest.json", get(manifest))
         .route("/{token}/subtitles/{kind}/{id}", get(subtitles))
@@ -62,8 +64,43 @@ pub fn router(state: AppState) -> Router {
             "/{token}/subtitles/{kind}/{id}/{extra}",
             get(subtitles_with_extra),
         )
+        .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
-        .with_state(Arc::new(state))
+        .with_state(state)
+}
+
+/// One line per request with the route template, never the path itself:
+/// the path carries the token, the IMDb id and the filename.
+fn access_line(method: &str, route: Option<&str>, token_ok: bool, status: StatusCode) -> String {
+    let route = route.unwrap_or("none");
+    let token = if token_ok { "ok" } else { "bad" };
+    format!(
+        "http {method} route={route} token={token} status={}",
+        status.as_u16()
+    )
+}
+
+async fn log_access(
+    State(state): State<Arc<AppState>>,
+    matched: Option<MatchedPath>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let method = request.method().clone();
+    let first_segment = request.uri().path().trim_start_matches('/');
+    let first_segment = first_segment.split('/').next().unwrap_or_default();
+    let token_ok = state.authorized(first_segment);
+    let response = next.run(request).await;
+    eprintln!(
+        "{}",
+        access_line(
+            method.as_str(),
+            matched.as_ref().map(MatchedPath::as_str),
+            token_ok,
+            response.status()
+        )
+    );
+    response
 }
 
 pub fn manifest_json() -> Value {
@@ -232,6 +269,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(called, "series/tt0944947:1:2");
+    }
+
+    #[test]
+    fn access_line_shows_template_not_values() {
+        let line = access_line(
+            "GET",
+            Some("/{token}/subtitles/{kind}/{id}/{extra}"),
+            false,
+            StatusCode::NOT_FOUND,
+        );
+        assert_eq!(
+            line,
+            "http GET route=/{token}/subtitles/{kind}/{id}/{extra} token=bad status=404"
+        );
+        assert_eq!(
+            access_line("GET", None, true, StatusCode::NOT_FOUND),
+            "http GET route=none token=ok status=404"
+        );
     }
 
     #[test]
