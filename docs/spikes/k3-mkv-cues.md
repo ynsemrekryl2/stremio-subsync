@@ -69,7 +69,7 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
 | dizi bölümü (4 istek) | `[Other, Other]` | hayır | hayır | `OtherVideo` | Debrid'de hazır olmayan dosya; muhtemelen "indiriliyor" yer tutucu videosu. Kullanıcı: açılmadı. |
 | dizi bölümü (2 istek) | `[Other, RealDebrid]` | hayır | 1. istek hayır, 2. evet | `Other` | MKV değil (muhtemelen MP4) |
 | dizi bölümü | `[Other, RealDebrid]` | hayır | evet | `Other` | MKV değil (muhtemelen MP4) |
-| dizi bölümü (3. tur) | `[Other, RealDebrid]` | hayır | evet | `Other` | MKV değil ya da debrid hatası (kullanıcı: bir dosyada debrid hatası aldı) |
+| dizi bölümü (3. tur) | `[Other, RealDebrid]` | hayır | evet | `Other` | MKV değil (muhtemelen MP4); aynı dizinin 2. turdaki bölümleri de MKV değildi |
 
 ## Sonuç (Real-Debrid, 2026-10-27)
 
@@ -86,6 +86,10 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
   büyük çoğunluğu için geçerli. İndekslenmemiş dosyalar için (12'de 1) ya
   desteklenmez denir, ya da ileride küme taraması gibi pahalı bir yedek yol
   düşünülür.
+- Kullanıcı 3. turun ortasında bir dosyada debrid hatası aldı. Logda buna ait
+  ayrı bir satır yok: ya Stremio altyazı istemedi, ya da hata yalnız oynatıcı
+  tarafında oldu. Sayılan her satırda EBML başlığı, Tracks ve Cues dosyanın
+  kendisinden okunduğu için sayımı etkilemiyor.
 - Açık kalanlar: VPS IP'sinden okuma (SS-008), TorBox (SS-007).
 
 ## Notlar
