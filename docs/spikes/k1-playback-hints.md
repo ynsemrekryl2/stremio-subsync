@@ -12,20 +12,25 @@ kendisi loglanmaz.
 | Tarih | İstemci | Sürüm | İçerik | filename | videoSize | videoHash |
 |---|---|---|---|---|---|---|
 | 2026-10-27 | Stremio masaüstü, macOS 27.2 | 5.1.30 | dizi bölümü | var | var | var |
-| — | Android TV | — | — | ölçülecek | ölçülecek | ölçülecek |
+| 2026-10-27 | Stremio Android TV | kaydedilmedi | film | var | var | var |
 | — | Apple TV (Stremio Lite) | — | — | ölçülecek | ölçülecek | ölçülecek |
 
-Masaüstü ham log satırı:
+Ham log satırları:
 
 ```
+# masaüstü
 subtitles request kind=series hints=PlaybackHints { has_filename: true, has_video_size: true, has_video_hash: true }
+# Android TV
+subtitles request kind=movie hints=PlaybackHints { has_filename: true, has_video_size: true, has_video_hash: true }
 ```
+
+TV ölçümleri Mac'teki sunucuya Tailscale Funnel üzerinden (genel HTTPS)
+yapıldı. Add-on masaüstüne kuruldu, Stremio hesabı üzerinden TV'ye geçti.
 
 ## Notlar
 
 - Masaüstünde üç alan da geliyor. Dosya tanıma (K2) için `filename` ile
   `videoSize` yeterli görünüyor.
-- İlk ölçüm bir dizi bölümüyle yapıldı. Film (`kind=movie`) ölçümü de
-  eklenmeli; farklı çıkması beklenmiyor.
-- Android TV ve Apple TV `127.0.0.1`'e erişemez; bu iki satır VPS + HTTPS
-  kurulumundan sonra doldurulacak.
+- Android TV'de de üç alan geliyor. `kind=movie` isteği de aynı alanları taşıyor.
+- Apple TV (Stremio Lite) henüz ölçülmedi; cihaza erişim olunca aynı yolla
+  ölçülecek. `videoHash` gelmeyebileceği beklentisi orada test edilecek.
