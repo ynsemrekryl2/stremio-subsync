@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use crate::extra::PlaybackHints;
+use crate::range::{RangeOutcome, RangeReader};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -96,7 +97,13 @@ fn last_segment(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
-pub fn match_streams(hints: &PlaybackHints, streams: &[Stream], source_host: &str) -> MatchReport {
+/// Counts matches and hands back the single stream matched on both fields,
+/// if there is exactly one.
+pub fn match_streams<'a>(
+    hints: &PlaybackHints,
+    streams: &'a [Stream],
+    source_host: &str,
+) -> (MatchReport, Option<&'a Stream>) {
     let mut report = MatchReport {
         streams: streams.len(),
         ..MatchReport::default()
@@ -122,10 +129,12 @@ pub fn match_streams(hints: &PlaybackHints, streams: &[Stream], source_host: &st
         }
     }
     report.both = both.len();
-    if let [stream] = both.as_slice() {
-        report.target = Some(target_of(stream, source_host));
-    }
-    report
+    let single = match both.as_slice() {
+        [stream] => Some(*stream),
+        _ => None,
+    };
+    report.target = single.map(|stream| target_of(stream, source_host));
+    (report, single)
 }
 
 fn target_of(stream: &Stream, source_host: &str) -> Target {
@@ -156,6 +165,9 @@ pub enum ProbeOutcome {
     Matched {
         elapsed_ms: u128,
         report: MatchReport,
+        /// Present only when the range read is enabled and the single match
+        /// has an HTTP URL.
+        range: Option<RangeOutcome>,
     },
     Failed {
         elapsed_ms: u128,
@@ -165,6 +177,7 @@ pub enum ProbeOutcome {
 
 pub async fn probe(
     source: &dyn StreamSource,
+    range: Option<&dyn RangeReader>,
     kind: &str,
     id: &str,
     hints: &PlaybackHints,
@@ -175,12 +188,21 @@ pub async fn probe(
     let started = Instant::now();
     let result = source.fetch(kind, id).await;
     let elapsed_ms = started.elapsed().as_millis();
-    match result {
-        Ok(streams) => ProbeOutcome::Matched {
-            elapsed_ms,
-            report: match_streams(hints, &streams, source.host()),
-        },
-        Err(error) => ProbeOutcome::Failed { elapsed_ms, error },
+    let streams = match result {
+        Ok(streams) => streams,
+        Err(error) => return ProbeOutcome::Failed { elapsed_ms, error },
+    };
+    let (report, single) = match_streams(hints, &streams, source.host());
+    let range = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
+        (Some(reader), Some(Target::Http { .. }), Some(url)) => {
+            Some(reader.read_head(url, source.host(), hints.video_size).await)
+        }
+        _ => None,
+    };
+    ProbeOutcome::Matched {
+        elapsed_ms,
+        report,
+        range,
     }
 }
 
@@ -347,7 +369,7 @@ mod tests {
 
     #[test]
     fn single_exact_match_reports_target() {
-        let report = match_streams(&hints("Show.S01E02.1080p.mkv", 1000), &sample(), HOST);
+        let report = match_streams(&hints("Show.S01E02.1080p.mkv", 1000), &sample(), HOST).0;
         assert_eq!(
             report,
             MatchReport {
@@ -365,7 +387,7 @@ mod tests {
 
     #[test]
     fn size_given_as_string_is_accepted() {
-        let report = match_streams(&hints("Show.S01E02.2160p.mkv", 2000), &sample(), HOST);
+        let report = match_streams(&hints("Show.S01E02.2160p.mkv", 2000), &sample(), HOST).0;
         assert_eq!(report.both, 1);
         assert_eq!(report.target, Some(Target::Http { same_host: false }));
     }
@@ -376,7 +398,7 @@ mod tests {
             { "url": "https://a.test/1", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
             { "url": "https://a.test/2", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
         ]}));
-        let report = match_streams(&hints("A.mkv", 5), &list, HOST);
+        let report = match_streams(&hints("A.mkv", 5), &list, HOST).0;
         assert_eq!(report.both, 2);
         assert_eq!(report.target, None);
     }
@@ -386,7 +408,7 @@ mod tests {
         let list = streams(json!({ "streams": [
             { "infoHash": "abc", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
         ]}));
-        let report = match_streams(&hints("A.mkv", 5), &list, HOST);
+        let report = match_streams(&hints("A.mkv", 5), &list, HOST).0;
         assert_eq!(report.target, Some(Target::InfoHashOnly));
     }
 
@@ -495,17 +517,62 @@ mod tests {
         }
     }
 
+    struct FakeRange(std::sync::Mutex<Vec<(String, Option<u64>)>>);
+
+    impl RangeReader for FakeRange {
+        fn read_head<'a>(
+            &'a self,
+            url: &'a str,
+            _source_host: &'a str,
+            expected_size: Option<u64>,
+        ) -> crate::range::RangeFuture<'a> {
+            self.0.lock().unwrap().push((url.to_owned(), expected_size));
+            Box::pin(async { Err(crate::range::RangeError::Other { hops: Vec::new() }) })
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_reads_range_of_single_match_only() {
+        let reader = FakeRange(std::sync::Mutex::new(Vec::new()));
+        let source = FakeSource(Ok(json!({ "streams": [
+            { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
+            { "url": "https://d.test/two", "behaviorHints": { "filename": "B.mkv", "videoSize": 5 } }
+        ]})));
+        let outcome = probe(&source, Some(&reader), "movie", "tt1", &hints("A.mkv", 5)).await;
+        assert!(matches!(
+            outcome,
+            ProbeOutcome::Matched {
+                range: Some(Err(_)),
+                ..
+            }
+        ));
+        assert_eq!(
+            *reader.0.lock().unwrap(),
+            vec![("https://d.test/one".to_owned(), Some(5))]
+        );
+
+        // Ambiguous: two streams match, so no URL is touched.
+        let reader = FakeRange(std::sync::Mutex::new(Vec::new()));
+        let source = FakeSource(Ok(json!({ "streams": [
+            { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
+            { "url": "https://d.test/two", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
+        ]})));
+        let outcome = probe(&source, Some(&reader), "movie", "tt1", &hints("A.mkv", 5)).await;
+        assert!(matches!(outcome, ProbeOutcome::Matched { range: None, .. }));
+        assert!(reader.0.lock().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn probe_skips_fetch_without_hints() {
         let source = FakeSource(Err(FetchError::Other));
-        let outcome = probe(&source, "movie", "tt1", &PlaybackHints::default()).await;
+        let outcome = probe(&source, None, "movie", "tt1", &PlaybackHints::default()).await;
         assert_eq!(outcome, ProbeOutcome::NoHints);
     }
 
     #[tokio::test]
     async fn probe_reports_fetch_failure() {
         let source = FakeSource(Err(FetchError::Status(502)));
-        let outcome = probe(&source, "movie", "tt1", &hints("A.mkv", 5)).await;
+        let outcome = probe(&source, None, "movie", "tt1", &hints("A.mkv", 5)).await;
         assert!(matches!(
             outcome,
             ProbeOutcome::Failed {
@@ -521,7 +588,7 @@ mod tests {
             { "url": "https://secret-host.test/Secret.Title.mkv",
               "behaviorHints": { "filename": "Secret.Title.mkv", "videoSize": 5 } }
         ]})));
-        let outcome = probe(&source, "movie", "tt1", &hints("Secret.Title.mkv", 5)).await;
+        let outcome = probe(&source, None, "movie", "tt1", &hints("Secret.Title.mkv", 5)).await;
         let printed = format!("{outcome:?}");
         assert!(!printed.contains("Secret"), "{printed}");
         assert!(!printed.contains("secret-host"), "{printed}");

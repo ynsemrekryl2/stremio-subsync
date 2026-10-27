@@ -1,5 +1,6 @@
 mod addon;
 mod extra;
+mod range;
 mod streams;
 
 use std::net::SocketAddr;
@@ -44,6 +45,17 @@ async fn main() {
             };
             state = state.with_stream_source(std::sync::Arc::new(source));
             eprintln!("aiostreams probe: on");
+            // Reading stream URLs touches the debrid service, so it is opt-in.
+            if std::env::var("SUBSYNC_RANGE_PROBE").as_deref() == Ok("1") {
+                let reader = range::HttpRangeReader::new().unwrap_or_else(|| {
+                    eprintln!("cannot build the range probe HTTP client");
+                    std::process::exit(1);
+                });
+                state = state.with_range_reader(std::sync::Arc::new(reader));
+                eprintln!("range probe: on ({} bytes per match)", range::HEAD_BYTES);
+            } else {
+                eprintln!("range probe: off");
+            }
         }
         _ => eprintln!("aiostreams probe: off"),
     }

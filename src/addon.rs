@@ -15,12 +15,14 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::extra::PlaybackHints;
+use crate::range::RangeReader;
 use crate::streams::{self, StreamSource};
 
 /// Shared state for the HTTP handlers.
 pub struct AppState {
     token: String,
     streams: Option<Arc<dyn StreamSource>>,
+    range: Option<Arc<dyn RangeReader>>,
 }
 
 impl AppState {
@@ -29,12 +31,19 @@ impl AppState {
         (!token.is_empty()).then_some(Self {
             token,
             streams: None,
+            range: None,
         })
     }
 
     /// Enables the K2 probe against this stream list source.
     pub fn with_stream_source(mut self, source: Arc<dyn StreamSource>) -> Self {
         self.streams = Some(source);
+        self
+    }
+
+    /// Lets the K2 probe read the first bytes of the single matched stream.
+    pub fn with_range_reader(mut self, reader: Arc<dyn RangeReader>) -> Self {
+        self.range = Some(reader);
         self
     }
 
@@ -150,9 +159,11 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     eprintln!("subtitles request kind={kind} hints={hints:?}");
     if let Some(source) = state.streams.clone() {
         // Runs beside the response so Stremio is not kept waiting.
+        let range = state.range.clone();
         let (kind, id) = (kind.to_owned(), id.to_owned());
         tokio::spawn(async move {
-            let outcome = streams::probe(source.as_ref(), &kind, &id, &hints).await;
+            let outcome =
+                streams::probe(source.as_ref(), range.as_deref(), &kind, &id, &hints).await;
             eprintln!("k2 probe kind={kind} outcome={outcome:?}");
         });
     }

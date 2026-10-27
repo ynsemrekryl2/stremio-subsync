@@ -31,6 +31,28 @@ k2 probe kind=movie outcome=Matched { elapsed_ms: …, report: MatchReport {
 | `both` | Dosya adı ve boyut birlikte aynı olanlar — K2'nin asıl cevabı; 1 olmalı |
 | `target` | Yalnız `both == 1` iken: URL AIOStreams'in kendi host'unda mı (`same_host: true`, proxy/playback yolu) yoksa başka host'ta mı |
 
+## URL çağırma (range okuma)
+
+`SUBSYNC_RANGE_PROBE=1` ile açılır, varsayılan kapalı. Yalnız `both == 1` ve
+URL HTTP ise, eşleşen URL'den **tek istek** ile `Range: bytes=0-65535`
+istenir. Yönlendirmeler elle izlenir (en çok 5). Sunucu Range'i yok sayıp
+bütün dosyayı gönderse bile okuma 64 KB'ta kesilir ve bağlantı kapatılır.
+Log'a `k2 probe` satırının sonunda `range: Some(Ok(RangeReport { … }))` eklenir:
+
+| Alan | Anlamı |
+|---|---|
+| `hops` | İstenen her URL'nin host türü (`AioStreams` / `RealDebrid` / `TorBox` / `Other`); ilki stream URL'sinin kendisi |
+| `status` | Son yanıtın durum kodu |
+| `partial` | 206 + `Content-Range`: Range'e uyuldu (K3'ün ilk sorusu) |
+| `accept_ranges` | `Accept-Ranges: bytes` gönderildi |
+| `size_matches` | Sunucunun bildirdiği dosya boyutu oynatıcının `videoSize`'ıyla aynı mı |
+| `content` | `Content-Type` türü (`Matroska` / `OctetStream` / `OtherVideo` / `Other` / `Missing`) |
+| `bytes_read` / `ebml_magic` | Okunan bayt; ilk 4 bayt EBML başlığı mı (dosya MKV mi) |
+
+Yerel deneme (2026-10-27, sahte AIOStreams + 1 MB sahte MKV, Range desteklemeyen
+`python3 -m http.server`): `status: 200, partial: false, bytes_read: 65536,
+ebml_magic: true, size_matches: Some(true)`. Bütçe sınırı ve MKV tanıma çalışıyor.
+
 ## Çalıştırma
 
 Sunucu ve Funnel açılırken ortamda `SUBSYNC_AIOSTREAMS_URL` de verilir; sonra
