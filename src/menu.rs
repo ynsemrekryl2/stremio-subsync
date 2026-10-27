@@ -55,12 +55,14 @@ impl Notice {
             Self::NoEnglishTrack => (
                 "⚠ İng. iz yok",
                 "SubSync: Bu dosyada İngilizce altyazı yok, senkron için cetvel \
-                 bulunamadı. Başka bir sürüm (BluRay, WEB-DL) deneyin.",
+                 bulunamadı. Başka bir sürüm deneyin; WEB-DL sürümlerinde genelde metin \
+                 altyazı olur.",
             ),
             Self::ImageOnly => (
                 "⚠ İng. resim",
                 "SubSync: Bu dosyanın İngilizce altyazısı resim biçiminde (PGS); \
-                 metin olmadığı için cetvel olarak kullanılamıyor. Başka bir sürüm deneyin.",
+                 metin olmadığı için cetvel olarak kullanılamıyor. WEB-DL ya da \
+                 BluRay rip (remux değil) bir sürüm deneyin.",
             ),
             Self::NotIndexed => (
                 "⚠ İz okunmuyor",
