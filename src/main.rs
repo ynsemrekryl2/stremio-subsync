@@ -5,12 +5,20 @@ mod align;
 mod extra;
 mod mkv;
 mod range;
+mod rank;
 mod ruler;
+mod sources;
+// Wired into the subtitles route in M5.
+#[cfg_attr(not(test), allow(dead_code))]
+mod srt;
 mod streams;
 #[cfg(test)]
 mod synth;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+
+use sources::SubtitleSource;
 
 /// Minimum length for the secret path token. The install link is the only
 /// thing protecting the server, so short tokens are refused.
@@ -65,6 +73,30 @@ async fn main() {
             }
         }
         _ => eprintln!("aiostreams probe: off"),
+    }
+    let lang = std::env::var("SUBSYNC_LANG").unwrap_or_else(|_| "tur".to_owned());
+    if lang.len() != 3 || !lang.bytes().all(|b| b.is_ascii_lowercase()) {
+        eprintln!("SUBSYNC_LANG must be a three-letter ISO 639-2 code such as tur");
+        std::process::exit(2);
+    }
+    // Searching and downloading subtitles uses the providers' quota, so it is opt-in.
+    if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() == Ok("1") {
+        let mut found: Vec<Arc<dyn SubtitleSource>> = Vec::new();
+        if let Some(source) = sources::OpenSubtitlesV3::new() {
+            found.push(Arc::new(source));
+        }
+        // The key is never printed; only which sources are on.
+        if let Ok(key) = std::env::var("SUBDL_API_KEY")
+            && !key.trim().is_empty()
+            && let Some(source) = sources::SubDl::new(key.trim().to_owned())
+        {
+            found.push(Arc::new(source));
+        }
+        let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
+        eprintln!("sources probe: on (lang {lang}, {kinds:?})");
+        state = state.with_subtitle_sources(found, lang);
+    } else {
+        eprintln!("sources probe: off");
     }
     let listener = tokio::net::TcpListener::bind(bind)
         .await

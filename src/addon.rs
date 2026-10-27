@@ -16,6 +16,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::extra::PlaybackHints;
 use crate::range::RangeReader;
+use crate::sources::{self, Query, SubtitleSource};
 use crate::streams::{self, StreamSource};
 
 /// Shared state for the HTTP handlers.
@@ -23,6 +24,9 @@ pub struct AppState {
     token: String,
     streams: Option<Arc<dyn StreamSource>>,
     range: Option<Arc<dyn RangeReader>>,
+    subtitle_sources: Vec<Arc<dyn SubtitleSource>>,
+    /// ISO 639-2 language subtitles are looked for in.
+    lang: String,
 }
 
 impl AppState {
@@ -32,6 +36,8 @@ impl AppState {
             token,
             streams: None,
             range: None,
+            subtitle_sources: Vec::new(),
+            lang: String::new(),
         })
     }
 
@@ -44,6 +50,17 @@ impl AppState {
     /// Lets the K2 probe read the first bytes of the single matched stream.
     pub fn with_range_reader(mut self, reader: Arc<dyn RangeReader>) -> Self {
         self.range = Some(reader);
+        self
+    }
+
+    /// Enables the M3 probe: search these sources in `lang`, rank, download.
+    pub fn with_subtitle_sources(
+        mut self,
+        sources: Vec<Arc<dyn SubtitleSource>>,
+        lang: String,
+    ) -> Self {
+        self.subtitle_sources = sources;
+        self.lang = lang;
         self
     }
 
@@ -157,6 +174,16 @@ fn respond(state: &AppState, token: &str, kind: &str, id: &str, hints: PlaybackH
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
     eprintln!("subtitles request kind={kind} hints={hints:?}");
+    if !state.subtitle_sources.is_empty()
+        && let Some(query) = Query::new(kind, id, &state.lang)
+    {
+        let sources = state.subtitle_sources.clone();
+        let filename = hints.filename.clone();
+        tokio::spawn(async move {
+            let outcome = sources::probe(&sources, &query, filename.as_deref()).await;
+            eprintln!("m3 probe query={query:?} outcome={outcome:?}");
+        });
+    }
     if let Some(source) = state.streams.clone() {
         // Runs beside the response so Stremio is not kept waiting.
         let range = state.range.clone();
@@ -280,6 +307,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(called, "series/tt0944947:1:2");
+    }
+
+    struct SignalSubtitles(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Query>>>);
+
+    impl SubtitleSource for SignalSubtitles {
+        fn kind(&self) -> sources::SourceKind {
+            sources::SourceKind::OpenSubtitles
+        }
+
+        fn search<'a>(&'a self, query: &'a Query) -> sources::SearchFuture<'a> {
+            if let Some(tx) = self.0.lock().unwrap().take() {
+                let _ = tx.send(query.clone());
+            }
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn download<'a>(
+            &'a self,
+            _query: &'a Query,
+            _candidate: &'a sources::Candidate,
+        ) -> sources::DownloadFuture<'a> {
+            Box::pin(async { Err(sources::SourceError::Other) })
+        }
+    }
+
+    #[tokio::test]
+    async fn subtitles_request_triggers_sources_probe() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let source: Arc<dyn SubtitleSource> =
+            Arc::new(SignalSubtitles(std::sync::Mutex::new(Some(tx))));
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_subtitle_sources(vec![source], "tur".to_owned()),
+        );
+        let uri = format!("/{TOKEN}/subtitles/series/tt0944947:1:2/filename=A.mkv.json");
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let query = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(query, Query::new("series", "tt0944947:1:2", "tur").unwrap());
     }
 
     #[test]
