@@ -44,6 +44,7 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [x] **SS-012** Kaydırma + fps düzeltmesi: aday satırlarını cetvele en iyi oturtan (ölçek, kaydırma) — kanıt: `cargo test align` (örtüşme eğrisi kaba kuvvetle birebir; etiketli sette fps hep doğru, kaydırma ≤100 ms)
 - [x] **SS-013** Kabul testi (baş / orta / son aynı kaydırmada tutmalı) + sentetik etiketli test seti; yanlış kabul yok — kanıt: `labeled_set_has_no_false_accepts` (8 tohum × 14 durum; 56/56 pozitif kabul, 56/56 negatif ret; çeviri ve CD1 durumları dahil)
 - [~] **SS-014** Gerçek etiketli set: M2 cetvelleri + M3 adaylarıyla eşikleri ayarla (gerçek dosyalar elle etiketlenir) — kanıt: `docs/spikes/m4-align.md` tablosu
+- [ ] **SS-021** Parçalı senkron: altyazıyı tek kaydırma yerine ~6 noktada ayrı kaydır (kayması baştan sona değişen ama doğru altyazılar için). Yalnız her parçanın tahmini güvenilirse (eşleşme ≥ %60, komşu parçalarla tutarlı); yoksa gürültüyü kovalar. Karar kaydındaki "bölmeli hizalama M6'da" maddesini açar — kanıt: ölçüm notu + bu adayları kabul eden, sentetik negatifleri yine reddeden testler
 
 ## Devam notları (2026-10-27, gece)
 

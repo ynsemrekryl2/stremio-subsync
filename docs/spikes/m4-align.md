@@ -161,6 +161,13 @@ Satırlar: cetvel/aday satır sayısı; isabet ve kapsama pencere başına.
 - Kullanıcı başı **daha erken** buldu; baş penceresi tahmini ise altyazının
   başta **geç** kaldığını söylüyordu. Yani baş penceresinin −450 ms'lik
   sapması gerçek değil, tahmin gürültüsü.
+- Kullanıcı notu: kayma baştan sona **azalıyordu**; altyazı içerik olarak
+  doğru, birkaç noktada ayrı senkronlansa kullanılır. Altıya bölünce her
+  parçada gereken ek kaydırma: −690, −348, −216, −95, −462, −599 ms (eşleşme
+  her parçada ~%45). Ölçüm ne düzenli bir azalma ne de kullanıcının gördüğü
+  yön (erken) ile uyuşuyor; kabul edilen …055228'de aynı ölçüm her parçada
+  ±4 ms. Bu adayın satır zamanları İngilizce izle gevşek ilişkili; parçalı
+  senkron burada gürültüyü kovalardı. Fikir SS-021'e yazıldı.
 - Deneme: pencere kaydırmasını örtüşme tepesi yerine satır başlangıçlarının
   en yoğun ±300 ms kümesinden hesaplamak. Sentetik set geçti ama gerçek
   dosyalarda kararlar değişmedi; bu aday yine `Disagree` (−639, −95, −565 ms)
