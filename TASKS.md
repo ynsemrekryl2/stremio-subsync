@@ -20,14 +20,14 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 
 ## M2 — Cetvel
 
-- [~] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md`
-- [~] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + gerçek dosyada olay sayısı ve okuma maliyeti (`docs/spikes/m2-ruler.md`)
+- [x] **SS-009** Gerçek MKV'lerde altyazı cue noktalarında `CueDuration` ve `CueRelativePosition` var mı ölç (cetvel yalnız Cues'tan çıkabilir mi) — kanıt: `docs/spikes/m2-ruler.md` (5/5 dosyada metin izlerinin tüm cue noktalarında var; cetvel Cues'tan çıkıyor)
+- [x] **SS-010** Cetvel: İngilizce metin izinin olay zamanlarını (başlangıç + süre) Cues'tan çıkar; metin okunmaz — kanıt: testler + 5 gerçek dosyada 1061–2110 olay, 1–2 istek, ≤1,2 sn (`docs/spikes/m2-ruler.md`)
 
 ## Devam notları (2026-10-27, akşam)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
-- **Şu an sırada: SS-009 / SS-010 ölçümü.** Kod hazır (`src/ruler.rs`,
+- **SS-009 / SS-010 bitti (ölçüm sonucu m2-ruler.md'de).** Sıradaki M2+ işi henüz açılmadı; plana bakıp yeni satır aç. Eski not: Kod hazır (`src/ruler.rs`,
   `src/mkv.rs`). Kullanıcı sunucuyu `SUBSYNC_RANGE_PROBE=1 cargo run` ile
   başlatıp İngilizce SRT/ASS izli 5–6 dosya açacak; `k2 probe` satırlarındaki
   `cue_durations` ve `ruler: Some(RulerReport { … })` değerleri
