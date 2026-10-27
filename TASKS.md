@@ -13,7 +13,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 - [x] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (Real-Debrid, masaüstü: 5/5 `both: 1`; URL tek yönlendirmeyle RD'ye gidiyor, 206 Range). TorBox → SS-007
 - [x] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği; 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md` (RD: Range var; İngilizce metin izi 12 dosyanın 11'inde indekslenmiş). TorBox → SS-007, VPS IP → SS-008
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
-- [ ] **SS-020** K2: bir dizi bölümünde AIOStreams listesindeki 12 stream'in hiçbiri dosya adıyla eşleşmedi (boyut 2'sinde tuttu); nedenini bul — kanıt: K2 notunda açıklama
+- [ ] **SS-020** K2: dosya adı tutmayıp boyutu tutan stream'i eşleşme say. Kapsama sayımında 21 dosyanın 3'ü (%14) burada düştü; eşleşmeyen bölümde ad 0, boyut 2 stream'de tutuyordu (aynı bayt sayısı ≈ aynı dosya). Boyut birden çok stream'de tutuyorsa hepsi aynı boyutta olduğundan ilki alınır; boyut hiç tutmuyorsa eşleşme yok — kanıt: testler + eşleşmeyen bölümde cetvel çıkması. **Öncelik 1** (küçük, düşük risk)
 - [ ] **SS-007** TorBox ile K2 eşleşme ve K3 Range ölçümlerini tekrarla (abonelik yenilenince) — kanıt: K2/K3 notlarında TorBox satırları
 - [ ] **SS-008** VPS IP'sinden Real-Debrid Range okuması (oynatma ev IP'sinden sürerken) — kanıt: K3 notunda VPS satırı
 
@@ -31,7 +31,7 @@ gerçek servis yalnız elle açılan probe'da çağrılır.
 
 - [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
 - [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
-- [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca)
+- [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca). Kapsama sayımında Türkçe aday 38 aramanın 35'inde bulundu; bu yüzden öncelik düşük, ama "uyan yok" durumlarında ikinci kaynak işe yarar
 - [ ] **SS-019** İki parçalı (CD1/CD2) altyazıları birleştir: aynı sürümün parçaları art arda eklenip tek aday olarak hizalanır — kanıt: testler + gerçek bir CD1/CD2 örneği
 - [x] **SS-018** Adayları dosya adına benzerliğe göre sırala (sürüm grubu, kaynak, çözünürlük; CAM/TS en sona) — kanıt: `cargo test rank` + gerçek denemede aynı sürüm 165 puanla başta
 
@@ -51,20 +51,31 @@ M2 ölçümü ve M3 beklenmeden saf mantık olarak yazılır.
 - [x] **SS-022** Kabul edilen altyazıları Stremio'da normal sun: istek probe'ları bekler (en çok 15 sn), yalnız kabul edilenler `tur` dilinde, fix uygulanmış olarak listelenir; aynı çevirinin kopyaları tek girdi — kanıt: testler + 2026-10-28 Stremio'da kullanıcı "Türkçe altyazı geldi ve senkrondu" (bölüm: 3 kabulden kopyalar teke indi, 1 sunuldu; film: 2 sunuldu)
 - [x] **SS-023** Sonucu cache'le: bellek + disk (`SUBSYNC_CACHE_DIR`, varsayılan `cache`); dosya adı istek anahtarının özeti, kimlik/dosya adı yok; kabul 30 gün, "uygun aday yok" 1 gün geçerli — kanıt: testler + gerçek oturumda tekrar açılışlar `served from=memory`, `cache/`'te 2 dosya (diskten okuma yalnız testte denendi)
 - [~] **SS-024** Sonuç çıkmazsa boş bekletme: menüde nedeni gösteren tek girdi ("SubSync: İngilizce iz yok", "dosya bulunamadı", "aday altyazı yok", "uyan altyazı yok", "MKV değil", "geçici hata", "hazırlanıyor"); seçilince açıklama altyazı olarak görünür. Cetvel yoksa Türkçe aramayı beklemeden hemen cevap. Kalıcı nedenler 1 gün (disk dahil), geçiciler 60 sn yalnız bellekte; 15 sn aşılırsa "hazırlanıyor" — kanıt: testler + Stremio'da cetvelsiz bir dosyada nedenin görünmesi
-- [ ] **SS-025** PGS (resim) İngilizce izden cetvel: Cues'ta PGS izlerinin de cue noktası var (ör. 1506), süresiz; gösterme/temizleme olayları çiftlenerek satır zamanları çıkabilir mi ölç. Gerçek oturumda bir filmin tek İngilizce altyazısı PGS'ti — kanıt: ölçüm notu (PGS cue zamanları ile aynı yapımın SRT'si karşılaştırması)
+- [ ] **SS-025** PGS (resim) İngilizce izden cetvel. Kapsama sayımında 21 dosyanın 6'sı (%29) yalnız PGS İngilizce içeriyordu; en büyük kazanç. Cues'ta PGS izlerinin süresiz cue noktaları var; hem SRT hem PGS İngilizce içeren iki dosyada PGS noktası SRT satırının ~2 katı (2008 → 4020, 1061 → 2406) → her satır "göster" + "temizle" çifti. Adımlar: (1) PGS cue zamanlarını dump'a ekle, (2) SRT + PGS içeren bir dosyada PGS çiftlerinden çıkan satırları aynı dosyanın SRT'siyle hizala (beklenen: fix 1/1, ~0 ms, yüksek isabet), (3) tutarsa PGS'i cetvel olarak kullan (metin izi yoksa) — kanıt: ölçüm notu + testler + PGS'li bir dosyada kabul edilen altyazı. **Öncelik 2** (kullanıcının SRT + PGS içeren bir dosyayı bir kez açması gerekir)
 
 ## Devam notları (2026-10-28)
 
 Yeni oturum buradan başlar; ayrıntılar ilgili dokümanlarda.
 
 - **M5 teslim çalışıyor (yerel).** Stremio'da kabul edilen Türkçe altyazı
-  senkron geldi, tekrar açılışlar cache'ten. Sunucu: Terminal sekmesinde
+  senkron geliyor, tekrar açılışlar cache'ten; sonuç çıkmazsa menüde kısa
+  neden ("⚠ İng. resim", "⚠ Uyan yok"…). Sunucu: Terminal sekmesinde
   `SUBSYNC_DUMP_DIR=dumps cargo run` (`SUBSYNC_TOKEN` ve
-  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlı). Sıradaki adaylar: SS-024
-  (cetvelsiz istekleri cache'le), SS-020 (K2 eşleşmeyen bölüm), SS-006 (VPS,
-  M5'in son parçası), SS-017 (SubDL anahtarı).
-  Not: gerçek kullanımda dosyaların önemli kısmında İngilizce metin izi yok;
-  bunlarda altyazı sunulamıyor (karar gereği).
+  `SUBSYNC_AIOSTREAMS_URL` o sekmede tanımlı; Run düğmesi o ortamı görmüyor).
+- **Bulgu (2026-10-28): sistem dosyaların yarısında çalışamıyor, sorun
+  cetvelde.** 21 farklı dosyanın yalnız 10'unda (%48) İngilizce metin izi
+  var. 6'sında (%29) İngilizce yalnız resim (PGS), 3'ünde (%14) dosya
+  AIOStreams listesinde eşleşmedi, 2'sinde İngilizce yok/okunamıyor. Türkçe
+  aday ise 38 aramanın 35'inde bulundu. Ayrıntı: `docs/spikes/m4-align.md`
+  "Kapsama".
+- **Sıradaki işler (öncelik sırasıyla):**
+  1. SS-020 — K2'de boyutla eşleşme (%14'ü kurtarır, küçük iş).
+  2. SS-025 — PGS'ten cetvel (%29'u kurtarabilir; önce ölçüm, kullanıcının
+     SRT + PGS İngilizce içeren bir dosyayı açması gerekir).
+  3. SS-006 — VPS (M5'in son parçası; Android TV / Apple TV için).
+  4. SS-017 — SubDL anahtarı (ikinci aday kaynağı).
+  İkisi (1 + 2) tutarsa cetvel çıkan dosya oranı örnekte ~%48'den ~%90'a
+  yaklaşır.
 - **SS-014 durumu:** 4 etiket: 3 doğru kabul, 1 yanlış ret, 0 yanlış kabul
   (`docs/spikes/m4-align.md`). `cargo run -- calibrate dumps` kayıtları
   yeniden hizalar.
