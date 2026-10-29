@@ -2,6 +2,7 @@ mod addon;
 mod align;
 mod blocks;
 mod dump;
+mod events;
 mod extra;
 mod label;
 mod menu;
@@ -19,6 +20,7 @@ mod synth;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use events::event;
 use sources::SubtitleSource;
 
 /// Minimum length for the secret path token. The install link is the only
@@ -78,7 +80,7 @@ async fn main() {
                 }
             };
             state = state.with_stream_source(std::sync::Arc::new(source));
-            eprintln!("aiostreams probe: on");
+            event!("start", "aiostreams probe: on");
             // The ruler is read from the stream with Range requests. On by
             // default since M5; `SUBSYNC_RANGE_PROBE=0` turns it off.
             if std::env::var("SUBSYNC_RANGE_PROBE").as_deref() != Ok("0") {
@@ -87,21 +89,26 @@ async fn main() {
                     std::process::exit(1);
                 });
                 state = state.with_range_reader(std::sync::Arc::new(reader));
-                eprintln!("range probe: on ({} bytes per match)", range::HEAD_BYTES);
+                event!(
+                    "start",
+                    "range probe: on ({} bytes per match)",
+                    range::HEAD_BYTES
+                );
                 // Reads one small range per subtitle line; off by default.
                 if std::env::var("SUBSYNC_BLOCK_PROBE").as_deref() == Ok("1") {
                     state = state.with_block_probe();
-                    eprintln!(
+                    event!(
+                        "start",
                         "block probe: on (up to {} blocks, {} at a time)",
                         blocks::MAX_BLOCKS,
                         blocks::CONCURRENCY
                     );
                 }
             } else {
-                eprintln!("range probe: off");
+                event!("start", "range probe: off");
             }
         }
-        _ => eprintln!("aiostreams probe: off"),
+        _ => event!("start", "aiostreams probe: off"),
     }
     let lang = std::env::var("SUBSYNC_LANG").unwrap_or_else(|_| "tur".to_owned());
     if lang.len() != 3 || !lang.bytes().all(|b| b.is_ascii_lowercase()) {
@@ -123,28 +130,31 @@ async fn main() {
             found.push(Arc::new(source));
         }
         let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
-        eprintln!("sources probe: on (lang {lang}, {kinds:?})");
+        event!("start", "sources probe: on (lang {lang}, {kinds:?})");
         state = state.with_subtitle_sources(found, lang);
     } else {
-        eprintln!("sources probe: off");
+        event!("start", "sources probe: off");
     }
     match std::env::var("SUBSYNC_DUMP_DIR") {
         Ok(dir) if !dir.trim().is_empty() => {
-            eprintln!("timing dump: on ({dir})");
+            event!("start", "timing dump: on ({dir})");
             state = state.with_dump_dir(dir.trim().into());
         }
-        _ => eprintln!("timing dump: off"),
+        _ => event!("start", "timing dump: off"),
     }
     if std::env::var("SUBSYNC_LABEL_MODE").as_deref() == Ok("1") {
-        eprintln!("label mode: on (every candidate listed in Stremio, marked; no disk cache)");
+        event!(
+            "start",
+            "label mode: on (every candidate listed in Stremio, marked; no disk cache)"
+        );
         state = state.with_label_mode();
     }
     // Answered menus survive restarts here; `off` keeps them in memory only.
     let cache_dir = std::env::var("SUBSYNC_CACHE_DIR").unwrap_or_else(|_| "cache".to_owned());
     match cache_dir.trim() {
-        "" | "off" => eprintln!("subtitle cache: memory only"),
+        "" | "off" => event!("start", "subtitle cache: memory only"),
         dir => {
-            eprintln!("subtitle cache: {dir}");
+            event!("start", "subtitle cache: {dir}");
             state = state.with_cache_dir(dir.into());
         }
     }
@@ -155,7 +165,7 @@ async fn main() {
             std::process::exit(1);
         });
     // The token is deliberately not printed: it is the install link's secret.
-    eprintln!("listening on {bind}");
+    event!("start", "listening on {bind}");
     axum::serve(listener, addon::router(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

@@ -3,19 +3,20 @@
 
 use axum::{
     Json, Router,
-    extract::{MatchedPath, Path, Request, State},
+    extract::{MatchedPath, Path, Query as UrlQuery, Request, State},
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 use crate::align;
 use crate::dump::{self, Dump};
+use crate::events::{self, event};
 use crate::extra::PlaybackHints;
 use crate::label;
 use crate::menu::{self, MenuCache, Notice};
@@ -137,9 +138,49 @@ pub fn router(state: AppState) -> Router {
             get(subtitles_with_extra),
         )
         .route("/{token}/sub/{entry}/{file}", get(menu_srt))
+        .route("/{token}/dashboard", get(dashboard))
+        .route(EVENTS_ROUTE, get(events_json))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+const EVENTS_ROUTE: &str = "/{token}/events.json";
+const DASHBOARD_HTML: &str = include_str!("dashboard.html");
+
+/// Live view of recent log lines (SS-029), behind the same token.
+async fn dashboard(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        DASHBOARD_HTML,
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct After {
+    after: Option<u64>,
+}
+
+async fn events_json(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    UrlQuery(query): UrlQuery<After>,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(events::since(query.after.unwrap_or(0))),
+    )
+        .into_response()
 }
 
 /// One line per request with the route template, never the path itself:
@@ -164,14 +205,15 @@ async fn log_access(
     let first_segment = first_segment.split('/').next().unwrap_or_default();
     let token_ok = state.authorized(first_segment);
     let response = next.run(request).await;
-    eprintln!(
+    let route = matched.as_ref().map(MatchedPath::as_str);
+    // The dashboard polls every few seconds; logging that would bury the rest.
+    if route == Some(EVENTS_ROUTE) && response.status().is_success() {
+        return response;
+    }
+    event!(
+        "http",
         "{}",
-        access_line(
-            method.as_str(),
-            matched.as_ref().map(MatchedPath::as_str),
-            token_ok,
-            response.status()
-        )
+        access_line(method.as_str(), route, token_ok, response.status())
     );
     response
 }
@@ -238,7 +280,7 @@ async fn respond(
         return StatusCode::NOT_FOUND.into_response();
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
-    eprintln!("subtitles request kind={kind} hints={hints:?}");
+    event!("request", "subtitles request kind={kind} hints={hints:?}");
     // Kept in memory only, to find this request's menu again; on disk only
     // its hash is used.
     let request = format!(
@@ -248,7 +290,7 @@ async fn respond(
     );
     let now = menu::now_s();
     if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
-        eprintln!("subtitles served from=memory offered={offered}");
+        event!("served", "subtitles served from=memory offered={offered}");
         return list;
     }
     if !state.label_mode
@@ -262,7 +304,7 @@ async fn respond(
                 menus.insert(request.clone(), entries, created, keep_s);
             }
             if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
-                eprintln!("subtitles served from=disk offered={offered}");
+                event!("served", "subtitles served from=disk offered={offered}");
                 return list;
             }
         }
@@ -289,11 +331,11 @@ async fn respond(
             }
         }
         if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
-            eprintln!("subtitles served from=probes offered={offered}");
+            event!("served", "subtitles served from=probes offered={offered}");
             return list;
         }
     }
-    eprintln!("subtitles served from=none offered=0");
+    event!("served", "subtitles served from=none offered=0");
     Json(SubtitlesResponse {
         subtitles: Vec::new(),
     })
@@ -381,7 +423,8 @@ async fn run_probes(
         }
         Err(notice) => (vec![notice.entry()], notice.keep_s(), Some(notice)),
     };
-    eprintln!(
+    event!(
+        "menu",
         "menu ready entries={} notice={notice:?} label_mode={}",
         entries.len(),
         state.label_mode
@@ -395,7 +438,7 @@ async fn run_probes(
         let written =
             tokio::task::spawn_blocking(move || menu::save(&dir, &key, &saved, now, keep_s)).await;
         if let Ok(Err(err)) = written {
-            eprintln!("cache write failed error={:?}", err.kind());
+            event!("cache", "cache write failed error={:?}", err.kind());
         }
     }
     if let Ok(mut menus) = state.menus.lock() {
@@ -447,9 +490,9 @@ async fn save_pgs(state: &AppState, kind: &str, k2: Option<&streams::ProbeOutcom
     let mut saved = Dump::new(kind, &report.rulers.0, &[], &[]);
     saved.pgs = report.pgs.clone();
     match tokio::task::spawn_blocking(move || dump::write(&dir, &saved)).await {
-        Ok(Ok(name)) => eprintln!("pgs dump written file={name}"),
-        Ok(Err(err)) => eprintln!("pgs dump failed error={:?}", err.kind()),
-        Err(_) => eprintln!("pgs dump failed error=task"),
+        Ok(Ok(name)) => event!("dump", "pgs dump written file={name}"),
+        Ok(Err(err)) => event!("dump", "pgs dump failed error={:?}", err.kind()),
+        Err(_) => event!("dump", "pgs dump failed error=task"),
     }
 }
 
@@ -469,7 +512,7 @@ async fn build_menu(
             let filename = hints.filename.clone();
             Some(tokio::spawn(async move {
                 let (outcome, cues) = sources::probe(&sources, &query, filename.as_deref()).await;
-                eprintln!("m3 probe query={query:?} outcome={outcome:?}");
+                event!("m3", "m3 probe query={query:?} outcome={outcome:?}");
                 (outcome, cues)
             }))
         }
@@ -486,7 +529,7 @@ async fn build_menu(
                 &hints,
             )
             .await;
-            eprintln!("k2 probe kind={kind} outcome={outcome:?}");
+            event!("k2", "k2 probe kind={kind} outcome={outcome:?}");
             Some(outcome)
         }
         None => None,
@@ -535,11 +578,11 @@ async fn build_menu(
             .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
         {
             Some(Ok(name)) => {
-                eprintln!("dump written file={name}");
+                event!("dump", "dump written file={name}");
                 Some(name)
             }
             Some(Err(err)) => {
-                eprintln!("dump failed error={:?}", err.kind());
+                event!("dump", "dump failed error={:?}", err.kind());
                 None
             }
             None => None,
@@ -556,7 +599,7 @@ async fn build_menu(
     .await
     .map_err(|_| Notice::Failed)?;
     for trial in &trials {
-        eprintln!("m4 probe {trial:?}");
+        event!("m4", "m4 probe {trial:?}");
     }
     Ok(entries)
 }
@@ -616,6 +659,49 @@ mod tests {
             "/wrong-token-123/subtitles/movie/tt0111161.json",
             "/test-token-12/manifest.json",
         ] {
+            let (status, _) = get(uri).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dashboard_and_events_need_the_token() {
+        let response = app()
+            .oneshot(
+                Request::get(format!("/{TOKEN}/dashboard"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        let html = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&html);
+        // Relative fetch: the page never holds the token itself.
+        assert!(html.contains(r#"fetch("events.json?after="#), "{html}");
+        assert!(!html.contains(TOKEN));
+
+        event!("request", "dashboard test line");
+        let (status, body) = get(&format!("/{TOKEN}/events.json?after=0")).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.unwrap();
+        assert!(body["next"].as_u64().unwrap() >= 1);
+        assert!(body["started_ms"].as_u64().unwrap() > 0);
+        let next = body["next"].as_u64().unwrap();
+        let (_, newer) = get(&format!("/{TOKEN}/events.json?after={next}")).await;
+        assert!(
+            newer.unwrap()["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["seq"].as_u64().unwrap() > next)
+        );
+
+        for uri in ["/wrong-token-123/dashboard", "/wrong-token-123/events.json"] {
             let (status, _) = get(uri).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         }

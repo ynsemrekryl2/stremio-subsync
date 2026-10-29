@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-029**.
+Sonraki boş numara: **SS-030**.
 
 ## M0 — İskelet
 
@@ -72,6 +72,7 @@ kapsamında sürer.
 
 ## Bakım
 
+- [x] **SS-029** Arka planda dönenleri görmek için canlı olay paneli: sunucunun log satırları (yalnız sayı ve etiket; token, link, kimlik, dosya adı, metin yok) son 1000 olay olarak bellekte de tutulur; `/<token>/dashboard` sayfası `events.json`'u 2 sn'de bir okuyup sayaçları, son istekleri adım adım (dosya eşleşmesi, metin cetveli, PGS, aday, hizalama, menü) ve süzülebilir ham olay akışını gösterir. Panel yoklamaları erişim loguna yazılmaz — kanıt: 108 geçen test (yanlış token 404, sayfada token yok, `after` ile yalnız yeni olaylar, tampon taşması) + yerel test sunucusunda panelin açılıp canlı güncellendiği, telefon genişliğinde taşmadığı görüldü. Gerçek bir oynatmada adımların doğru ayrıştırıldığı henüz görülmedi
 - [x] **SS-027** Dallar `main` üzerinde birleştirildi; M5 menü/hata önbelleği ve blok probe'u birlikte korundu. Paralel M2/M3 ölçümleri aktarıldı, numaralar tekilleştirildi, eski devam notları düzeltildi. Altı eski dal `codex/archive/` altında; açık Claude süreçleri kullandığı için worktree dizinleri korundu. 7 cache + 14 dump dosyası yedeklendi — kanıt: `docs/history/branch-consolidation.md`, 95 geçen test, temiz format/Clippy ve tüm arşiv uçlarının `main` atası olması.
 
 ## Devam notları (2026-10-27, dallar birleştirildi)
@@ -103,6 +104,9 @@ kapsamında sürer.
   `SUBSYNC_DUMP_DIR=dumps cargo run`. `SUBSYNC_TOKEN` (en az 32 karakter) ve
   `SUBSYNC_AIOSTREAMS_URL` gerekir. Range ve kaynaklar varsayılan açık,
   `SUBSYNC_LANG=tur`; SubDL yalnız `SUBDL_API_KEY` varsa açılır.
+- **Olay paneli:** sunucu açıkken `http://127.0.0.1:<port>/<token>/dashboard`
+  (Funnel üzerinden de aynı token'la açılır). Yalnız bellekte; yeniden
+  başlatınca boşalır. Satırlar loglanan metnin aynısıdır.
 - **Blok ölçümü:** aynı komuta `SUBSYNC_BLOCK_PROBE=1` ekle. Probe arka planda
   çalışır. Cache'ten yanıtlanan dosyada probe çalışmaz; ölçüm için daha önce
   açılmamış dosyalar seç. Çıktı `m6 blocks`, yalnız sayı ve tür taşır.

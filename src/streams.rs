@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use crate::blocks;
+use crate::events::event;
 use crate::extra::PlaybackHints;
 use crate::mkv::{self, MkvOutcome};
 use crate::range::{ByteSource, Opened, RangeOutcome, RangeReader};
@@ -238,7 +239,7 @@ pub async fn probe(
                         let kind = kind.to_owned();
                         tokio::spawn(async move {
                             let report = blocks::run(file, targets).await;
-                            eprintln!("m6 blocks kind={kind} report={report:?}");
+                            event!("m6", "m6 blocks kind={kind} report={report:?}");
                         });
                     }
                     (Some(Ok(report)), mkv)

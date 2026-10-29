@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SubSync Olaylar</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6a7282; --line: #e3e6eb;
+  --accent: #3157d5; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0362c;
+  --chip: #eef1f6; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #959cab; --line: #2a313c;
+    --accent: #7d9bff; --ok: #4cc584; --warn: #e3a447; --bad: #ff7b6e; --chip: #232a35;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #959cab; --line: #2a313c;
+  --accent: #7d9bff; --ok: #4cc584; --warn: #e3a447; --bad: #ff7b6e; --chip: #232a35;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+.pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--chip); }
+.pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); }
+.muted { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.card span { color: var(--muted); font-size: 12px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.requests { display: grid; gap: 8px; }
+.req { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; }
+.req .top { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.step { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); }
+.step.ok { color: var(--ok); } .step.warn { color: var(--warn); } .step.bad { color: var(--bad); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.tools button, .tools input { font: inherit; font-size: 12px; color: var(--text); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.tools input { cursor: text; border-radius: 6px; min-width: 0; flex: 1 1 160px; }
+.tools button[data-area][aria-pressed="false"] { opacity: .45; }
+#log { font-family: var(--mono); font-size: 12px; max-height: 60vh; overflow: auto; }
+.row { display: grid; grid-template-columns: 64px 64px 1fr; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
+.row .line { white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+.row .line.cut { max-height: 3em; overflow: hidden; }
+.area { color: var(--accent); }
+.empty { color: var(--muted); padding: 8px 0; }
+@media (max-width: 600px) { .row { grid-template-columns: 56px 1fr; } .row .area { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SubSync olaylar</h1>
+    <span id="conn" class="pill">bağlanıyor…</span>
+    <span id="uptime" class="muted"></span>
+    <span id="missed" class="muted"></span>
+  </header>
+
+  <div class="cards">
+    <div class="card"><b id="c-requests">0</b><span>altyazı isteği</span></div>
+    <div class="card"><b id="c-cached">0</b><span>cache'ten cevap</span></div>
+    <div class="card"><b id="c-match">0</b><span>dosya eşleşti (ad / boyut)</span></div>
+    <div class="card"><b id="c-ruler">0</b><span>metin cetveli bulundu</span></div>
+    <div class="card"><b id="c-accepted">0</b><span>kabul edilen aday</span></div>
+    <div class="card"><b id="c-notice">0</b><span>sebep bildirimi</span></div>
+  </div>
+
+  <section>
+    <h2>Son istekler</h2>
+    <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok.</div></div>
+  </section>
+
+  <section>
+    <h2>Tüm olaylar</h2>
+    <div class="tools" id="tools">
+      <button id="pause" aria-pressed="false">Duraklat</button>
+      <input id="search" type="search" placeholder="Süz…" aria-label="Olayları süz">
+    </div>
+    <div id="log"><div class="empty">Olay bekleniyor…</div></div>
+  </section>
+</main>
+<script>
+"use strict";
+const AREAS = {
+  start: "açılış", http: "http", request: "istek", served: "cevap", k2: "dosya",
+  m3: "aday", m4: "hizalama", menu: "menü", dump: "kayıt", cache: "cache", m6: "blok",
+};
+const NOTICES = {
+  NoEnglishTrack: "İng. iz yok", ImageOnly: "İng. resim (PGS)", NotIndexed: "İz okunmuyor",
+  NoStreamMatch: "Dosya yok", NoCandidates: "Aday yok", NoneAccepted: "Uyan yok",
+  NotMkv: "MKV değil", Failed: "Geçici hata", NotReady: "Hazırlanıyor",
+};
+const MAX_ROWS = 1000, MAX_REQUESTS = 15;
+const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
+  paused: false, filter: "", counts: { requests: 0, cached: 0, match: 0, ruler: 0, accepted: 0, notice: 0 } };
+const $ = (id) => document.getElementById(id);
+
+function time(ms) {
+  return new Date(ms).toLocaleTimeString("tr-TR", { hour12: false });
+}
+function step(text, kind) {
+  const el = document.createElement("span");
+  el.className = "step " + (kind || "");
+  el.textContent = text;
+  return el;
+}
+
+/** Folds one event into the request it belongs to; lines carry no request id,
+ *  so each one goes to the latest request still waiting for that stage. */
+function track(ev) {
+  const line = ev.line;
+  const c = state.counts;
+  if (ev.area === "request") {
+    c.requests++;
+    const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
+    const name = /has_filename: true/.test(line), size = /has_video_size: true/.test(line);
+    state.requests.unshift({ at: ev.at_ms, kind, hints: (name ? "ad" : "ad yok") + " · " + (size ? "boyut" : "boyut yok"), steps: [] });
+    state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
+    return;
+  }
+  const req = state.requests.find((r) => !r[ev.area]);
+  const add = (text, kind) => { if (req) { req[ev.area] = true; req.steps.push([text, kind]); } };
+  if (ev.area === "served") {
+    const from = (line.match(/from=(\w+)/) || [])[1];
+    const offered = (line.match(/offered=(\d+)/) || [])[1];
+    if (from === "memory" || from === "disk") c.cached++;
+    const label = { memory: "bellekten", disk: "diskten", probes: "yeni", none: "boş" }[from] || from;
+    add("cevap: " + label + ", " + offered + " girdi", offered > 0 ? "ok" : "warn");
+  } else if (ev.area === "k2") {
+    if (/NoHints/.test(line)) return add("dosya: ipucu yok", "bad");
+    if (/Failed/.test(line) && !/Matched/.test(line)) return add("dosya: liste okunamadı", "bad");
+    const by = (line.match(/matched_by: Some\((\w+)\)/) || [])[1];
+    if (by) c.match++;
+    add(by ? "dosya: eşleşti (" + (by === "Both" ? "ad + boyut" : "yalnız boyut") + ")" : "dosya: eşleşmedi", by ? "ok" : "bad");
+    const rulers = line.match(/rulers: \[([^\]]*)\]/);
+    if (rulers) {
+      const n = (rulers[1].match(/\(/g) || []).length;
+      if (n) c.ruler++;
+      req && req.steps.push([n ? "metin cetveli: " + n + " iz" : "metin cetveli yok", n ? "ok" : "warn"]);
+    }
+    const pgs = line.match(/pgs: \[([^\]]*)\]/);
+    if (pgs && pgs[1].trim()) req && req.steps.push(["PGS: " + (pgs[1].match(/\(/g) || []).length + " iz", ""]);
+  } else if (ev.area === "m3") {
+    const found = [...line.matchAll(/Ok\((\d+)\)/g)].reduce((s, m) => s + Number(m[1]), 0);
+    add("aday: " + found + " bulundu", found ? "ok" : "warn");
+  } else if (ev.area === "m4") {
+    const ok = /accepted: true/.test(line);
+    if (ok) c.accepted++;
+    if (req) {
+      req.m4 = req.m4 || { ok: 0, all: 0, step: null };
+      req.m4.all++; req.m4.ok += ok ? 1 : 0;
+      const text = "hizalama: " + req.m4.ok + "/" + req.m4.all + " kabul";
+      if (req.m4.step) { req.m4.step[0] = text; req.m4.step[1] = req.m4.ok ? "ok" : "warn"; }
+      else { req.m4.step = [text, ok ? "ok" : "warn"]; req.steps.push(req.m4.step); }
+    }
+  } else if (ev.area === "menu") {
+    const notice = (line.match(/notice=Some\((\w+)\)/) || [])[1];
+    if (notice) c.notice++;
+    add(notice ? "menü: " + (NOTICES[notice] || notice) : "menü: " + ((line.match(/entries=(\d+)/) || [])[1]) + " altyazı",
+      notice ? (notice === "NotReady" || notice === "Failed" ? "warn" : "bad") : "ok");
+  } else if (ev.area === "dump") {
+    add(/pgs dump written/.test(line) ? "PGS kaydı yazıldı" : /written/.test(line) ? "zaman kaydı yazıldı" : "kayıt yazılamadı",
+      /failed/.test(line) ? "bad" : "");
+  }
+}
+
+function renderCounts() {
+  const c = state.counts;
+  for (const key of Object.keys(c)) $("c-" + key).textContent = c[key];
+}
+
+function renderRequests() {
+  const box = $("requests");
+  if (!state.requests.length) return;
+  box.replaceChildren(...state.requests.map((r) => {
+    const el = document.createElement("div");
+    el.className = "req";
+    const top = document.createElement("div");
+    top.className = "top";
+    const when = document.createElement("b");
+    when.textContent = time(r.at);
+    const what = document.createElement("span");
+    what.className = "muted";
+    what.textContent = (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind) + " · " + r.hints;
+    top.append(when, what);
+    const steps = document.createElement("div");
+    steps.className = "steps";
+    steps.append(...r.steps.map(([t, k]) => step(t, k)));
+    if (!r.steps.length) steps.append(step("bekleniyor…", "warn"));
+    el.append(top, steps);
+    return el;
+  }));
+}
+
+function renderTools() {
+  const tools = $("tools");
+  const seen = new Set(state.events.map((e) => e.area));
+  for (const area of seen) {
+    if (tools.querySelector('[data-area="' + area + '"]')) continue;
+    const b = document.createElement("button");
+    b.dataset.area = area;
+    b.textContent = AREAS[area] || area;
+    b.setAttribute("aria-pressed", String(!state.hidden.has(area)));
+    b.onclick = () => {
+      state.hidden.has(area) ? state.hidden.delete(area) : state.hidden.add(area);
+      b.setAttribute("aria-pressed", String(!state.hidden.has(area)));
+      renderLog();
+    };
+    tools.insertBefore(b, $("search"));
+  }
+}
+
+function renderLog() {
+  const log = $("log");
+  const needle = state.filter.toLowerCase();
+  const rows = state.events
+    .filter((e) => !state.hidden.has(e.area) && (!needle || e.line.toLowerCase().includes(needle)))
+    .slice(-400)
+    .reverse();
+  if (!rows.length) { log.replaceChildren(Object.assign(document.createElement("div"), { className: "empty", textContent: "Gösterilecek olay yok." })); return; }
+  log.replaceChildren(...rows.map((e) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const t = document.createElement("span");
+    t.className = "muted";
+    t.textContent = time(e.at_ms);
+    const a = document.createElement("span");
+    a.className = "area";
+    a.textContent = AREAS[e.area] || e.area;
+    const l = document.createElement("span");
+    l.className = "line" + (e.line.length > 220 ? " cut" : "");
+    l.textContent = e.line;
+    l.title = e.line.length > 220 ? "Tamamını görmek için tıkla" : "";
+    l.onclick = () => l.classList.toggle("cut");
+    row.append(t, a, l);
+    return row;
+  }));
+}
+
+async function poll() {
+  try {
+    const res = await fetch("events.json?after=" + state.after, { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const page = await res.json();
+    if (state.started && page.started_ms !== state.started) {
+      // The server restarted: its sequence starts over.
+      state.after = 0; state.started = page.started_ms; return poll();
+    }
+    state.started = page.started_ms;
+    state.after = page.next;
+    $("conn").textContent = "bağlı"; $("conn").className = "pill ok";
+    $("missed").textContent = page.missed ? "· eski olayların bir kısmı tampondan düştü" : "";
+    for (const ev of page.events) { state.events.push(ev); track(ev); }
+    if (state.events.length > MAX_ROWS) state.events.splice(0, state.events.length - MAX_ROWS);
+    if (page.events.length) { renderCounts(); renderRequests(); renderTools(); if (!state.paused) renderLog(); }
+  } catch (err) {
+    $("conn").textContent = "bağlantı yok"; $("conn").className = "pill bad";
+  }
+  if (state.started) {
+    const s = Math.floor((Date.now() - state.started) / 1000);
+    $("uptime").textContent = "· açık " + Math.floor(s / 3600) + " sa " + Math.floor((s % 3600) / 60) + " dk";
+  }
+  setTimeout(poll, 2000);
+}
+
+$("pause").onclick = () => {
+  state.paused = !state.paused;
+  $("pause").textContent = state.paused ? "Devam et" : "Duraklat";
+  $("pause").setAttribute("aria-pressed", String(state.paused));
+  if (!state.paused) renderLog();
+};
+$("search").oninput = (e) => { state.filter = e.target.value; renderLog(); };
+poll();
+</script>
+</body>
+</html>
