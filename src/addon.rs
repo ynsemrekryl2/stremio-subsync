@@ -280,7 +280,12 @@ async fn respond(
         return StatusCode::NOT_FOUND.into_response();
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
-    event!("request", "subtitles request kind={kind} hints={hints:?}");
+    // The filename goes to the dashboard alone, behind the token.
+    events::record_labeled(
+        "request",
+        format!("subtitles request kind={kind} hints={hints:?}"),
+        hints.filename.clone(),
+    );
     // Kept in memory only, to find this request's menu again; on disk only
     // its hash is used.
     let request = format!(
@@ -705,6 +710,32 @@ mod tests {
             let (status, _) = get(uri).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
         }
+    }
+
+    #[tokio::test]
+    async fn filename_reaches_the_dashboard_but_not_the_log_line() {
+        let (_, before) = get(&format!("/{TOKEN}/events.json?after=0")).await;
+        let after = before.unwrap()["next"].as_u64().unwrap();
+        let name = "Label.Test.S01E02.mkv";
+        get(&format!(
+            "/{TOKEN}/subtitles/series/tt0944947:1:2/filename={name}.json"
+        ))
+        .await;
+        let (_, page) = get(&format!("/{TOKEN}/events.json?after={after}")).await;
+        let page = page.unwrap();
+        let request = page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["label"] == name)
+            .expect("request event with the filename");
+        assert_eq!(request["area"], "request");
+        let line = request["line"].as_str().unwrap();
+        assert!(
+            !line.contains(name) && !line.contains("tt0944947"),
+            "{line}"
+        );
+        assert!(line.contains("has_filename: true"), "{line}");
     }
 
     #[tokio::test]

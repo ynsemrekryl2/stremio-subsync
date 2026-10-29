@@ -30,6 +30,11 @@ Kurulum token'ı · medya/stream URL'si · AIOStreams manifest linki · API key 
 dosya adı · IMDb id · altyazı metni. `Debug` implementasyonu bu alanları
 basmaz; gerektiğinde yalnız "var/yok" bilgisi loglanır.
 
+Tek istisna: oynatılan **dosya adı** token arkasındaki olay panelinde
+gösterilir (`events::record_labeled`, olayın `label` alanı). Terminal
+log'una, dump'lara ve cache'e yine yazılmaz. Link, token, anahtar, IMDb id
+ve altyazı metni için istisna yok.
+
 ## Doğrulama
 
 ```bash

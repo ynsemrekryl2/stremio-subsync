@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-031**.
+Sonraki boş numara: **SS-032**.
 
 ## M0 — İskelet
 
@@ -74,6 +74,7 @@ kapsamında sürer.
 
 - [x] **SS-029** Arka planda dönenleri görmek için canlı olay paneli: sunucunun log satırları (yalnız sayı ve etiket; token, link, kimlik, dosya adı, metin yok) son 1000 olay olarak bellekte de tutulur; `/<token>/dashboard` sayfası `events.json`'u 2 sn'de bir okuyup sayaçları, son istekleri adım adım (dosya eşleşmesi, metin cetveli, PGS, aday, hizalama, menü) ve süzülebilir ham olay akışını gösterir. Panel yoklamaları erişim loguna yazılmaz — kanıt: 108 geçen test (yanlış token 404, sayfada token yok, `after` ile yalnız yeni olaylar, tampon taşması) + yerel test sunucusunda panelin açılıp canlı güncellendiği, telefon genişliğinde taşmadığı görüldü. Her istekte dosyanın MKV olup olmadığı ve gömülü altyazılar okunur biçimde görünür (dil + biçim; "cetvel ✓", "PGS ölçülür", "dizinsiz", zorunlu); cache'ten verilen cevapta dosyanın yeniden okunmadığı yazar. Örnek satırlarla tarayıcıda denendi; satır biçimi `mkv` testinde sabitlendi. Gerçek bir oynatmada adımların doğru ayrıştırıldığı henüz görülmedi
 - [~] **SS-030** Yerel sunucuyu tek komutla aç: token ve AIOStreams linki ilk çalıştırmada macOS Anahtar Zinciri'ne bir kez kaydedilir, kurulum linki her açılışta aynı kalır (her seferinde yeni token + yeniden kurulum yok). `scripts/dev.sh` (çift tıklanabilir `.command` ile) — kanıt: deneme Anahtar Zinciri girdisiyle betik denemesi + Stremio'da aynı linkle iki ayrı açılış
+- [~] **SS-031** Olay panelinde her isteğin dosya adını göster; terminal log'u, dump ve cache adsız kalır. Senkron geri bildirimini isteğe bağlamak için (karar: `docs/decisions.md`, 2026-10-29) — kanıt: test (dosya adı `events.json`'da var, log satırında yok) + gerçek oynatmada panelde adın görünmesi
 - [x] **SS-027** Dallar `main` üzerinde birleştirildi; M5 menü/hata önbelleği ve blok probe'u birlikte korundu. Paralel M2/M3 ölçümleri aktarıldı, numaralar tekilleştirildi, eski devam notları düzeltildi. Altı eski dal `codex/archive/` altında; açık Claude süreçleri kullandığı için worktree dizinleri korundu. 7 cache + 14 dump dosyası yedeklendi — kanıt: `docs/history/branch-consolidation.md`, 95 geçen test, temiz format/Clippy ve tüm arşiv uçlarının `main` atası olması.
 
 ## Devam notları (2026-10-27, dallar birleştirildi)

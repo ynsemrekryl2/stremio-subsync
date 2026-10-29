@@ -39,6 +39,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .requests { display: grid; gap: 8px; }
 .req { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; }
 .req .top { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.req .file { flex-basis: 100%; font-weight: 600; overflow-wrap: anywhere; }
 .steps { display: flex; flex-wrap: wrap; gap: 6px; }
 .step { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); }
 .step.ok { color: var(--ok); } .step.warn { color: var(--warn); } .step.bad { color: var(--bad); }
@@ -160,7 +161,7 @@ function track(ev) {
     c.requests++;
     const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
     const name = /has_filename: true/.test(line), size = /has_video_size: true/.test(line);
-    state.requests.unshift({ at: ev.at_ms, kind, hints: (name ? "ad" : "ad yok") + " · " + (size ? "boyut" : "boyut yok"), steps: [] });
+    state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "", hints: (name ? "ad" : "ad yok") + " · " + (size ? "boyut" : "boyut yok"), steps: [] });
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
     return;
   }
@@ -233,6 +234,12 @@ function renderRequests() {
     what.className = "muted";
     what.textContent = (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind) + " · " + r.hints;
     top.append(when, what);
+    if (r.label) {
+      const file = document.createElement("div");
+      file.className = "file";
+      file.textContent = r.label;
+      top.append(file);
+    }
     const steps = document.createElement("div");
     steps.className = "steps";
     steps.append(...r.steps.map(([t, k]) => step(t, k)));

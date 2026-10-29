@@ -1,7 +1,8 @@
 //! Recent log lines kept in memory for the dashboard (SS-029). Every line
 //! still goes to stderr; the last `CAPACITY` are also kept here. Lines are
 //! the same log-safe text as stderr: counts and labels, never tokens, links,
-//! ids, filenames or subtitle text.
+//! ids, filenames or subtitle text. A request event may also carry the played
+//! file's name for the dashboard only (SS-031); it is never printed.
 
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -17,6 +18,9 @@ pub struct Event {
     /// Short group name such as `k2` or `http`, for filtering.
     pub area: &'static str,
     pub line: String,
+    /// Dashboard only, never printed: the played file's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +58,12 @@ fn log() -> &'static Mutex<Log> {
 
 /// Prints `line` to stderr and keeps it for the dashboard.
 pub fn record(area: &'static str, line: String) {
+    record_labeled(area, line, None);
+}
+
+/// Like `record`, but `label` is kept for the dashboard only and never
+/// printed.
+pub fn record_labeled(area: &'static str, line: String, label: Option<String>) {
     eprintln!("{line}");
     let Ok(mut log) = log().lock() else { return };
     let seq = log.next;
@@ -66,6 +76,7 @@ pub fn record(area: &'static str, line: String) {
         at_ms: now_ms(),
         area,
         line,
+        label,
     });
 }
 
