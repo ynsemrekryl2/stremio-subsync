@@ -1,8 +1,9 @@
 //! K2 probe: reads the AIOStreams stream list for the title being played and
-//! checks whether the player's hints pick out exactly one stream.
+//! picks a stream by filename and size, falling back to size alone.
 //!
-//! Stream URLs are never requested here: on TorBox, opening one can start a
-//! download. Only counts and booleans leave this module through `Debug`.
+//! Only the picked stream's URL is opened, and only when a range reader is
+//! given: on TorBox, opening one can start a download. Only counts and labels
+//! leave this module through `Debug`.
 
 use reqwest::Url;
 use serde::{Deserialize, Deserializer};
