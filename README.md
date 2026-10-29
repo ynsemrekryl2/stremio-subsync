@@ -22,6 +22,23 @@ Plan: [`docs/plan.md`](docs/plan.md) · Kararlar: [`docs/decisions.md`](docs/dec
 
 ## Çalıştırma
 
+Yerelde (macOS) tek komut; Finder'da `scripts/SubSync.command`'a çift
+tıklamak da aynısını yapar:
+
+```bash
+scripts/dev.sh
+```
+
+İlk çalıştırmada token üretilir, AIOStreams linki (gizli girişle) sorulur,
+ikisi macOS Anahtar Zinciri'ne kaydedilir ve kurulum linki panoya kopyalanır.
+Sonraki açılışlar hiçbir şey sormaz; kurulum linki aynı kalır, eklentiyi
+yeniden kurmak gerekmez. `scripts/dev.sh link` linki yeniden panoya kopyalar,
+`scripts/dev.sh dashboard` olay panelini açar, `scripts/dev.sh forget` iki
+sırrı siler (sonraki açılışta yeni token). Ek `SUBSYNC_*` değişkenleri
+geçer, örneğin `SUBSYNC_DUMP_DIR=dumps scripts/dev.sh`.
+
+Elle çalıştırmak için:
+
 ```bash
 export SUBSYNC_TOKEN="$(openssl rand -hex 24)"   # en az 32 karakter
 cargo run
