@@ -17,7 +17,7 @@ Seçilen stream'in URL'si ne tür bir hedef?
 ```
 k2 probe kind=movie outcome=Matched { elapsed_ms: …, report: MatchReport {
   streams, with_filename, with_size,
-  filename_exact, filename_loose, size, both,
+  filename_exact, filename_loose, size, both, matched_by,
   target: Some(Http { same_host }) | Some(InfoHashOnly) | Some(Missing) | None } }
 ```
 
@@ -29,12 +29,13 @@ k2 probe kind=movie outcome=Matched { elapsed_ms: …, report: MatchReport {
 | `filename_loose` | Büyük-küçük harf ve klasör yolu yok sayılınca aynı olanlar |
 | `size` | Boyutu birebir aynı olanlar |
 | `both` | Dosya adı ve boyut birlikte aynı olanlar — K2'nin asıl cevabı; 1 olmalı |
-| `target` | Yalnız `both == 1` iken: URL AIOStreams'in kendi host'unda mı (`same_host: true`, proxy/playback yolu) yoksa başka host'ta mı |
+| `matched_by` | Seçilen stream: `Some(Both)` ad + boyut, `Some(Size)` yalnız boyut (SS-020), `None` seçilmedi |
+| `target` | Yalnız bir stream seçildiyse: URL AIOStreams'in kendi host'unda mı (`same_host: true`, proxy/playback yolu) yoksa başka host'ta mı |
 
 ## URL çağırma (range okuma)
 
-`SUBSYNC_RANGE_PROBE=1` ile açılır, varsayılan kapalı. Yalnız `both == 1` ve
-URL HTTP ise, eşleşen URL'den **tek istek** ile `Range: bytes=0-65535`
+`SUBSYNC_RANGE_PROBE=1` ile açılır, varsayılan kapalı. Yalnız bir stream seçildiyse
+ve URL HTTP ise, eşleşen URL'den **tek istek** ile `Range: bytes=0-65535`
 istenir. Yönlendirmeler elle izlenir (en çok 5). Sunucu Range'i yok sayıp
 bütün dosyayı gönderse bile okuma 64 KB'ta kesilir ve bağlantı kapatılır.
 Log'a `k2 probe` satırının sonunda `range: Some(Ok(RangeReport { … }))` eklenir:
@@ -124,3 +125,16 @@ MKV'ydi; boyut karşılaştırması tek başına "gerçek dosya değil" demek de
   güvenilmemeli.
 - Aynı oturumda iki `route=none token=bad status=404` isteği düştü. Funnel genel
   adres olduğu için tarayıcı/bot istekleri olabilir; add-on'u etkilemiyor.
+
+## Boyutla eşleşme (SS-020, 2026-10-29)
+
+Kapsama sayımında 21 dosyanın 3'ü K2'de düştü; eşleşmeyen bölümde ad hiçbir
+stream'de tutmuyor, boyut 2 stream'de tutuyordu. Seçim kuralı artık:
+
+1. Ad ve boyut birlikte tutan ilk stream (`matched_by: Some(Both)`).
+2. Yoksa boyutu tutan ilk stream (`Some(Size)`). Aynı bayt sayısı aynı dosya
+   sayılır; birden çok kopyadan hangisinin okunduğu fark etmez.
+3. Boyut hiç tutmuyorsa (ya da oynatıcı boyut göndermediyse) eşleşme yok.
+
+Aynı ad + boyutla birden çok stream (`both: 2+`) eskiden belirsiz sayılıp
+okunmuyordu; aynı kurala göre artık ilki okunur.

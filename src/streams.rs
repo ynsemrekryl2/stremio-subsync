@@ -79,6 +79,15 @@ pub enum Target {
     Missing,
 }
 
+/// Which hints picked the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchedBy {
+    /// Exact filename and size.
+    Both,
+    /// Size only: no stream of that size carries the player's filename.
+    Size,
+}
+
 /// Counts that answer K2 without revealing what is being watched.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MatchReport {
@@ -91,7 +100,9 @@ pub struct MatchReport {
     pub size: usize,
     /// Exact filename and size both equal.
     pub both: usize,
-    /// Set only when exactly one stream matched on both fields.
+    /// Set when a stream was picked.
+    pub matched_by: Option<MatchedBy>,
+    /// Set when a stream was picked.
     pub target: Option<Target>,
 }
 
@@ -99,8 +110,9 @@ fn last_segment(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
 
-/// Counts matches and hands back the single stream matched on both fields,
-/// if there is exactly one.
+/// Counts matches and hands back the stream the hints pick: the first that
+/// matches on both fields, else the first of the same size. Equal byte
+/// counts are taken as the same file, so which copy is read does not matter.
 pub fn match_streams<'a>(
     hints: &PlaybackHints,
     streams: &'a [Stream],
@@ -111,6 +123,7 @@ pub fn match_streams<'a>(
         ..MatchReport::default()
     };
     let mut both = Vec::new();
+    let mut sized = Vec::new();
     for stream in streams {
         let name = stream.behavior_hints.filename.as_deref();
         let size = stream.behavior_hints.video_size;
@@ -129,14 +142,19 @@ pub fn match_streams<'a>(
         if exact && size_eq {
             both.push(stream);
         }
+        if size_eq {
+            sized.push(stream);
+        }
     }
     report.both = both.len();
-    let single = match both.as_slice() {
-        [stream] => Some(*stream),
-        _ => None,
+    let picked = match (both.first(), sized.first()) {
+        (Some(stream), _) => Some((MatchedBy::Both, *stream)),
+        (None, Some(stream)) => Some((MatchedBy::Size, *stream)),
+        (None, None) => None,
     };
-    report.target = single.map(|stream| target_of(stream, source_host));
-    (report, single)
+    report.matched_by = picked.map(|(by, _)| by);
+    report.target = picked.map(|(_, stream)| target_of(stream, source_host));
+    (report, picked.map(|(_, stream)| stream))
 }
 
 fn target_of(stream: &Stream, source_host: &str) -> Target {
@@ -411,6 +429,7 @@ mod tests {
                 filename_loose: 2,
                 size: 1,
                 both: 1,
+                matched_by: Some(MatchedBy::Both),
                 target: Some(Target::Http { same_host: true }),
             }
         );
@@ -424,14 +443,69 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_match_has_no_target() {
+    fn identical_matches_pick_the_first() {
         let list = streams(json!({ "streams": [
             { "url": "https://a.test/1", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
+            { "url": "https://b.test/2", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
+        ]}));
+        let (report, picked) = match_streams(&hints("A.mkv", 5), &list, HOST);
+        assert_eq!(report.both, 2);
+        assert_eq!(report.matched_by, Some(MatchedBy::Both));
+        assert_eq!(
+            picked.and_then(|s| s.url.as_deref()),
+            Some("https://a.test/1")
+        );
+    }
+
+    #[test]
+    fn size_alone_matches_when_no_filename_does() {
+        let list = streams(json!({ "streams": [
+            { "url": "https://a.test/1", "behaviorHints": { "filename": "Other.mkv", "videoSize": 7 } },
+            { "url": "https://a.test/2", "behaviorHints": { "filename": "Renamed.mkv", "videoSize": 5 } },
+            { "url": "https://a.test/3", "behaviorHints": { "videoSize": 5 } }
+        ]}));
+        let (report, picked) = match_streams(&hints("A.mkv", 5), &list, HOST);
+        assert_eq!(report.both, 0);
+        assert_eq!(report.size, 2);
+        assert_eq!(report.matched_by, Some(MatchedBy::Size));
+        assert_eq!(report.target, Some(Target::Http { same_host: false }));
+        assert_eq!(
+            picked.and_then(|s| s.url.as_deref()),
+            Some("https://a.test/2")
+        );
+    }
+
+    #[test]
+    fn filename_and_size_beat_an_earlier_size_match() {
+        let list = streams(json!({ "streams": [
+            { "url": "https://a.test/1", "behaviorHints": { "filename": "Renamed.mkv", "videoSize": 5 } },
             { "url": "https://a.test/2", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
         ]}));
-        let report = match_streams(&hints("A.mkv", 5), &list, HOST).0;
-        assert_eq!(report.both, 2);
+        let (report, picked) = match_streams(&hints("A.mkv", 5), &list, HOST);
+        assert_eq!(report.matched_by, Some(MatchedBy::Both));
+        assert_eq!(
+            picked.and_then(|s| s.url.as_deref()),
+            Some("https://a.test/2")
+        );
+    }
+
+    #[test]
+    fn no_size_match_picks_nothing() {
+        let list = streams(json!({ "streams": [
+            { "url": "https://a.test/1", "behaviorHints": { "filename": "A.mkv", "videoSize": 6 } },
+            { "url": "https://a.test/2", "behaviorHints": { "filename": "A.mkv" } }
+        ]}));
+        let (report, picked) = match_streams(&hints("A.mkv", 5), &list, HOST);
+        assert_eq!(report.filename_exact, 2);
+        assert_eq!(report.matched_by, None);
         assert_eq!(report.target, None);
+        assert!(picked.is_none());
+
+        let filename_only = PlaybackHints {
+            filename: Some("A.mkv".to_owned()),
+            ..PlaybackHints::default()
+        };
+        assert!(match_streams(&filename_only, &list, HOST).1.is_none());
     }
 
     #[test]
@@ -563,7 +637,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn probe_reads_range_of_single_match_only() {
+    async fn probe_reads_range_of_picked_stream_only() {
         let reader = FakeRange(std::sync::Mutex::new(Vec::new()));
         let source = FakeSource(Ok(json!({ "streams": [
             { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
@@ -590,11 +664,11 @@ mod tests {
             vec![("https://d.test/one".to_owned(), Some(5))]
         );
 
-        // Ambiguous: two streams match, so no URL is touched.
+        // No stream has the player's size, so no URL is touched.
         let reader = FakeRange(std::sync::Mutex::new(Vec::new()));
         let source = FakeSource(Ok(json!({ "streams": [
-            { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } },
-            { "url": "https://d.test/two", "behaviorHints": { "filename": "A.mkv", "videoSize": 5 } }
+            { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mkv", "videoSize": 6 } },
+            { "url": "https://d.test/two", "behaviorHints": { "filename": "B.mkv", "videoSize": 7 } }
         ]})));
         let outcome = probe(
             &source,

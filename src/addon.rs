@@ -412,7 +412,7 @@ fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>
         Some(streams::ProbeOutcome::NoHints) => return Err(Notice::NoStreamMatch),
         Some(streams::ProbeOutcome::Failed { .. }) | None => return Err(Notice::Failed),
     };
-    if report.both != 1 {
+    if report.matched_by.is_none() {
         return Err(Notice::NoStreamMatch);
     }
     match (range, mkv) {
