@@ -52,8 +52,8 @@ tek "temizle" olup olmadığını göstermez.
 
 ## Gerçek ölçüm
 
-2026-10-29: hem SRT hem PGS İngilizce içeren iki dizi bölümü (Real-Debrid,
-masaüstü Stremio). Yalnız PGS içeren dosya henüz açılmadı.
+2026-10-29: hem SRT hem PGS İngilizce içeren iki dizi bölümü ve bir film
+(Real-Debrid, masaüstü Stremio). Yalnız PGS içeren dosya henüz açılmadı.
 
 Tutarsa beklenen: SRT + PGS dosyasında bir fazın (büyük olasılıkla `Even`)
 `fix=1/1`, ~0 ms, yüksek isabetle kabulü. Yalnız PGS dosyasında doğru faz
@@ -70,6 +70,9 @@ sayıları karşılaştırılır (adım 3'ün girdisi).
 | 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Even | 552 | 1920 ms | %0 | 546 / 523 | ACCEPT | 1/1 +0 ms | 1.00 |
 | 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Odd | 551 | 160 ms | %2 | 546 | reject | — | 0.21 |
 | 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Each | 1103 | 1280 ms | %1 | 546 | ACCEPT (yalnız 1 iz) | 1/1 +0 ms | 1.00 |
+| 2026-10-29 | film C, iz 6 | 4148 | 0 | Even | 2074 | 1835 ms | %0 | 2137 / 1358 | ACCEPT | 1/1 +7 ms / −21 ms | 0.86 / 0.84 |
+| 2026-10-29 | film C, iz 6 | 4148 | 0 | Odd | 2073 | 84 ms | %1 | 2137 / 1358 | reject | — | 0.22 |
+| 2026-10-29 | film C, iz 6 | 4148 | 0 | Each | 4147 | 1209 ms | %0 | 2137 / 1358 | reject | — | 0.31 / 0.34 |
 
 Yorum:
 
@@ -79,8 +82,11 @@ Yorum:
   metin satırlarıyla birebir aynı; tekrar yok.
 - **Faz metin olmadan seçilebilir:** `Even` satır medyanı 1.9–2.4 sn, uzun
   satır %0; `Odd` (satır araları) medyanı 160–292 ms. Medyanı büyük olan faz
-  doğru faz. `Each` de kabul ediliyor ama her satırı ikiye bölüyor; adım 3
-  için `Even` yeterli.
+  doğru faz. `Each` dizilerde kabul ediliyor ama filmde (C) ret aldı; adım 3
+  için doğru faz `Even`.
+- **Filmde de tutuyor:** C'nin PGS izi (2074 satır) iki farklı metin iziyle
+  (2137 ve 1358 satır, biri muhtemelen SDH) ~0 ms ile kabul; isabet 0.84–0.86,
+  çünkü izlerin satır bölümlemesi birebir aynı değil.
 - **Her İngilizce PGS izi aynı değil:** A dosyasındaki 7 ve 22 numaralı
   izler (1553 ve 2467 nokta) metin cetveliyle tutmuyor; muhtemelen SDH,
   yorum ya da farklı yapı. Kabul testi zaten yanlış cetveli eliyor, bu yüzden

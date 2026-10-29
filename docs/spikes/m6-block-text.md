@@ -49,6 +49,8 @@ lacing'li yük, dosya sonunu aşan konum). Gerçek dosya henüz yok.
 | 3 | dizi bölümü | SRT | 527 | 527 | 399 / 527 | 399 | hayır | 527 | 411 369 | 21.8 sn | SingleOnly |
 | 4 | dizi bölümü | SRT | 551 | 551 | 295 / 551 | 295 | hayır | 551 | 304 145 | 29.4 sn | SingleOnly |
 | 5 | dizi bölümü | SRT | 569 | 569 | 267 / 569 | 267 | hayır | 569 | 275 277 | 13.4 sn | SingleOnly |
+| 6 | film | SRT | 1835 | 1835 | 990 / 1835 | 990 | hayır | 1835 | 1 020 690 | 202.0 sn | SingleOnly |
+| 7 | film | SRT | 2022 | 2022 | 818 / 2022 | 818 | hayır | 2022 | 843 358 | 134.0 sn | SingleOnly |
 
 2026-10-29, Real-Debrid, masaüstü Stremio, ev bağlantısı. `missing`,
 `extended`, `laced` ve `empty` her dosyada 0.
@@ -63,9 +65,13 @@ lacing'li yük, dosya sonunu aşan konum). Gerçek dosya henüz yok.
   başına ~550 istek, ~0.3–0.4 MB.
 - **Okumaların %39'u başarısız** (2769 okumanın 1085'i), süre 13–56 sn
   (16 eşzamanlı istek). `missing` 0 olduğu için sorun konumda değil, istekte;
-  büyük olasılıkla sunucu tarafı sınırlama. Nedeni bu ölçümde kaydedilmedi;
-  rapora `failures` (zaman aşımı / bağlantı / HTTP durum kodu / diğer) eklendi,
-  sonraki ölçümde görünecek.
+  büyük olasılıkla sunucu tarafı sınırlama. 1–5'te neden kaydedilmedi;
+  rapora `failures` eklendi.
+- **Neden: bağlantı reddi.** Filmlerde (6–7) başarısızlıkların %97'si
+  `connect` (818 / 845 ve 1172 / 1204), kalanı zaman aşımı; HTTP hata kodu
+  hiç yok. Sunucu yeni bağlantıları kabul etmiyor: 16 eşzamanlı istek
+  Real-Debrid'in dosya ya da IP başına bağlantı sınırını aşıyor olabilir.
+  Filmde süre 2–3.5 dakika.
 - **Çeviri yedeği için ara sonuç:** metin Cues konumlarından okunabiliyor;
-  ama SS-026'dan önce başarısızlıkların nedeni bulunmalı ve tekrar deneme ya
-  da daha düşük eşzamanlılıkla tam okuma sağlanmalı.
+  ama SS-026'dan önce tam okuma sağlanmalı: daha düşük eşzamanlılık, bağlantı
+  yeniden kullanımı ve `connect` hatasında bekleyip tekrar deneme ölçülmeli.

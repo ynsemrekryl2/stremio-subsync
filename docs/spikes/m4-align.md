@@ -259,6 +259,26 @@ Etiket sözlüğü: **senkron** (baştan sona tutuyor) · **kaymış** (sabit bi
 gecikme var) · **kayıyor** (zamanla açılıyor) · **yanlış** (başka sürüm/kurgu,
 yer yer tutmuyor).
 
+## Gerçek oturum geri bildirimi (2026-10-29)
+
+Masaüstü Stremio, 5 bölüm + 3 film. Kullanıcı: "açtığım SubSync
+altyazılarından hiçbiri kayık değildi". Bu **zayıf etiket**: birden çok girdi
+sunulduğunda hangisinin seçildiği bilinmiyor, bu yüzden yukarıdaki 4'lü sete
+eklenmedi. Yine de sınırdaki kabuller için ilk gerçek işaret:
+
+| İçerik | Kabul edilen aday | Fix | İsabet (baş / orta / son) |
+|---|---|---|---|
+| bölüm | 0 | 1/1, −699 ms | %52 / %52 / %53 (iki metin izinden biri ret `LowHits`) |
+| bölüm | 0 | 1/1, −2345 ms | %61 / %61 / %58 |
+| film | 1 · 2 | 1/1, −34 ms · 1001/1000, +1.6 sn | %99 · %63 / %62 / %57 |
+| film | 0 · 1 | 1/1, +15 ms · 1001/1000, +0.75 sn | %83 / %79 / %88 · %53 / %50 / %55 |
+| film (boyutla eşleşti) | 1 · 2 · (iz 4'te 0) | 1/1, +981 · +1082 · +384 ms | %96 · %100 · %84 |
+
+Bir bölümde 3 aday da ret aldı (`Disagree` / `LowHits`, en iyi %36); menüde
+"uyan altyazı yok" sunuldu. %50–60 isabetli kabullerde kayma bildirilmedi.
+Eşik değişikliği için hâlâ seçilen girdinin bilindiği etiket gerekir; dosya
+adı artık olay panelinde göründüğü için (SS-031) bu mümkün.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
