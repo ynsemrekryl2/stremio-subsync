@@ -106,3 +106,17 @@ Yorum:
   yorum ya da farklı yapı. Kabul testi zaten yanlış cetveli eliyor, bu yüzden
   adım 3'te her İngilizce PGS izi `Even` fazıyla ayrı bir cetvel olarak
   denenebilir (metin cetvellerinde olduğu gibi).
+
+## Adım 3: PGS cetvel olarak (2026-10-29)
+
+Dosyada dizinlenmiş İngilizce metin izi yoksa her dizinlenmiş İngilizce PGS
+izinden `Even` satırlarıyla bir cetvel kurulur (`pgs::rulers`). 50 satırdan
+kısa izler (forced, kısmi) atlanır; forced izler sona konur. Bu cetveller
+metin cetvelleri gibi her adayla denenir; kabul testi aynıdır. Log satırı:
+`pgs ruler tracks=[(iz, satır), …]`, panelde "cetvel: PGS'ten". Uygun PGS
+izi de yoksa menü "⚠ İng. resim" der.
+
+Kanıt: `pgs::tests::pgs_ruler_aligns_a_candidate_like_the_text_ruler`
+(sentetik: PGS cetveli metin cetveliyle aynı fix'i veriyor). Gerçek dosyada
+kabul edilen altyazı bekleniyor.
+

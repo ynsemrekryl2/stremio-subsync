@@ -30,7 +30,8 @@ pub const KEEP_PASSING_S: u64 = 60;
 pub enum Notice {
     /// The file has no English subtitle to align against.
     NoEnglishTrack,
-    /// It has one, but as images (PGS), not text.
+    /// It has one, but as images whose times Cues do not give (or too few
+    /// of them for a ruler).
     ImageOnly,
     /// It has one, but Cues do not index it; reading it means the whole file.
     NotIndexed,
@@ -60,9 +61,9 @@ impl Notice {
             ),
             Self::ImageOnly => (
                 "⚠ İng. resim",
-                "SubSync: Bu dosyanın İngilizce altyazısı resim biçiminde (PGS); \
-                 metin olmadığı için cetvel olarak kullanılamıyor. WEB-DL ya da \
-                 BluRay rip (remux değil) bir sürüm deneyin.",
+                "SubSync: Bu dosyanın İngilizce altyazısı resim biçiminde ve \
+                 zamanları okunamadı, cetvel çıkarılamadı. WEB-DL ya da BluRay rip \
+                 bir sürüm deneyin.",
             ),
             Self::NotIndexed => (
                 "⚠ İz okunmuyor",

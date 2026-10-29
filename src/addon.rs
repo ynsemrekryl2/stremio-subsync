@@ -20,6 +20,7 @@ use crate::events::{self, event};
 use crate::extra::PlaybackHints;
 use crate::label;
 use crate::menu::{self, MenuCache, Notice};
+use crate::pgs;
 use crate::range::RangeReader;
 use crate::ruler::Event;
 use crate::sources::{self, Query, SubtitleSource};
@@ -467,8 +468,20 @@ fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>
         (_, Some(mkv)) => match *mkv {
             Ok(report) if !report.rulers.0.is_empty() => Ok(report.rulers.0),
             Ok(report) if report.english_text_indexed == Some(false) => Err(Notice::NotIndexed),
-            Ok(report) if report.subtitles.iter().any(|s| s.english) => Err(Notice::ImageOnly),
-            Ok(_) => Err(Notice::NoEnglishTrack),
+            Ok(report) => {
+                // No English text track: the image track's times, if indexed.
+                let rulers = pgs::rulers(&report.pgs);
+                if !rulers.is_empty() {
+                    let counts: Vec<(u64, usize)> =
+                        rulers.iter().map(|(t, l)| (*t, l.len())).collect();
+                    event!("m5", "pgs ruler tracks={counts:?}");
+                    Ok(rulers)
+                } else if report.subtitles.iter().any(|s| s.english) {
+                    Err(Notice::ImageOnly)
+                } else {
+                    Err(Notice::NoEnglishTrack)
+                }
+            }
             Err(_) => Err(Notice::Failed),
         },
         (Some(Ok(range)), None) if !range.ebml_magic => Err(Notice::NotMkv),

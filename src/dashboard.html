@@ -100,7 +100,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 "use strict";
 const AREAS = {
   start: "açılış", http: "http", request: "istek", served: "cevap", k2: "dosya",
-  m3: "aday", m4: "hizalama", menu: "menü", dump: "kayıt", cache: "cache", m6: "blok",
+  m3: "aday", m4: "hizalama", m5: "PGS cetveli", menu: "menü", dump: "kayıt", cache: "cache", m6: "blok",
 };
 const NOTICES = {
   NoEnglishTrack: "İng. iz yok", ImageOnly: "İng. resim (PGS)", NotIndexed: "İz okunmuyor",
@@ -191,6 +191,10 @@ function track(ev) {
     req.tracks = tracksOf(line);
     if (!/cues: Read/.test(line)) req.steps.push(["altyazı dizini okunamadı", "warn"]);
     if (/rulers: \[\(/.test(line)) c.ruler++;
+  } else if (ev.area === "m5") {
+    const tracks = (line.match(/\((\d+), \d+\)/g) || []).length;
+    if (tracks) c.ruler++;
+    add("cetvel: PGS'ten (" + tracks + " iz)", "ok");
   } else if (ev.area === "m3") {
     const found = [...line.matchAll(/Ok\((\d+)\)/g)].reduce((s, m) => s + Number(m[1]), 0);
     add("aday: " + found + " bulundu", found ? "ok" : "warn");

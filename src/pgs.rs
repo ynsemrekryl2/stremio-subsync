@@ -1,6 +1,7 @@
-//! PGS ruler measurement (SS-025): cue times of the file's English image
-//! subtitle tracks, saved so they can be checked against the same file's
-//! text ruler offline. Only times are kept; no image is ever read.
+//! PGS ruler (SS-025): cue times of the file's English image subtitle
+//! tracks. They are saved so they can be checked against the same file's
+//! text ruler offline, and become the ruler when the file has no English
+//! text track. Only times are kept; no image is ever read.
 //!
 //! Cues give PGS points without duration. Each line is assumed to be a
 //! "show" display set followed by a "clear" one, so consecutive points are
@@ -19,6 +20,8 @@ use crate::ruler::Event;
 
 /// A pair longer than this is unlikely to be one subtitle line.
 const LONG_MS: u64 = 10_000;
+/// A track with fewer `Even` lines is forced or partial, not a ruler.
+pub const MIN_RULER_LINES: usize = 50;
 
 /// One English PGS track's cue times in milliseconds, in Cues order with
 /// repeats kept.
@@ -84,6 +87,22 @@ pub fn lines(times: &[u64], phase: Phase) -> Vec<Event> {
             .collect(),
         Phase::Each => times.array_windows::<2>().map(pair).collect(),
     }
+}
+
+/// Rulers from English PGS tracks for a file without an English text track:
+/// `Even` lines (show, then clear), which matched the text ruler in every
+/// file checked against one (`docs/spikes/m5-pgs-ruler.md`). Non-forced
+/// tracks come first; short tracks are left out.
+pub fn rulers(tracks: &[PgsTrack]) -> Vec<(u64, Vec<Event>)> {
+    let mut out: Vec<(bool, u64, Vec<Event>)> = tracks
+        .iter()
+        .map(|t| (t.forced, t.track, lines(&t.times, Phase::Even)))
+        .filter(|(_, _, lines)| lines.len() >= MIN_RULER_LINES)
+        .collect();
+    out.sort_by_key(|(forced, _, _)| *forced);
+    out.into_iter()
+        .map(|(_, track, lines)| (track, lines))
+        .collect()
 }
 
 /// Median line length and the share of lines longer than `LONG_MS`.
@@ -248,6 +267,56 @@ mod tests {
         assert!(even.contains(" ACCEPT fix=1/1+0ms hit=1.00"), "{even}");
         // Odd pairs are the gaps between lines: a different, wrong shape.
         assert!(!out[1].contains("fix=1/1+0ms hit=1.00"), "{}", out[1]);
+    }
+
+    #[test]
+    fn pgs_rulers_skip_short_tracks_and_put_forced_last() {
+        let points = |n: u64| (0..n).map(|i| i * 1_000).collect::<Vec<_>>();
+        let tracks = [
+            PgsTrack {
+                track: 3,
+                forced: true,
+                times: points(200),
+            },
+            PgsTrack {
+                track: 4,
+                forced: false,
+                times: points(2 * MIN_RULER_LINES as u64 - 1),
+            },
+            PgsTrack {
+                track: 5,
+                forced: false,
+                times: points(120),
+            },
+        ];
+        let found = rulers(&tracks);
+        let shape: Vec<(u64, usize)> = found.iter().map(|(t, l)| (*t, l.len())).collect();
+        assert_eq!(shape, vec![(5, 60), (3, 100)]);
+        assert_eq!(found[0].1[0], ev(0, 1_000));
+    }
+
+    #[test]
+    fn pgs_ruler_aligns_a_candidate_like_the_text_ruler() {
+        let mut rng = synth::Rng::new(41);
+        let speech = synth::speech(&mut rng, 45);
+        let text = synth::lines(&mut rng, &speech, &synth::Style::RULER);
+        let candidate = synth::lines(&mut rng, &speech, &synth::Style::OTHER);
+        let pgs = rulers(&[PgsTrack {
+            track: 6,
+            forced: false,
+            times: show_and_clear(&text),
+        }]);
+        let shifted: Vec<Event> = candidate
+            .iter()
+            .map(|e| ev(e.start_ms + 2_500, e.end_ms + 2_500))
+            .collect();
+        let from_pgs = align::align(&pgs[0].1, &shifted);
+        let from_text = align::align(&text, &shifted);
+        let fix = from_pgs
+            .accepted()
+            .expect("PGS ruler accepts the candidate");
+        assert_eq!(Some(fix), from_text.accepted());
+        assert!((fix.shift_ms + 2_500).abs() <= 100, "{fix:?}");
     }
 
     #[test]
