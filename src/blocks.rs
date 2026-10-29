@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::mkv::{children, parse_header, vint_len};
-use crate::range::{ByteSource, MultiRange};
+use crate::range::{ByteSource, MultiRange, ReadError};
 
 const BLOCK_GROUP: u32 = 0xA0;
 const BLOCK: u32 = 0xA1;
@@ -91,6 +91,8 @@ pub struct BlockReport {
     /// The read worked but no block of the track was there.
     pub missing: usize,
     pub failed_reads: usize,
+    /// Why reads failed; the counts add up to `failed_reads`.
+    pub failures: Failures,
     /// Found blocks larger than the window, finished with a second read.
     pub extended: usize,
     pub laced: usize,
@@ -116,7 +118,57 @@ struct Found {
 enum Outcome {
     Found(Found),
     Missing,
-    Failed,
+    Failed(Failure),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    Timeout,
+    Connect,
+    Status(u16),
+    RangeIgnored,
+    Other,
+    /// The read task itself did not finish.
+    Task,
+}
+
+impl From<&ReadError> for Failure {
+    fn from(err: &ReadError) -> Self {
+        match err {
+            ReadError::Timeout => Self::Timeout,
+            ReadError::Connect => Self::Connect,
+            ReadError::Status(code) => Self::Status(*code),
+            ReadError::RangeIgnored => Self::RangeIgnored,
+            ReadError::Other { .. } => Self::Other,
+        }
+    }
+}
+
+/// Failed reads by cause; statuses are kept as (code, count) pairs.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Failures {
+    pub timeout: usize,
+    pub connect: usize,
+    pub status: Vec<(u16, usize)>,
+    pub range_ignored: usize,
+    pub other: usize,
+    pub task: usize,
+}
+
+impl Failures {
+    fn add(&mut self, failure: Failure) {
+        match failure {
+            Failure::Timeout => self.timeout += 1,
+            Failure::Connect => self.connect += 1,
+            Failure::Status(code) => match self.status.iter_mut().find(|(c, _)| *c == code) {
+                Some((_, n)) => *n += 1,
+                None => self.status.push((code, 1)),
+            },
+            Failure::RangeIgnored => self.range_ignored += 1,
+            Failure::Other => self.other += 1,
+            Failure::Task => self.task += 1,
+        }
+    }
 }
 
 /// Value of an EBML variable-size integer with its length marker removed.
@@ -162,8 +214,9 @@ fn block_payload(body: &[u8]) -> Option<(&[u8], bool)> {
 
 async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome, usize, usize) {
     let start = pos.earliest();
-    let Ok(buf) = file.read(start, MAX_EXTRA_SIZE_BYTES + WINDOW).await else {
-        return (Outcome::Failed, 1, 0);
+    let buf = match file.read(start, MAX_EXTRA_SIZE_BYTES + WINDOW).await {
+        Ok(buf) => buf,
+        Err(err) => return (Outcome::Failed((&err).into()), 1, 0),
     };
     let mut requests = 1;
     let mut bytes = buf.len();
@@ -189,8 +242,9 @@ async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome,
         let extended = body.len() < size;
         if extended {
             let more_at = start + (skip + header.len + body.len()) as u64;
-            let Ok(more) = file.read(more_at, size - body.len()).await else {
-                return (Outcome::Failed, requests + 1, bytes);
+            let more = match file.read(more_at, size - body.len()).await {
+                Ok(more) => more,
+                Err(err) => return (Outcome::Failed((&err).into()), requests + 1, bytes),
             };
             requests += 1;
             bytes += more.len();
@@ -257,6 +311,7 @@ pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockRepor
         found: 0,
         missing: 0,
         failed_reads: 0,
+        failures: Failures::default(),
         extended: 0,
         laced: 0,
         utf8: 0,
@@ -270,6 +325,7 @@ pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockRepor
     while let Some(joined) = tasks.join_next().await {
         let Ok((outcome, requests, bytes)) = joined else {
             report.failed_reads += 1;
+            report.failures.add(Failure::Task);
             continue;
         };
         report.requests += requests;
@@ -284,7 +340,10 @@ pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockRepor
                 report.payload_bytes += found.payload;
             }
             Outcome::Missing => report.missing += 1,
-            Outcome::Failed => report.failed_reads += 1,
+            Outcome::Failed(failure) => {
+                report.failed_reads += 1;
+                report.failures.add(failure);
+            }
         }
     }
     report.elapsed_ms = started.elapsed().as_millis();
@@ -380,6 +439,58 @@ mod tests {
             reads: Mutex::new(0),
         });
         run(file, targets).await
+    }
+
+    /// Answers every read with the next error from `errors`.
+    struct FailingFile {
+        errors: Mutex<Vec<ReadError>>,
+    }
+
+    impl ByteSource for FailingFile {
+        fn read(&self, _start: u64, _len: usize) -> ReadFuture<'_> {
+            let err = self.errors.lock().unwrap().pop().unwrap();
+            Box::pin(async move { Err(err) })
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_reads_are_counted_by_cause() {
+        let errors = vec![
+            ReadError::Status(429),
+            ReadError::Timeout,
+            ReadError::Status(503),
+            ReadError::Status(429),
+            ReadError::Connect,
+            ReadError::RangeIgnored,
+            ReadError::Other {
+                stage: "body",
+                detail: String::new(),
+            },
+        ];
+        let positions = (0..errors.len() as u64)
+            .map(|i| BlockPos {
+                cluster: i * 1000,
+                relative: 10,
+            })
+            .collect();
+        let file = Arc::new(FailingFile {
+            errors: Mutex::new(errors),
+        });
+        let report = run(file, targets(2, positions)).await;
+        assert_eq!(report.failed_reads, 7);
+        let mut status = report.failures.status.clone();
+        status.sort_unstable();
+        assert_eq!(status, vec![(429, 2), (503, 1)]);
+        assert_eq!(
+            (
+                report.failures.timeout,
+                report.failures.connect,
+                report.failures.range_ignored,
+                report.failures.other,
+                report.failures.task,
+            ),
+            (1, 1, 1, 1, 0)
+        );
     }
 
     #[tokio::test]

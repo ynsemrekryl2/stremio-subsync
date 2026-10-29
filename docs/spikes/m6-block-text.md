@@ -30,6 +30,7 @@ Log satırı: `m6 blocks kind=… report=BlockReport { … }`.
 | `cue_refs` / `with_cluster` / `with_relative` | İzin cue noktaları; küme ve küme içi konum taşıyanlar |
 | `targets` / `attempted` | Farklı blok konumu; okunmaya çalışılan |
 | `found` / `missing` / `failed_reads` | Blok bulundu / okuma çalıştı ama blok yok / okuma hatası |
+| `failures` | Okuma hatalarının nedeni: `timeout`, `connect`, `status` ((kod, sayı) çiftleri), `range_ignored`, `other`, `task` |
 | `utf8` / `empty` / `laced` / `extended` | Geçerli UTF-8 yük / boş yük / lacing'li blok / ikinci okuma gerekti |
 | `payload_bytes` | Toplam yük (metin) boyutu |
 | `requests` / `bytes_read` / `elapsed_ms` | Blok okumalarının maliyeti (çoklu aralık denemesi hariç) |
@@ -43,8 +44,28 @@ lacing'li yük, dosya sonunu aşan konum). Gerçek dosya henüz yok.
 
 | # | İçerik | İz (codec) | cue_refs | with_relative | found / attempted | utf8 | encoded | istek | bayt | süre | multi_range |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | — | — | — | — | — |
+| 1 | dizi bölümü | SRT | 576 | 576 | 395 / 576 | 395 | hayır | 576 | 407 245 | 53.6 sn | SingleOnly |
+| 2 | dizi bölümü | SRT | 546 | 546 | 328 / 546 | 328 | hayır | 546 | 338 168 | 56.3 sn | SingleOnly |
+| 3 | dizi bölümü | SRT | 527 | 527 | 399 / 527 | 399 | hayır | 527 | 411 369 | 21.8 sn | SingleOnly |
+| 4 | dizi bölümü | SRT | 551 | 551 | 295 / 551 | 295 | hayır | 551 | 304 145 | 29.4 sn | SingleOnly |
+| 5 | dizi bölümü | SRT | 569 | 569 | 267 / 569 | 267 | hayır | 569 | 275 277 | 13.4 sn | SingleOnly |
+
+2026-10-29, Real-Debrid, masaüstü Stremio, ev bağlantısı. `missing`,
+`extended`, `laced` ve `empty` her dosyada 0.
 
 ## Notlar
 
-- (ölçümden sonra doldurulacak)
+- **Konumlar doğru:** başarılı her okumada blok tam Cues'un gösterdiği yerde
+  bulundu (`missing: 0`) ve yükün tamamı geçerli UTF-8 (1684 / 1684). Satır
+  başına ortalama ~32 bayt metin; hiçbir blok 1 KB pencereyi aşmadı.
+- **Çoklu aralık yok:** Real-Debrid tek istekte birden fazla aralığı
+  vermiyor (`SingleOnly`), yani satır başına bir istek gerekiyor: bölüm
+  başına ~550 istek, ~0.3–0.4 MB.
+- **Okumaların %39'u başarısız** (2769 okumanın 1085'i), süre 13–56 sn
+  (16 eşzamanlı istek). `missing` 0 olduğu için sorun konumda değil, istekte;
+  büyük olasılıkla sunucu tarafı sınırlama. Nedeni bu ölçümde kaydedilmedi;
+  rapora `failures` (zaman aşımı / bağlantı / HTTP durum kodu / diğer) eklendi,
+  sonraki ölçümde görünecek.
+- **Çeviri yedeği için ara sonuç:** metin Cues konumlarından okunabiliyor;
+  ama SS-026'dan önce başarısızlıkların nedeni bulunmalı ve tekrar deneme ya
+  da daha düşük eşzamanlılıkla tam okuma sağlanmalı.

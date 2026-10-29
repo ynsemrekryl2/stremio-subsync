@@ -52,8 +52,8 @@ tek "temizle" olup olmadığını göstermez.
 
 ## Gerçek ölçüm
 
-Bekliyor. Gereken: hem SRT hem PGS İngilizce içeren en az bir dosyayı ve
-yalnız PGS içeren bir dosyayı Stremio'da açmak, sonra `pgs-check`.
+2026-10-29: hem SRT hem PGS İngilizce içeren iki dizi bölümü (Real-Debrid,
+masaüstü Stremio). Yalnız PGS içeren dosya henüz açılmadı.
 
 Tutarsa beklenen: SRT + PGS dosyasında bir fazın (büyük olasılıkla `Even`)
 `fix=1/1`, ~0 ms, yüksek isabetle kabulü. Yalnız PGS dosyasında doğru faz
@@ -62,3 +62,27 @@ sayıları karşılaştırılır (adım 3'ün girdisi).
 
 | Tarih | Tür | PGS noktası | Tekrar | Faz | Satır | Medyan | Uzun | Metin satırı | Karar | Fix | İsabet |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-29 | dizi A, iz 6 | 1174 | 0 | Even | 587 | 2419 ms | %0 | 576 / 576 | ACCEPT | 1/1 +0 ms | 1.00 |
+| 2026-10-29 | dizi A, iz 6 | 1174 | 0 | Odd | 586 | 292 ms | %5 | 576 | reject | — | 0.08 |
+| 2026-10-29 | dizi A, iz 6 | 1174 | 0 | Each | 1173 | 1752 ms | %2 | 576 / 576 | ACCEPT | 1/1 +0 ms | 1.00 |
+| 2026-10-29 | dizi A, iz 7 | 1553 | 0 | en iyi: Odd | 776 | 1919 ms | %1 | 576 | reject (Disagree) | 1/1 +83 ms | 0.82 |
+| 2026-10-29 | dizi A, iz 22 | 2467 | 0 | Even | 1233 | 2085 ms | %0 | 576 | reject | — | 0.24 |
+| 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Even | 552 | 1920 ms | %0 | 546 / 523 | ACCEPT | 1/1 +0 ms | 1.00 |
+| 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Odd | 551 | 160 ms | %2 | 546 | reject | — | 0.21 |
+| 2026-10-29 | dizi B, iz 5 | 1104 | 0 | Each | 1103 | 1280 ms | %1 | 546 | ACCEPT (yalnız 1 iz) | 1/1 +0 ms | 1.00 |
+
+Yorum:
+
+- **Hipotez tuttu.** Her dosyanın ilk İngilizce PGS izinde nokta sayısı metin
+  satırının ~2 katı; `Even` fazı (nokta 0–1 = göster–temizle) aynı dosyanın
+  iki metin cetveliyle de `fix=1/1 +0 ms`, isabet 1.00 veriyor. PGS zamanları
+  metin satırlarıyla birebir aynı; tekrar yok.
+- **Faz metin olmadan seçilebilir:** `Even` satır medyanı 1.9–2.4 sn, uzun
+  satır %0; `Odd` (satır araları) medyanı 160–292 ms. Medyanı büyük olan faz
+  doğru faz. `Each` de kabul ediliyor ama her satırı ikiye bölüyor; adım 3
+  için `Even` yeterli.
+- **Her İngilizce PGS izi aynı değil:** A dosyasındaki 7 ve 22 numaralı
+  izler (1553 ve 2467 nokta) metin cetveliyle tutmuyor; muhtemelen SDH,
+  yorum ya da farklı yapı. Kabul testi zaten yanlış cetveli eliyor, bu yüzden
+  adım 3'te her İngilizce PGS izi `Even` fazıyla ayrı bir cetvel olarak
+  denenebilir (metin cetvellerinde olduğu gibi).
