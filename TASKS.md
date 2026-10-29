@@ -90,12 +90,10 @@ kapsamında sürer.
 - **Öncelikler (2026-10-29):** SS-020, SS-024, SS-025, SS-028 bitti → SS-026 çeviri
   yedeği → SS-006
   VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
-  SS-019 CD1/CD2 birleştirme de açık. Bu oturum yalnız dalları toparladı;
-  bu özellikler uygulanmadı.
-- **Çeviri yolu:** SS-028'in kodu `src/blocks.rs`'de hazır; 5+ gerçek SRT/ASS
-  izli dosyada maliyet ölçümü bekleniyor (`docs/spikes/m6-block-text.md`).
-  Sonuca göre SS-026 çeviri yedeği uygulanır. SS-025 PGS yalnız zaman cetveli
-  üretmeyi hedefler; metin çevirisi sağlamaz.
+  SS-019 CD1/CD2 birleştirme de açık.
+- **Çeviri yolu:** SS-028 ölçümü bitti (okuma %96, ~5 blok/sn,
+  `docs/spikes/m6-block-text.md`); sırada SS-026. SS-025 PGS yalnız zaman
+  cetveli üretir, metin çevirisi sağlamaz.
 - **M2 konum ölçümü:** ana ölçüm tablosu `with_relative` sayısını kaydetmedi;
   paralel M2 kaydı 5/5 dosyada bulunduğunu bildiriyor. İki kayıt da
   `docs/spikes/m2-ruler.md` içinde korunur; aynı dosyalar olabilir. Bu kayıt,
