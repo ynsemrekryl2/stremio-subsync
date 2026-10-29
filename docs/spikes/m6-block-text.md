@@ -15,8 +15,10 @@ planda (teslimi geciktirmeden) şunu yapar:
   verisine göre) + küme içi konum. İkisi birden olmayan nokta atlanır.
 - Önce bir kez, ilk 3 bloğun 64 baytı **tek istekte** istenir
   (`Range: bytes=a-b,c-d,e-f`); yalnız yanıtın türü kaydedilir, gövde okunmaz.
-- Sonra her blok için bir Range isteği (16'sı aynı anda, dosya başına en çok
-  4000 blok): kümenin boyut alanı 1–8 bayt olabildiği için 7 + 1024 baytlık
+- Sonra her blok için bir Range isteği (dosya başına en çok 4000 blok).
+  İlk ölçümde 16'sı aynı anda gidiyordu; 2026-10-29'dan beri 4'ü aynı anda,
+  reddedilen ya da düşen okuma (bağlantı, zaman aşımı, 429/5xx) 0.5 / 1.5 /
+  4 sn bekleyip yeniden deneniyor: kümenin boyut alanı 1–8 bayt olabildiği için 7 + 1024 baytlık
   pencere okunur, içinde izin numarası tutan `BlockGroup`/`SimpleBlock`
   aranır. Blok pencereden büyükse ikinci bir okuma yapılır.
 - Metin tutulmaz: yalnız yük boyutu ve geçerli UTF-8 olup olmadığı sayılır.
@@ -33,6 +35,7 @@ Log satırı: `m6 blocks kind=… report=BlockReport { … }`.
 | `failures` | Okuma hatalarının nedeni: `timeout`, `connect`, `status` ((kod, sayı) çiftleri), `range_ignored`, `other`, `task` |
 | `utf8` / `empty` / `laced` / `extended` | Geçerli UTF-8 yük / boş yük / lacing'li blok / ikinci okuma gerekti |
 | `payload_bytes` | Toplam yük (metin) boyutu |
+| `retries` | `requests` içinde bekleyip yeniden denenen istekler |
 | `requests` / `bytes_read` / `elapsed_ms` | Blok okumalarının maliyeti (çoklu aralık denemesi hariç) |
 | `multi_range` | `Multipart` (çoklu aralık çalışıyor) / `SingleOnly` / `Ignored` (200) / `Status(…)` / `Failed` |
 

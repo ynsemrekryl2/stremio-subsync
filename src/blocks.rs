@@ -6,7 +6,7 @@
 //! never kept, logged or returned.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -20,8 +20,15 @@ const SIMPLE_BLOCK: u32 = 0xA3;
 
 /// Blocks read per file at most.
 pub const MAX_BLOCKS: usize = 4000;
-/// Range requests in flight at once.
-pub const CONCURRENCY: usize = 16;
+/// Range requests in flight at once. At 16, Real-Debrid refused ~40% of
+/// the connections (`connect` errors, 2026-10-29).
+pub const CONCURRENCY: usize = 4;
+/// Waits before each new try of a read the server refused or dropped.
+const RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(500),
+    Duration::from_millis(1500),
+    Duration::from_millis(4000),
+];
 /// Bytes read per block; a larger block costs one more request.
 const WINDOW: usize = 1024;
 /// A subtitle block larger than this is taken for a false match.
@@ -101,6 +108,8 @@ pub struct BlockReport {
     pub payload_bytes: usize,
     /// Single-range requests for blocks; the multi-range check is extra.
     pub requests: usize,
+    /// Of those, tries after a refused or dropped read.
+    pub retries: usize,
     pub bytes_read: usize,
     pub elapsed_ms: u128,
     pub multi_range: MultiRange,
@@ -119,6 +128,14 @@ enum Outcome {
     Found(Found),
     Missing,
     Failed(Failure),
+}
+
+/// What reading one block came to, and what it cost.
+struct Read {
+    outcome: Outcome,
+    requests: usize,
+    retries: usize,
+    bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,14 +229,56 @@ fn block_payload(body: &[u8]) -> Option<(&[u8], bool)> {
     Some((body.get(track_len + 3..)?, laced))
 }
 
-async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome, usize, usize) {
-    let start = pos.earliest();
-    let buf = match file.read(start, MAX_EXTRA_SIZE_BYTES + WINDOW).await {
-        Ok(buf) => buf,
-        Err(err) => return (Outcome::Failed((&err).into()), 1, 0),
-    };
+/// Errors worth another try after a pause: the server was busy, not wrong.
+fn retryable(err: &ReadError) -> bool {
+    matches!(
+        err,
+        ReadError::Timeout
+            | ReadError::Connect
+            | ReadError::Other { .. }
+            | ReadError::Status(429 | 500 | 502 | 503 | 504)
+    )
+}
+
+/// Reads once, then once more after each of `delays` while the error is
+/// retryable. Also returns the number of requests made.
+async fn read_patiently(
+    file: &dyn ByteSource,
+    start: u64,
+    len: usize,
+    delays: &[Duration],
+) -> (Result<Vec<u8>, ReadError>, usize) {
     let mut requests = 1;
-    let mut bytes = buf.len();
+    let mut result = file.read(start, len).await;
+    for delay in delays {
+        match &result {
+            Err(err) if retryable(err) => {}
+            _ => break,
+        }
+        tokio::time::sleep(*delay).await;
+        requests += 1;
+        result = file.read(start, len).await;
+    }
+    (result, requests)
+}
+
+async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos, delays: &[Duration]) -> Read {
+    let start = pos.earliest();
+    let (buf, tries) = read_patiently(file, start, MAX_EXTRA_SIZE_BYTES + WINDOW, delays).await;
+    let mut read = Read {
+        outcome: Outcome::Missing,
+        requests: tries,
+        retries: tries - 1,
+        bytes: 0,
+    };
+    let buf = match buf {
+        Ok(buf) => buf,
+        Err(err) => {
+            read.outcome = Outcome::Failed((&err).into());
+            return read;
+        }
+    };
+    read.bytes = buf.len();
     for skip in 0..=MAX_EXTRA_SIZE_BYTES.min(buf.len().saturating_sub(1)) {
         let Some(header) = parse_header(&buf[skip..]) else {
             continue;
@@ -242,12 +301,17 @@ async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome,
         let extended = body.len() < size;
         if extended {
             let more_at = start + (skip + header.len + body.len()) as u64;
-            let more = match file.read(more_at, size - body.len()).await {
+            let (more, tries) = read_patiently(file, more_at, size - body.len(), delays).await;
+            read.requests += tries;
+            read.retries += tries - 1;
+            let more = match more {
                 Ok(more) => more,
-                Err(err) => return (Outcome::Failed((&err).into()), requests + 1, bytes),
+                Err(err) => {
+                    read.outcome = Outcome::Failed((&err).into());
+                    return read;
+                }
             };
-            requests += 1;
-            bytes += more.len();
+            read.bytes += more.len();
             body.extend_from_slice(&more);
         }
         let block = match header.id {
@@ -258,7 +322,7 @@ async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome,
                 .map(|(_, data)| data),
         };
         let Some((payload, laced)) = block.and_then(block_payload) else {
-            return (Outcome::Missing, requests, bytes);
+            return read;
         };
         let found = Found {
             extended,
@@ -266,14 +330,23 @@ async fn read_one(file: &dyn ByteSource, track: u64, pos: BlockPos) -> (Outcome,
             utf8: std::str::from_utf8(payload).is_ok(),
             payload: payload.len(),
         };
-        return (Outcome::Found(found), requests, bytes);
+        read.outcome = Outcome::Found(found);
+        return read;
     }
-    (Outcome::Missing, requests, bytes)
+    read
 }
 
 /// Reads every target block (up to `MAX_BLOCKS`, `CONCURRENCY` at a time)
 /// and asks once whether the server serves several ranges per request.
 pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockReport {
+    run_with(file, targets, &RETRY_DELAYS).await
+}
+
+async fn run_with(
+    file: Arc<dyn ByteSource>,
+    targets: BlockTargets,
+    delays: &'static [Duration],
+) -> BlockReport {
     let started = Instant::now();
     let multi: Vec<(u64, u64)> = targets
         .positions
@@ -296,7 +369,7 @@ pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockRepor
         let track = targets.track;
         tasks.spawn(async move {
             let _permit = permits.acquire_owned().await.ok();
-            read_one(file.as_ref(), track, pos).await
+            read_one(file.as_ref(), track, pos, delays).await
         });
     }
 
@@ -318,19 +391,21 @@ pub async fn run(file: Arc<dyn ByteSource>, targets: BlockTargets) -> BlockRepor
         empty: 0,
         payload_bytes: 0,
         requests: 0,
+        retries: 0,
         bytes_read: 0,
         elapsed_ms: 0,
         multi_range,
     };
     while let Some(joined) = tasks.join_next().await {
-        let Ok((outcome, requests, bytes)) = joined else {
+        let Ok(read) = joined else {
             report.failed_reads += 1;
             report.failures.add(Failure::Task);
             continue;
         };
-        report.requests += requests;
-        report.bytes_read += bytes;
-        match outcome {
+        report.requests += read.requests;
+        report.retries += read.retries;
+        report.bytes_read += read.bytes;
+        match read.outcome {
             Outcome::Found(found) => {
                 report.found += 1;
                 report.extended += usize::from(found.extended);
@@ -476,7 +551,7 @@ mod tests {
         let file = Arc::new(FailingFile {
             errors: Mutex::new(errors),
         });
-        let report = run(file, targets(2, positions)).await;
+        let report = run_with(file, targets(2, positions), &[]).await;
         assert_eq!(report.failed_reads, 7);
         let mut status = report.failures.status.clone();
         status.sort_unstable();
@@ -490,6 +565,72 @@ mod tests {
                 report.failures.task,
             ),
             (1, 1, 1, 1, 0)
+        );
+    }
+
+    /// Refuses the first `refusals` reads, then serves `bytes`.
+    struct BusyFile {
+        bytes: Vec<u8>,
+        refusals: Mutex<usize>,
+        refusal: ReadError,
+    }
+
+    impl ByteSource for BusyFile {
+        fn read(&self, start: u64, len: usize) -> ReadFuture<'_> {
+            let mut left = self.refusals.lock().unwrap();
+            if *left > 0 {
+                *left -= 1;
+                let err = self.refusal.clone();
+                return Box::pin(async move { Err(err) });
+            }
+            let start = (start as usize).min(self.bytes.len());
+            let end = start.saturating_add(len).min(self.bytes.len());
+            let out = self.bytes[start..end].to_vec();
+            Box::pin(async move { Ok(out) })
+        }
+    }
+
+    const NO_WAIT: [Duration; 3] = [Duration::ZERO; 3];
+
+    #[tokio::test]
+    async fn refused_reads_are_tried_again() {
+        let (bytes, positions) = file_with(&[group(2, b"Hello there.")], 1);
+        let file = Arc::new(BusyFile {
+            bytes,
+            refusals: Mutex::new(2),
+            refusal: ReadError::Connect,
+        });
+        let report = run_with(file, targets(2, positions), &NO_WAIT).await;
+        assert_eq!((report.found, report.failed_reads), (1, 0));
+        assert_eq!((report.requests, report.retries), (3, 2));
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_the_last_wait() {
+        let (bytes, positions) = file_with(&[group(2, b"Hello there.")], 1);
+        let file = Arc::new(BusyFile {
+            bytes,
+            refusals: Mutex::new(10),
+            refusal: ReadError::Status(503),
+        });
+        let report = run_with(file, targets(2, positions), &NO_WAIT).await;
+        assert_eq!((report.found, report.failed_reads), (0, 1));
+        assert_eq!(report.failures.status, vec![(503, 1)]);
+        assert_eq!((report.requests, report.retries), (4, 3));
+    }
+
+    #[tokio::test]
+    async fn a_wrong_answer_is_not_tried_again() {
+        let (bytes, positions) = file_with(&[group(2, b"Hello there.")], 1);
+        let file = Arc::new(BusyFile {
+            bytes,
+            refusals: Mutex::new(1),
+            refusal: ReadError::Status(404),
+        });
+        let report = run_with(file, targets(2, positions), &NO_WAIT).await;
+        assert_eq!(
+            (report.failed_reads, report.requests, report.retries),
+            (1, 1, 0)
         );
     }
 
