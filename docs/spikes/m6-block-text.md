@@ -54,6 +54,8 @@ lacing'li yük, dosya sonunu aşan konum). Gerçek dosya henüz yok.
 | 5 | dizi bölümü | SRT | 569 | 569 | 267 / 569 | 267 | hayır | 569 | 275 277 | 13.4 sn | SingleOnly |
 | 6 | film | SRT | 1835 | 1835 | 990 / 1835 | 990 | hayır | 1835 | 1 020 690 | 202.0 sn | SingleOnly |
 | 7 | film | SRT | 2022 | 2022 | 818 / 2022 | 818 | hayır | 2022 | 843 358 | 134.0 sn | SingleOnly |
+| 8 | film | SRT | 2137 | 2137 | 592 / 2137 | 592 | hayır | 2137 | 610 352 | 73.2 sn | SingleOnly |
+| 9 | bölüm (4 eşzamanlı + tekrar deneme) | ASS | 6622 | 6622 | **3842 / 4000** | 3842 | hayır | 4600 (600 tekrar) | 3 961 102 | 734.9 sn | SingleOnly |
 
 2026-10-29, Real-Debrid, masaüstü Stremio, ev bağlantısı. `missing`,
 `extended`, `laced` ve `empty` her dosyada 0.
@@ -75,6 +77,17 @@ lacing'li yük, dosya sonunu aşan konum). Gerçek dosya henüz yok.
   hiç yok. Sunucu yeni bağlantıları kabul etmiyor: 16 eşzamanlı istek
   Real-Debrid'in dosya ya da IP başına bağlantı sınırını aşıyor olabilir.
   Filmde süre 2–3.5 dakika.
+- **Düzeltmeden sonra (9):** 4 eşzamanlı istek ve bekleyip tekrar deneme
+  ile okumaların **%96'sı** başarılı (öncesi %28–61). İlk denemede reddedilen
+  istek yine %13 (4600 isteğin 600'ü tekrar); 158 blok üç tekrardan sonra da
+  `connect` ile kaldı. Bedeli hız: saniyede ~5.4 blok. Bu bölümün en kalabalık
+  izi tabela/şarkı dahil 6622 parçalı bir ASS izi; yalnız ilk 4000 blok
+  okundu, 12 dakika sürdü. Diyalog izi seçilseydi (~335 satır) ~1 dakika.
+- **Tahmini maliyet (düzeltmeden sonra):** ~550 satırlık bölüm ~1.5–2 dk,
+  ~2000 satırlık film ~6–7 dk, satır başına ~1 KB okuma.
 - **Çeviri yedeği için ara sonuç:** metin Cues konumlarından okunabiliyor;
-  ama SS-026'dan önce tam okuma sağlanmalı: daha düşük eşzamanlılık, bağlantı
-  yeniden kullanımı ve `connect` hatasında bekleyip tekrar deneme ölçülmeli.
+  düşük eşzamanlılık ve tekrar denemeyle okuma %96'ya çıktı. SS-026 için
+  açık kalanlar: (1) çeviri için metin izi diyalog izi olmalı, tabela/şarkı
+  izi değil; (2) kalan ~%4 blok için ikinci tur ya da satırı boş bırakma;
+  (3) filmde dakikalar sürdüğü için ilk istekte arka planda başlatma
+  (kararda zaten öyle).

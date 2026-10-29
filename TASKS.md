@@ -67,7 +67,7 @@ kapsamında sürer.
 > `docs/decisions.md` (çeviri yedeği). Önce SS-028 ile blokların gerçekten
 > okunabildiği ve maliyeti ölçülür. PGS cetveli (SS-025) ayrı bir iştir.
 
-- [~] **SS-028** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya). 2026-10-29: 5 bölümde konumlar doğru (`missing` 0, bulunan yükün tamamı UTF-8), RD çoklu aralık vermiyor; ama okumaların %39'u başarısız, 13–56 sn. İki filmde başarısızlıkların %97'si `connect` (bağlantı reddi, HTTP hata kodu yok), süre 2–3.5 dk. Sırada: düşük eşzamanlılık / bağlantı yeniden kullanımı / bekleyip tekrar deneme ölçümü
+- [x] **SS-028** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya). 2026-10-29: 5 bölümde konumlar doğru (`missing` 0, bulunan yükün tamamı UTF-8), RD çoklu aralık vermiyor; ama okumaların %39'u başarısız, 13–56 sn. İki filmde başarısızlıkların %97'si `connect` (bağlantı reddi). Düzeltme (4 eşzamanlı istek, 0.5/1.5/4 sn bekleyip tekrar) sonrası bir bölümde 4000 bloğun %96'sı okundu, saniyede ~5.4 blok (bölüm ~1.5–2 dk, film ~6–7 dk). **Sonuç: metin Cues konumlarından okunabiliyor; SS-026'ya geçilebilir** (diyalog izi seçimi ve kalan ~%4 blok orada ele alınır)
 - [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri
 
 ## Bakım
@@ -88,7 +88,7 @@ kapsamında sürer.
   yok/okunamıyor. Türkçe aday 38 aramanın 35'inde bulundu. Kaynak ve örneklem
   sınırları: `docs/spikes/m4-align.md`, “Kapsama”.
 - **Öncelikler (2026-10-29):** SS-020 bitti → SS-025 adım 3 (yalnız PGS
-  dosyada PGS cetveli) → SS-028 blok okuma hatası (`connect`) → SS-006
+  dosyada PGS cetveli) → SS-026 çeviri yedeği (SS-028 bitti) → SS-006
   VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
   SS-019 CD1/CD2 birleştirme de açık. Bu oturum yalnız dalları toparladı;
   bu özellikler uygulanmadı.
