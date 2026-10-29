@@ -1013,6 +1013,13 @@ mod tests {
         assert!(report.rulers.0.is_empty());
         let printed = format!("{report:?}");
         assert!(printed.contains("pgs: [(2, 3)]"), "{printed}");
+        // The dashboard reads tracks from this line; keep the field order.
+        assert!(
+            printed.contains(
+                r#"SubTrack { number: 2, codec: Pgs, lang: "eng", english: true, default: true, forced: false, cue_points: 3,"#
+            ),
+            "{printed}"
+        );
         assert!(!printed.contains("2500"), "{printed}");
     }
 

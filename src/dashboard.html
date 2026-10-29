@@ -42,6 +42,9 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .steps { display: flex; flex-wrap: wrap; gap: 6px; }
 .step { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); }
 .step.ok { color: var(--ok); } .step.warn { color: var(--warn); } .step.bad { color: var(--bad); }
+.step.pgs { color: var(--accent); }
+.tracks { align-items: baseline; }
+.legend { font-size: 12px; margin: -4px 0 8px; }
 .tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
 .tools button, .tools input { font: inherit; font-size: 12px; color: var(--text); background: var(--chip);
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
@@ -69,6 +72,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
     <div class="card"><b id="c-requests">0</b><span>altyazı isteği</span></div>
     <div class="card"><b id="c-cached">0</b><span>cache'ten cevap</span></div>
     <div class="card"><b id="c-match">0</b><span>dosya eşleşti (ad / boyut)</span></div>
+    <div class="card"><b id="c-mkv">0</b><span>MKV okundu</span></div>
     <div class="card"><b id="c-ruler">0</b><span>metin cetveli bulundu</span></div>
     <div class="card"><b id="c-accepted">0</b><span>kabul edilen aday</span></div>
     <div class="card"><b id="c-notice">0</b><span>sebep bildirimi</span></div>
@@ -76,6 +80,9 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 
   <section>
     <h2>Son istekler</h2>
+    <p class="legend muted">Gömülü altyazılar: <span class="step ok">cetvel ✓</span> İngilizce metin, senkron için kullanılır ·
+      <span class="step pgs">PGS ölçülür</span> İngilizce resim altyazı, şimdilik yalnız kaydedilir ·
+      <span class="step warn">dizinsiz</span> dosyanın dizininde yok, okunamaz</p>
     <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok.</div></div>
   </section>
 
@@ -101,7 +108,7 @@ const NOTICES = {
 };
 const MAX_ROWS = 1000, MAX_REQUESTS = 15;
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
-  paused: false, filter: "", counts: { requests: 0, cached: 0, match: 0, ruler: 0, accepted: 0, notice: 0 } };
+  paused: false, filter: "", counts: { requests: 0, cached: 0, match: 0, mkv: 0, ruler: 0, accepted: 0, notice: 0 } };
 const $ = (id) => document.getElementById(id);
 
 function time(ms) {
@@ -112,6 +119,36 @@ function step(text, kind) {
   el.className = "step " + (kind || "");
   el.textContent = text;
   return el;
+}
+
+const LANGS = { eng: "İng.", en: "İng.", tur: "Tür.", tr: "Tür." };
+const CODECS = { Srt: "SRT", Ass: "ASS", WebVtt: "VTT", OtherText: "metin", Pgs: "PGS", VobSub: "VobSub", Other: "?" };
+const TEXT = new Set(["Srt", "Ass", "WebVtt", "OtherText"]);
+
+/** Whether the matched file could be read and is an MKV. */
+function fileState(line) {
+  if (/range: None/.test(line)) return ["dosya açılmadı", "warn"];
+  if (/range: Some\(Err/.test(line)) return ["dosya okunamadı", "bad"];
+  if (/ebml_magic: false/.test(line)) return ["MKV değil", "bad"];
+  if (/mkv: Some\(Ok/.test(line)) return ["MKV ✓", "ok"];
+  if (/mkv: Some\(Err/.test(line)) return ["MKV okunamadı", "bad"];
+  return ["MKV ?", "warn"];
+}
+
+/** Embedded subtitle tracks: language, format, and whether Cues index them.
+ *  `use` says what SubSync can do with the track. */
+function tracksOf(line) {
+  const re = /SubTrack \{ number: (\d+), codec: (\w+), lang: "([^"]*)", english: (\w+), default: \w+, forced: (\w+), cue_points: (\d+)/g;
+  return [...line.matchAll(re)].map(([, , codec, lang, english, forced, points]) => {
+    const en = english === "true", indexed = Number(points) > 0;
+    let use = "";
+    if (en && TEXT.has(codec)) use = indexed ? "ruler" : "unindexed";
+    else if (en && codec === "Pgs") use = indexed ? "pgs" : "unindexed";
+    return {
+      label: (LANGS[lang.toLowerCase()] || lang.toUpperCase() || "?") + " " + (CODECS[codec] || codec),
+      forced: forced === "true", indexed, use,
+    };
+  });
 }
 
 /** Folds one event into the request it belongs to; lines carry no request id,
@@ -127,13 +164,17 @@ function track(ev) {
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
     return;
   }
-  const req = state.requests.find((r) => !r[ev.area]);
+  // Alignment and dump lines can repeat; they belong to the latest request
+  // whose menu is not ready yet.
+  const repeats = ev.area === "m4" || ev.area === "dump";
+  const req = state.requests.find((r) => (repeats ? !r.menu : !r[ev.area]));
   const add = (text, kind) => { if (req) { req[ev.area] = true; req.steps.push([text, kind]); } };
   if (ev.area === "served") {
     const from = (line.match(/from=(\w+)/) || [])[1];
     const offered = (line.match(/offered=(\d+)/) || [])[1];
     if (from === "memory" || from === "disk") c.cached++;
-    const label = { memory: "bellekten", disk: "diskten", probes: "yeni", none: "boş" }[from] || from;
+    const label = { memory: "bellekten, dosya yeniden okunmadı", disk: "diskten, dosya yeniden okunmadı",
+      probes: "yeni", none: "boş" }[from] || from;
     add("cevap: " + label + ", " + offered + " girdi", offered > 0 ? "ok" : "warn");
   } else if (ev.area === "k2") {
     if (/NoHints/.test(line)) return add("dosya: ipucu yok", "bad");
@@ -141,14 +182,14 @@ function track(ev) {
     const by = (line.match(/matched_by: Some\((\w+)\)/) || [])[1];
     if (by) c.match++;
     add(by ? "dosya: eşleşti (" + (by === "Both" ? "ad + boyut" : "yalnız boyut") + ")" : "dosya: eşleşmedi", by ? "ok" : "bad");
-    const rulers = line.match(/rulers: \[([^\]]*)\]/);
-    if (rulers) {
-      const n = (rulers[1].match(/\(/g) || []).length;
-      if (n) c.ruler++;
-      req && req.steps.push([n ? "metin cetveli: " + n + " iz" : "metin cetveli yok", n ? "ok" : "warn"]);
-    }
-    const pgs = line.match(/pgs: \[([^\]]*)\]/);
-    if (pgs && pgs[1].trim()) req && req.steps.push(["PGS: " + (pgs[1].match(/\(/g) || []).length + " iz", ""]);
+    if (!by || !req) return;
+    const file = fileState(line);
+    if (file[1] === "ok") c.mkv++;
+    req.steps.push(file);
+    if (file[1] !== "ok") return;
+    req.tracks = tracksOf(line);
+    if (!/cues: Read/.test(line)) req.steps.push(["altyazı dizini okunamadı", "warn"]);
+    if (/rulers: \[\(/.test(line)) c.ruler++;
   } else if (ev.area === "m3") {
     const found = [...line.matchAll(/Ok\((\d+)\)/g)].reduce((s, m) => s + Number(m[1]), 0);
     add("aday: " + found + " bulundu", found ? "ok" : "warn");
@@ -197,6 +238,21 @@ function renderRequests() {
     steps.append(...r.steps.map(([t, k]) => step(t, k)));
     if (!r.steps.length) steps.append(step("bekleniyor…", "warn"));
     el.append(top, steps);
+    if (r.tracks) {
+      const row = document.createElement("div");
+      row.className = "steps tracks";
+      const title = document.createElement("span");
+      title.className = "muted";
+      title.textContent = "Gömülü altyazılar:";
+      row.append(title);
+      if (!r.tracks.length) row.append(step("yok", "bad"));
+      for (const t of r.tracks) {
+        const note = { ruler: "cetvel ✓", pgs: "PGS ölçülür", unindexed: "dizinsiz" }[t.use];
+        const kind = { ruler: "ok", pgs: "pgs", unindexed: "warn" }[t.use] || "";
+        row.append(step(t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : ""), kind));
+      }
+      el.append(row);
+    }
     return el;
   }));
 }
