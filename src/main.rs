@@ -6,6 +6,7 @@ mod extra;
 mod label;
 mod menu;
 mod mkv;
+mod pgs;
 mod range;
 mod rank;
 mod ruler;
@@ -26,12 +27,20 @@ const MIN_TOKEN_LEN: usize = 32;
 
 #[tokio::main]
 async fn main() {
-    // `stremio-subsync calibrate [dir]` replays saved dumps; no server.
+    // `stremio-subsync calibrate [dir]` replays saved dumps and
+    // `stremio-subsync pgs-check [dir]` checks saved PGS times; no server.
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("calibrate") {
-        let dir = args.next().unwrap_or_else(|| "dumps".to_owned());
-        if let Err(err) = dump::calibrate(std::path::Path::new(&dir)) {
-            eprintln!("calibrate {dir}: {err}");
+    let command = args.next();
+    type Offline = fn(&std::path::Path) -> std::io::Result<()>;
+    let offline: Option<(&str, &str, Offline)> = match command.as_deref() {
+        Some("calibrate") => Some(("calibrate", "dumps", dump::calibrate)),
+        Some("pgs-check") => Some(("pgs-check", "dumps/pgs", pgs::check)),
+        _ => None,
+    };
+    if let Some((name, default_dir, run)) = offline {
+        let dir = args.next().unwrap_or_else(|| default_dir.to_owned());
+        if let Err(err) = run(std::path::Path::new(&dir)) {
+            eprintln!("{name} {dir}: {err}");
             std::process::exit(1);
         }
         return;

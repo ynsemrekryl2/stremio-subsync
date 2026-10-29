@@ -37,7 +37,7 @@ pub struct RulerReport {
     pub overlaps: usize,
 }
 
-fn ticks_to_ms(ticks: u64, scale_ns: u64) -> u64 {
+pub(crate) fn ticks_to_ms(ticks: u64, scale_ns: u64) -> u64 {
     let ms = u128::from(ticks) * u128::from(scale_ns) / 1_000_000;
     u64::try_from(ms).unwrap_or(u64::MAX)
 }

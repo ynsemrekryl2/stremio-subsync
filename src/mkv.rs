@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::blocks::{BlockPos, BlockTargets};
+use crate::pgs::PgsTrack;
 use crate::range::{ByteSource, ReadError};
 use crate::ruler::{self, CueRef, Event, RulerReport};
 
@@ -141,6 +142,8 @@ pub struct MkvReport {
     pub rulers: Rulers,
     /// Where the chosen ruler track's blocks sit, for the M6 block probe.
     pub blocks: Option<BlockTargets>,
+    /// Cue times of every indexed English PGS track (SS-025).
+    pub pgs: Vec<PgsTrack>,
 }
 
 /// Event times of every indexed English text track, the chosen ruler track
@@ -573,6 +576,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
     let mut ruler_report = None;
     let mut rulers = Rulers::default();
     let mut blocks = None;
+    let mut pgs = Vec::new();
     let cues = match cues {
         Ok((bytes, (points, per_track))) => {
             for sub in &mut subtitles {
@@ -610,6 +614,7 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
                     rulers.0.push((number, events));
                 }
             }
+            pgs = english_pgs(&subtitles, &per_track, scale);
             CuesState::Read {
                 bytes,
                 points,
@@ -643,7 +648,31 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> MkvOutcome {
         ruler: ruler_report,
         rulers,
         blocks,
+        pgs,
     })
+}
+
+/// Cue times of indexed English PGS tracks, in Cues order with repeats kept.
+fn english_pgs(
+    subtitles: &[SubTrack],
+    per_track: &HashMap<u64, Vec<CueRef>>,
+    scale: u64,
+) -> Vec<PgsTrack> {
+    subtitles
+        .iter()
+        .filter(|s| s.english && s.codec == Codec::Pgs)
+        .filter_map(|s| {
+            let refs = per_track.get(&s.number)?;
+            Some(PgsTrack {
+                track: s.number,
+                forced: s.forced,
+                times: refs
+                    .iter()
+                    .map(|r| ruler::ticks_to_ms(r.time, scale))
+                    .collect(),
+            })
+        })
+        .collect()
 }
 
 /// Absolute block positions of one track's cue points that carry both a
@@ -957,6 +986,34 @@ mod tests {
             .collect();
         assert_eq!(counts, vec![(3, 2), (2, 1)]);
         assert_eq!(format!("{:?}", report.rulers), "[(3, 2), (2, 1)]");
+    }
+
+    #[tokio::test]
+    async fn english_pgs_cue_times_are_kept_in_order_with_repeats() {
+        let mut tracks = track(1, TRACK_TYPE_VIDEO, "V", None);
+        tracks.extend(track(2, TRACK_TYPE_SUBTITLE, "S_HDMV/PGS", Some("eng")));
+        tracks.extend(track(3, TRACK_TYPE_SUBTITLE, "S_HDMV/PGS", Some("tur")));
+        tracks.extend(track(4, TRACK_TYPE_SUBTITLE, "S_HDMV/PGS", Some("eng")));
+        // Scale 10 ms per tick; track 4 has no cue points.
+        let mut body = el(INFO, &uint_el(TIMESTAMP_SCALE, 10_000_000));
+        body.extend(el(TRACKS, &tracks));
+        let mut cues = cue_point(0, &[1]);
+        cues.extend(cue_point(100, &[2, 3]));
+        cues.extend(cue_point(250, &[2]));
+        cues.extend(cue_point(250, &[2]));
+        body.extend(el(CUES, &cues));
+        let mut file = el(EBML, &[]);
+        file.extend(el(SEGMENT, &body));
+
+        let mem = MemFile::new(file.clone());
+        let report = inspect(&mem, &file).await.unwrap();
+        assert_eq!(report.pgs.len(), 1);
+        assert_eq!(report.pgs[0].track, 2);
+        assert_eq!(report.pgs[0].times, vec![1_000, 2_500, 2_500]);
+        assert!(report.rulers.0.is_empty());
+        let printed = format!("{report:?}");
+        assert!(printed.contains("pgs: [(2, 3)]"), "{printed}");
+        assert!(!printed.contains("2500"), "{printed}");
     }
 
     #[test]

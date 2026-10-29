@@ -428,6 +428,31 @@ fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>
     }
 }
 
+/// Saves English PGS cue times under `<dump dir>/pgs` (SS-025), whether or
+/// not the file has a text ruler. Only Cues already read are used, so this
+/// adds no media requests.
+async fn save_pgs(state: &AppState, kind: &str, k2: Option<&streams::ProbeOutcome>) {
+    let Some(dir) = state.dump_dir.as_ref().map(|dir| dir.join("pgs")) else {
+        return;
+    };
+    let Some(streams::ProbeOutcome::Matched { mkv: Some(mkv), .. }) = k2 else {
+        return;
+    };
+    let Ok(report) = &**mkv else {
+        return;
+    };
+    if report.pgs.is_empty() {
+        return;
+    }
+    let mut saved = Dump::new(kind, &report.rulers.0, &[], &[]);
+    saved.pgs = report.pgs.clone();
+    match tokio::task::spawn_blocking(move || dump::write(&dir, &saved)).await {
+        Ok(Ok(name)) => eprintln!("pgs dump written file={name}"),
+        Ok(Err(err)) => eprintln!("pgs dump failed error={:?}", err.kind()),
+        Err(_) => eprintln!("pgs dump failed error=task"),
+    }
+}
+
 /// K2 and M3 probes side by side, then alignment, the timing dump and the
 /// menu: accepted subtitles, or in labeling mode every candidate, marked.
 /// A missing ruler answers at once, without waiting for M3.
@@ -466,6 +491,7 @@ async fn build_menu(
         }
         None => None,
     };
+    save_pgs(state, &kind, k2.as_ref()).await;
     let rulers = match rulers_of(k2) {
         Ok(rulers) => rulers,
         Err(notice) => {
@@ -701,7 +727,8 @@ mod tests {
     }
 
     /// All metadata is in the head; the only later read can be the block probe.
-    fn probe_head() -> Vec<u8> {
+    /// With `pgs`, the file is image-only: one English PGS track, indexed.
+    fn probe_head(pgs: bool) -> Vec<u8> {
         fn el(id: u32, data: &[u8]) -> Vec<u8> {
             let bytes = id.to_be_bytes();
             let skip = bytes.iter().take_while(|&&b| b == 0).count();
@@ -711,33 +738,41 @@ mod tests {
             out.extend_from_slice(data);
             out
         }
+        let codec: &[u8] = if pgs { b"S_HDMV/PGS" } else { b"S_TEXT/UTF8" };
         let track = el(
             0xAE,
             &[
                 el(0xD7, &[2]),
                 el(0x83, &[17]),
-                el(0x86, b"S_TEXT/UTF8"),
+                el(0x86, codec),
                 el(0x22B59C, b"eng"),
             ]
             .concat(),
         );
-        let cue = el(
-            0xBB,
-            &[
-                el(0xB3, &[0]),
-                el(
-                    0xB7,
-                    &[
-                        el(0xF7, &[2]),
-                        el(0xB2, &[100]),
-                        el(0xF1, &[0]),
-                        el(0xF0, &[0]),
-                    ]
-                    .concat(),
-                ),
-            ]
-            .concat(),
-        );
+        let cue_at = |time: u8| {
+            el(
+                0xBB,
+                &[
+                    el(0xB3, &[time]),
+                    el(
+                        0xB7,
+                        &[
+                            el(0xF7, &[2]),
+                            el(0xB2, &[100]),
+                            el(0xF1, &[0]),
+                            el(0xF0, &[0]),
+                        ]
+                        .concat(),
+                    ),
+                ]
+                .concat(),
+            )
+        };
+        let cue = if pgs {
+            [cue_at(10), cue_at(20), cue_at(20)].concat()
+        } else {
+            cue_at(0)
+        };
         [
             el(0x1A45DFA3, &el(0x4282, b"matroska")),
             el(
@@ -773,7 +808,8 @@ mod tests {
         }
     }
 
-    struct ProbeRange(Arc<tokio::sync::Notify>);
+    /// Serves `probe_head`; `.1` makes it the image-only file.
+    struct ProbeRange(Arc<tokio::sync::Notify>, bool);
 
     impl RangeReader for ProbeRange {
         fn open<'a>(
@@ -782,7 +818,7 @@ mod tests {
             _host: &'a str,
             _size: Option<u64>,
         ) -> crate::range::OpenFuture<'a> {
-            let head = probe_head();
+            let head = probe_head(self.1);
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_RANGE,
@@ -810,7 +846,7 @@ mod tests {
             AppState::new(TOKEN.to_owned())
                 .unwrap()
                 .with_stream_source(Arc::new(ProbeStream))
-                .with_range_reader(Arc::new(ProbeRange(read.clone())))
+                .with_range_reader(Arc::new(ProbeRange(read.clone(), false)))
                 .with_subtitle_sources(
                     vec![Arc::new(SignalSubtitles(Mutex::new(None)))],
                     "tur".to_owned(),
@@ -830,6 +866,50 @@ mod tests {
             .await
             .expect("the request must also trigger the background block probe");
         assert_eq!(call(&app, uri).await.1, body);
+    }
+
+    #[tokio::test]
+    async fn image_only_file_saves_pgs_times_and_says_why() {
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-pgs-dump-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    true,
+                )))
+                .with_subtitle_sources(
+                    vec![Arc::new(SignalSubtitles(Mutex::new(None)))],
+                    "tur".to_owned(),
+                )
+                .with_dump_dir(dir.clone()),
+        );
+        let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
+        let (status, body) = call(&app, uri).await;
+        assert_eq!(status, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(list["subtitles"][0]["lang"], "⚠ İng. resim");
+        let saved: Vec<_> = std::fs::read_dir(dir.join("pgs"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(saved.len(), 1);
+        let json = std::fs::read_to_string(&saved[0]).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"movie","rulers":[],"candidates":[],"pgs":[{"track":2,"forced":false,"times":[10,20,20]}]}"#
+        );
+        // No alignment dump: there was nothing to align.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     async fn call(app: &Router, uri: String) -> (StatusCode, String) {

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::align::{self, Trial};
+use crate::pgs::PgsTrack;
 use crate::ruler::Event;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +22,9 @@ pub struct Dump {
     pub rulers: Vec<RulerTrack>,
     /// In download order, best ranked first; `None` where a download failed.
     pub candidates: Vec<Option<CandidateTimes>>,
+    /// English PGS cue times (SS-025); only in PGS dumps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pgs: Vec<PgsTrack>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +76,7 @@ impl Dump {
                     })
                 })
                 .collect(),
+            pgs: Vec::new(),
         }
     }
 
@@ -234,6 +239,10 @@ mod tests {
         assert_eq!(back.candidates[0].as_ref().unwrap().score, Some(40));
         // Only numbers and the kind: no text fields to leak.
         assert!(!json.contains("\"name\"") && !json.contains("\"url\""));
+        // Alignment dumps carry no PGS field, and older dumps still read.
+        assert!(!json.contains("pgs"), "{json}");
+        let old = r#"{"kind":"movie","rulers":[],"candidates":[]}"#;
+        assert!(serde_json::from_str::<Dump>(old).unwrap().pgs.is_empty());
     }
 
     #[test]
