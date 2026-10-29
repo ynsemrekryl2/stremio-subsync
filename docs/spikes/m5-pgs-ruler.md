@@ -117,6 +117,14 @@ metin cetvelleri gibi her adayla denenir; kabul testi aynıdır. Log satırı:
 izi de yoksa menü "⚠ İng. resim" der.
 
 Kanıt: `pgs::tests::pgs_ruler_aligns_a_candidate_like_the_text_ruler`
-(sentetik: PGS cetveli metin cetveliyle aynı fix'i veriyor). Gerçek dosyada
-kabul edilen altyazı bekleniyor.
+(sentetik: PGS cetveli metin cetveliyle aynı fix'i veriyor).
+
+Gerçek dosya (2026-10-29): daha önce "⚠ İng. resim" alan yalnız PGS film E.
+7 PGS izinden cetvel kuruldu (355–1661 satır). 3 Türkçe adaydan biri (246
+satır) iz 8, 10 ve 12 cetvelleriyle `1/1, +19.2 sn` kaydırmayla kabul edildi
+(isabet %59–69, baş / orta / son kapsama 0.60–0.74 / 0.52–0.54); başka bir
+aday (yarım, CD1 benzeri) de +20.1 sn buldu ama son pencerede kapsama 0
+olduğu için ret aldı. İz 47 (1661 satır, muhtemelen SDH ya da yorum) hiçbir
+adayı kabul etmedi. Menüde 1 altyazı sunuldu; **kullanıcı: başta, ortada ve
+sonda senkron.**
 
