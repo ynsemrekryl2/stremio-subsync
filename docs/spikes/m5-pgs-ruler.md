@@ -73,6 +73,11 @@ sayıları karşılaştırılır (adım 3'ün girdisi).
 | 2026-10-29 | film C, iz 6 | 4148 | 0 | Even | 2074 | 1835 ms | %0 | 2137 / 1358 | ACCEPT | 1/1 +7 ms / −21 ms | 0.86 / 0.84 |
 | 2026-10-29 | film C, iz 6 | 4148 | 0 | Odd | 2073 | 84 ms | %1 | 2137 / 1358 | reject | — | 0.22 |
 | 2026-10-29 | film C, iz 6 | 4148 | 0 | Each | 4147 | 1209 ms | %0 | 2137 / 1358 | reject | — | 0.31 / 0.34 |
+| 2026-10-29 | dizi D, iz 11 / 12 | 676 / 649 | 0 | Even | 338 / 324 | 2336 / 2377 ms | %0 | 905 (ASS, tabela dahil) | reject `Sparse` | 1/1 −10 / +4 ms | 1.00 |
+| 2026-10-29 | film E (yalnız PGS), 7 iz | 710–3322 | 0 | Even | 355–1661 | 2002–2877 ms | %0 | yok | — | — | — |
+| 2026-10-29 | film E (yalnız PGS), 7 iz | 710–3322 | 0 | Odd | 354–1660 | 83–1459 ms | %0–19 | yok | — | — | — |
+| 2026-10-29 | film F (yalnız PGS), 2 iz | 948 / 1490 | 0 | Even | 474 / 745 | 1835 / 1877 ms | %0 | yok | — | — | — |
+| 2026-10-29 | film F (yalnız PGS), 2 iz | 948 / 1490 | 0 | Odd | 473 / 744 | 1460 / 1835 ms | %15 / %17 | yok | — | — | — |
 
 Yorum:
 
@@ -87,6 +92,15 @@ Yorum:
 - **Filmde de tutuyor:** C'nin PGS izi (2074 satır) iki farklı metin iziyle
   (2137 ve 1358 satır, biri muhtemelen SDH) ~0 ms ile kabul; isabet 0.84–0.86,
   çünkü izlerin satır bölümlemesi birebir aynı değil.
+- **Yalnız PGS dosyalarda faz seçimi (E, F):** `Even` her izde uzun satır
+  %0, medyan 1.8–2.9 sn. `Odd` medyanı E'nin bazı izlerinde ve F'de `Even`'e
+  yakın (F iz 4: 1835 / 1877 ms), ama uzun satır payı %15–19. Medyan tek
+  başına yetmiyor; ayırt eden uzun satır payı. Metinle doğrulanan 4 dosyanın
+  hepsinde doğru faz `Even` olduğundan adım 3 doğrudan `Even` kullanır.
+- **D (ASS + PGS):** PGS `Even` satırları ASS izinin tabela/şarkı dahil
+  905 olayıyla ~0 ms ve isabet 1.00 ile örtüşüyor; ret yalnız `Sparse`
+  (PGS'te satır daha az). Diyalog-yalnız metin izleri (332 / 337 satır) ile
+  PGS (338 / 324) aynı ölçekte.
 - **Her İngilizce PGS izi aynı değil:** A dosyasındaki 7 ve 22 numaralı
   izler (1553 ve 2467 nokta) metin cetveliyle tutmuyor; muhtemelen SDH,
   yorum ya da farklı yapı. Kabul testi zaten yanlış cetveli eliyor, bu yüzden
