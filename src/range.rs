@@ -13,6 +13,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::mp4::{self, Container};
+
 /// How much of the file one probe may read.
 pub const HEAD_BYTES: usize = 64 * 1024;
 const MAX_REDIRECTS: usize = 5;
@@ -110,6 +112,8 @@ pub struct RangeReport {
     pub bytes_read: usize,
     /// First bytes are the EBML header, so the file is Matroska.
     pub ebml_magic: bool,
+    /// What the first bytes say the file is (SS-032).
+    pub container: Container,
     pub elapsed_ms: u128,
 }
 
@@ -138,6 +142,7 @@ pub fn analyze(
         content: content_kind(headers),
         bytes_read: body.len(),
         ebml_magic: body.starts_with(&EBML_MAGIC),
+        container: mp4::sniff(body),
         elapsed_ms,
     }
 }
@@ -541,6 +546,7 @@ mod tests {
                 content: ContentKind::Matroska,
                 bytes_read: HEAD_BYTES,
                 ebml_magic: true,
+                container: Container::Matroska,
                 elapsed_ms: 120,
             }
         );
@@ -564,6 +570,7 @@ mod tests {
         assert_eq!(report.size_matches, Some(false));
         assert_eq!(report.content, ContentKind::OctetStream);
         assert!(!report.ebml_magic);
+        assert_eq!(report.container, Container::Unknown);
     }
 
     #[test]

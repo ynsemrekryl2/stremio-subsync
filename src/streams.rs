@@ -16,6 +16,7 @@ use crate::blocks;
 use crate::events::event;
 use crate::extra::PlaybackHints;
 use crate::mkv::{self, MkvOutcome};
+use crate::mp4::{self, Container, Mp4Outcome};
 use crate::range::{ByteSource, Opened, RangeOutcome, RangeReader};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -193,6 +194,9 @@ pub enum ProbeOutcome {
         /// Tracks and Cues of the matched file; only after a partial read
         /// that starts with the EBML header.
         mkv: Option<Box<MkvOutcome>>,
+        /// Tracks and text-track times of an MP4; only after a partial read
+        /// that starts like one (SS-032).
+        mp4: Option<Box<Mp4Outcome>>,
     },
     Failed {
         elapsed_ms: u128,
@@ -221,13 +225,18 @@ pub async fn probe(
         Err(error) => return ProbeOutcome::Failed { elapsed_ms, error },
     };
     let (report, single) = match_streams(hints, &streams, source.host());
-    let (range, mkv) = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
+    let (range, mkv, mp4) = match (range, report.target, single.and_then(|s| s.url.as_deref())) {
         (Some(reader), Some(Target::Http { .. }), Some(url)) => {
             match reader.open(url, source.host(), hints.video_size).await {
                 Ok(Opened { report, head, file }) => {
                     let file: std::sync::Arc<dyn ByteSource> = file.into();
                     let mkv = if report.partial && report.ebml_magic {
                         Some(Box::new(mkv::inspect(file.as_ref(), &head).await))
+                    } else {
+                        None
+                    };
+                    let mp4 = if report.partial && report.container == Container::Mp4 {
+                        Some(Box::new(mp4::inspect(file.as_ref(), &head).await))
                     } else {
                         None
                     };
@@ -242,18 +251,19 @@ pub async fn probe(
                             event!("m6", "m6 blocks kind={kind} report={report:?}");
                         });
                     }
-                    (Some(Ok(report)), mkv)
+                    (Some(Ok(report)), mkv, mp4)
                 }
-                Err(err) => (Some(Err(err)), None),
+                Err(err) => (Some(Err(err)), None, None),
             }
         }
-        _ => (None, None),
+        _ => (None, None, None),
     };
     ProbeOutcome::Matched {
         elapsed_ms,
         report,
         range,
         mkv,
+        mp4,
     }
 }
 
@@ -636,6 +646,70 @@ mod tests {
             self.0.lock().unwrap().push((url.to_owned(), expected_size));
             Box::pin(async { Err(crate::range::RangeError::Other { hops: Vec::new() }) })
         }
+    }
+
+    /// Opens every URL as the same in-memory file.
+    struct MemRange(Vec<u8>);
+
+    impl RangeReader for MemRange {
+        fn open<'a>(
+            &'a self,
+            _url: &'a str,
+            _source_host: &'a str,
+            expected_size: Option<u64>,
+        ) -> crate::range::OpenFuture<'a> {
+            let bytes = self.0.clone();
+            Box::pin(async move {
+                let head = bytes[..bytes.len().min(crate::range::HEAD_BYTES)].to_vec();
+                let mut headers = reqwest::header::HeaderMap::new();
+                let range = format!("bytes 0-{}/{}", head.len() - 1, bytes.len());
+                headers.insert("content-range", range.parse().unwrap());
+                let report = crate::range::analyze(
+                    Vec::new(),
+                    reqwest::StatusCode::PARTIAL_CONTENT,
+                    &headers,
+                    &head,
+                    expected_size,
+                    0,
+                );
+                Ok(Opened {
+                    report,
+                    head,
+                    file: Box::new(crate::mp4::tests::MemFile::new(bytes)),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_reads_mp4_tracks_after_an_mp4_head() {
+        use crate::mp4::tests::{Track, file, moov};
+        let lines: Vec<(u32, u32)> = (0..60).flat_map(|_| [(1000, 20), (1000, 2)]).collect();
+        let bytes = file(moov(&[Track::text(2, "eng", lines)], false), 100, true);
+        let size = bytes.len() as u64;
+        let reader = MemRange(bytes);
+        let source = FakeSource(Ok(json!({ "streams": [
+            { "url": "https://d.test/one", "behaviorHints": { "filename": "A.mp4", "videoSize": size } }
+        ]})));
+        let outcome = probe(
+            &source,
+            Some(&reader),
+            false,
+            "movie",
+            "tt1",
+            &hints("A.mp4", size),
+        )
+        .await;
+        let ProbeOutcome::Matched {
+            range, mkv, mp4, ..
+        } = outcome
+        else {
+            panic!("not matched");
+        };
+        assert_eq!(range.unwrap().unwrap().container, Container::Mp4);
+        assert!(mkv.is_none());
+        let report = mp4.unwrap().unwrap();
+        assert_eq!(report.rulers.0[0].0, 2);
     }
 
     #[tokio::test]

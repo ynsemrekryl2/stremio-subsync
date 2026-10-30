@@ -20,6 +20,7 @@ use crate::events::{self, event};
 use crate::extra::PlaybackHints;
 use crate::label;
 use crate::menu::{self, MenuCache, Notice};
+use crate::mp4::Container;
 use crate::pgs;
 use crate::range::RangeReader;
 use crate::ruler::Event;
@@ -454,18 +455,22 @@ async fn run_probes(
 
 /// The ruler tracks of a K2 probe, or why there are none.
 fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>, Notice> {
-    let (report, range, mkv) = match k2 {
+    let (report, range, mkv, mp4) = match k2 {
         Some(streams::ProbeOutcome::Matched {
-            report, range, mkv, ..
-        }) => (report, range, mkv),
+            report,
+            range,
+            mkv,
+            mp4,
+            ..
+        }) => (report, range, mkv, mp4),
         Some(streams::ProbeOutcome::NoHints) => return Err(Notice::NoStreamMatch),
         Some(streams::ProbeOutcome::Failed { .. }) | None => return Err(Notice::Failed),
     };
     if report.matched_by.is_none() {
         return Err(Notice::NoStreamMatch);
     }
-    match (range, mkv) {
-        (_, Some(mkv)) => match *mkv {
+    match (range, mkv, mp4) {
+        (_, Some(mkv), _) => match *mkv {
             Ok(report) if !report.rulers.0.is_empty() => Ok(report.rulers.0),
             Ok(report) if report.english_text_indexed == Some(false) => Err(Notice::NotIndexed),
             Ok(report) => {
@@ -484,7 +489,18 @@ fn rulers_of(k2: Option<streams::ProbeOutcome>) -> Result<Vec<(u64, Vec<Event>)>
             }
             Err(_) => Err(Notice::Failed),
         },
-        (Some(Ok(range)), None) if !range.ebml_magic => Err(Notice::NotMkv),
+        (_, None, Some(mp4)) => match *mp4 {
+            Ok(report) if !report.rulers.0.is_empty() => Ok(report.rulers.0),
+            Ok(report) if report.fragmented => Err(Notice::Unsupported),
+            Ok(_) => Err(Notice::NoEnglishTrack),
+            Err(_) => Err(Notice::Failed),
+        },
+        (Some(Ok(range)), None, None) => match range.container {
+            Container::Avi | Container::MpegTs => Err(Notice::Unsupported),
+            Container::Unknown => Err(Notice::NotMkv),
+            // Recognised, but the range was not honoured.
+            Container::Matroska | Container::Mp4 => Err(Notice::Failed),
+        },
         _ => Err(Notice::Failed),
     }
 }
@@ -644,6 +660,76 @@ mod tests {
         let status = response.status();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&bytes).ok())
+    }
+
+    fn opened_as(
+        container: Container,
+        mp4: Option<crate::mp4::Mp4Outcome>,
+    ) -> streams::ProbeOutcome {
+        streams::ProbeOutcome::Matched {
+            elapsed_ms: 0,
+            report: streams::MatchReport {
+                matched_by: Some(streams::MatchedBy::Both),
+                ..Default::default()
+            },
+            range: Some(Ok(crate::range::RangeReport {
+                hops: Vec::new(),
+                status: 206,
+                partial: true,
+                accept_ranges: true,
+                size_matches: Some(true),
+                content: crate::range::ContentKind::OctetStream,
+                bytes_read: 0,
+                ebml_magic: container == Container::Matroska,
+                container,
+                elapsed_ms: 0,
+            })),
+            mkv: None,
+            mp4: mp4.map(Box::new),
+        }
+    }
+
+    fn mp4_report(fragmented: bool, rulers: Vec<(u64, Vec<Event>)>) -> crate::mp4::Mp4Outcome {
+        Ok(crate::mp4::Mp4Report {
+            requests: 0,
+            retries: 0,
+            bytes_read: 0,
+            elapsed_ms: 0,
+            moov_in_head: true,
+            fragmented,
+            tracks: Vec::new(),
+            rulers: crate::mkv::Rulers(rulers),
+        })
+    }
+
+    #[test]
+    fn non_mkv_files_get_a_ruler_or_their_own_reason() {
+        let events = vec![Event {
+            start_ms: 0,
+            end_ms: 1000,
+        }];
+        let ruled = opened_as(
+            Container::Mp4,
+            Some(mp4_report(false, vec![(2, events.clone())])),
+        );
+        assert_eq!(rulers_of(Some(ruled)), Ok(vec![(2, events)]));
+        let bare = opened_as(Container::Mp4, Some(mp4_report(false, Vec::new())));
+        assert_eq!(rulers_of(Some(bare)), Err(Notice::NoEnglishTrack));
+        let fragmented = opened_as(Container::Mp4, Some(mp4_report(true, Vec::new())));
+        assert_eq!(rulers_of(Some(fragmented)), Err(Notice::Unsupported));
+        let broken = opened_as(Container::Mp4, Some(Err(crate::mp4::Mp4Error::NoMoov)));
+        assert_eq!(rulers_of(Some(broken)), Err(Notice::Failed));
+        for (container, notice) in [
+            (Container::Avi, Notice::Unsupported),
+            (Container::MpegTs, Notice::Unsupported),
+            (Container::Unknown, Notice::NotMkv),
+        ] {
+            assert_eq!(
+                rulers_of(Some(opened_as(container, None))),
+                Err(notice),
+                "{container:?}"
+            );
+        }
     }
 
     #[tokio::test]

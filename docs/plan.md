@@ -51,5 +51,6 @@ bloklarını okuma ölçümü SS-028; maliyet uygunsa SS-026 çeviri yedeği yap
 
 ## Kapsam dışı (şimdilik)
 
-Ses analizi · MP4/tx3g ve PGS'ten metin çıkarma/OCR · çok kullanıcı ·
+Ses analizi · MP4/tx3g ve PGS'ten metin çıkarma/OCR (MP4 metin izinden
+yalnız zaman cetveli kapsamda, SS-033) · çok kullanıcı ·
 hesap sistemi · web ayar sayfası · AIOStreams olmadan doğrudan debrid API'leri.

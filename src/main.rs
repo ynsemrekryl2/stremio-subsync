@@ -7,6 +7,7 @@ mod extra;
 mod label;
 mod menu;
 mod mkv;
+mod mp4;
 mod pgs;
 mod range;
 mod rank;

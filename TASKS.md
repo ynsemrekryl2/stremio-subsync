@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-032**.
+Sonraki boş numara: **SS-035**.
 
 ## M0 — İskelet
 
@@ -60,6 +60,17 @@ kapsamında sürer.
 - [x] **SS-024** Sonuç çıkmazsa boş bekletme: menüde nedeni gösteren tek girdi ("SubSync: İngilizce iz yok", "dosya bulunamadı", "aday altyazı yok", "uyan altyazı yok", "MKV değil", "geçici hata", "hazırlanıyor"); seçilince açıklama altyazı olarak görünür. Cetvel yoksa Türkçe aramayı beklemeden hemen cevap. Kalıcı nedenler 1 gün (disk dahil), geçiciler 60 sn yalnız bellekte; 15 sn aşılırsa "hazırlanıyor" — kanıt: testler + Stremio'da cetvelsiz bir dosyada nedenin görünmesi → **2026-10-29 doğrulandı:** yalnız PGS içeren bir filmde menüde "SubSync: İngilizce iz yok" girdisini kullanıcı gördü (`notice=Some(ImageOnly)`); başka bir bölümde 3 aday da ret alınca "uyan altyazı yok" sunuldu (`NoneAccepted`)
 - [x] **SS-025** PGS (resim) İngilizce izden cetvel. Kapsama sayımında 21 dosyanın 6'sı (%29) yalnız PGS İngilizce içeriyordu; en büyük kazanç. Cues'ta PGS izlerinin süresiz cue noktaları var; hem SRT hem PGS İngilizce içeren iki dosyada PGS noktası SRT satırının ~2 katı (2008 → 4020, 1061 → 2406) → her satır "göster" + "temizle" çifti. Adımlar: (1) PGS cue zamanlarını dump'a ekle, (2) SRT + PGS içeren bir dosyada PGS çiftlerinden çıkan satırları aynı dosyanın SRT'siyle hizala (beklenen: fix 1/1, ~0 ms, yüksek isabet), (3) tutarsa PGS'i cetvel olarak kullan (metin izi yoksa) — kanıt: ölçüm notu + testler + PGS'li bir dosyada kabul edilen altyazı. **Öncelik 2** (kullanıcının SRT + PGS içeren bir dosyayı bir kez açması gerekir). Adım 1–2 kodda: `SUBSYNC_DUMP_DIR` açıkken İngilizce PGS cue zamanları `dumps/pgs/` altına yazılıyor (metin cetveli olmasa da), `cargo run -- pgs-check` iki fazı ve her-nokta varyantını aynı dosyanın metin cetvelleriyle karşılaştırıyor; testler 105 (sentetikte `Even` fazı 1/1, +0 ms, isabet 1.00). Adım 2 gerçek dosyada tuttu (2026-10-29, SRT + PGS içeren 2 bölüm): ilk İngilizce PGS izinin `Even` fazı iki metin cetveliyle de fix 1/1, +0 ms, isabet 1.00; doğru faz medyandan seçilebiliyor (Even 1.9–2.4 sn, Odd 160–292 ms); bazı ek İngilizce PGS izleri tutmuyor, kabul testi eliyor. Bir filmde de (SRT + PGS) `Even` ~0 ms ile kabul, `Each` ret → faz `Even`. Yalnız PGS içeren iki filmde faz ölçüldü (`Even` uzun satır %0, `Odd` %15–19). Adım 3 kodda: metin izi yoksa İngilizce PGS izleri `Even` fazıyla cetvel (`pgs::rulers`, 50 satırdan kısa izler atlanır); **2026-10-29 doğrulandı:** daha önce "İng. resim" alan yalnız PGS bir filmde Türkçe aday +19.2 sn kaydırmayla kabul edilip sunuldu, kullanıcı baş/orta/sonda senkron buldu — `docs/spikes/m5-pgs-ruler.md`
 
+## MKV dışı dosyalar
+
+> Şimdiye kadar EBML başlığıyla başlamayan her dosya "MKV değil" alıp
+> bırakılıyordu. Önce ne olduklarını ölç; MP4'te İngilizce metin izi varsa
+> cetvel `moov` örnek tablolarından çıkar (medya ve metin okunmaz). Gömülü
+> İngilizcesi olmayanlar için yol ölçümden sonra seçilir.
+
+- [~] **SS-032** K4: MKV olmayan dosyaları tanı — kapsayıcıyı ilk 64 KB'tan ayırt et (MP4 `ftyp`, AVI `RIFF…AVI `, MPEG-TS senkron baytları); MP4'te `moov`'u bulup izleri listele (tür, kodek, dil, örnek sayısı, dolu örnek sayısı, fragmented mı); panelde ve log'da görünür — kanıt: testler + `docs/spikes/k4-non-mkv.md` (kullanıcının MKV olmayan dosyası + karşılaşılan diğerleri)
+- [~] **SS-033** MP4 metin izinden cetvel: İngilizce `tx3g`/`text` izinin dolu örneklerinden (`stts` + `stsz`, `elst` kaydırması) olay listesi, mevcut hizalama/teslim yoluna girer — kanıt: testler + (böyle bir dosya bulunursa) Stremio'da kabul edilen altyazı
+- [ ] **SS-034** Gömülü İngilizcesi olmayan MKV dışı dosyalar (çoğu MP4/AVI) için yol kararı: referans İngilizce altyazı (hash / birebir sürüm adı) mı, desteklenmez mi — SS-032 ölçümünden sonra; kanıt: `docs/decisions.md` satırı
+
 ## Çeviri yedeği (M6'dan öne çekildi)
 
 > M5 bir istek için kabul edilen aday sunamıyorsa, gömülü İngilizce metin izi
@@ -91,6 +102,10 @@ kapsamında sürer.
   yedeği → SS-006
   VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
   SS-019 CD1/CD2 birleştirme de açık.
+- **MKV dışı (2026-10-30):** SS-032/SS-033 kodu ve testleri hazır (126 test):
+  kapsayıcı panelde görünür, MP4'te İngilizce `tx3g` izi varsa cetvel olur.
+  Sırada kullanıcının MKV olmayan dosyasını açıp `docs/spikes/k4-non-mkv.md`
+  tablosunu doldurmak; SS-034 kararı bu tabloya göre.
 - **Çeviri yolu:** SS-028 ölçümü bitti (okuma %96, ~5 blok/sn,
   `docs/spikes/m6-block-text.md`); sırada SS-026. SS-025 PGS yalnız zaman
   cetveli üretir, metin çevirisi sağlamaz.

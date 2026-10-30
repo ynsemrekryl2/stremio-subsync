@@ -43,6 +43,9 @@ pub enum Notice {
     NoneAccepted,
     /// Not an MKV, or the debrid service is not serving it yet.
     NotMkv,
+    /// A container whose subtitle times cannot be read cheaply: AVI,
+    /// MPEG-TS, or a fragmented MP4 (SS-032).
+    Unsupported,
     /// A source or the file could not be reached this time.
     Failed,
     /// Still working; the next open will have the answer.
@@ -86,6 +89,11 @@ impl Notice {
                 "⚠ MKV değil",
                 "SubSync: Dosya MKV değil ya da debrid servisi henüz hazırlamadı. \
                  Hazırsa videoyu biraz sonra yeniden açın.",
+            ),
+            Self::Unsupported => (
+                "⚠ Biçim dışı",
+                "SubSync: Bu dosya biçiminde (AVI, TS ya da parçalı MP4) gömülü \
+                 altyazı zamanları okunamıyor, senkron için cetvel yok. MKV sürümü deneyin.",
             ),
             Self::Failed => (
                 "⚠ Geçici hata",
@@ -463,6 +471,7 @@ mod tests {
             Notice::NoCandidates,
             Notice::NoneAccepted,
             Notice::NotMkv,
+            Notice::Unsupported,
             Notice::Failed,
             Notice::NotReady,
         ] {
