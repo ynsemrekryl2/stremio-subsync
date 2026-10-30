@@ -17,4 +17,6 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 
 [dev-dependencies]
 http-body-util = "0.1"
+# Raw HTTP in the OpenRouter tests.
+tokio = { version = "1", features = ["io-util"] }
 tower = { version = "0.5", features = ["util"] }

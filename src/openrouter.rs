@@ -147,8 +147,13 @@ impl OpenRouter {
                 .send()
                 .await;
             let delay = match sent {
+                // OpenRouter sends the headers at once and the body when the
+                // model is done, so a body cut short is a transport error too.
                 Ok(response) if response.status().is_success() => {
-                    return read_capped(response).await;
+                    match read_capped(response).await {
+                        Err(TranslateError::Transient) => None,
+                        done => return done,
+                    }
                 }
                 Ok(response) if retryable(response.status()) => retry_after(&response),
                 Ok(_) => return Err(TranslateError::Permanent),
@@ -936,6 +941,71 @@ mod tests {
                 "{l}"
             );
         }
+    }
+
+    /// Answers raw HTTP: the first connection gets a 200 whose body stops
+    /// halfway, the next ones the whole answer.
+    async fn serve_cut_then_whole() -> (OpenRouter, Arc<Mutex<usize>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = completion(&translations());
+        let seen = Arc::new(Mutex::new(0));
+        let count = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 8192];
+                // Headers, then as many body bytes as they announce.
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let text = String::from_utf8_lossy(&request).to_lowercase();
+                let head = text.find("\r\n\r\n").unwrap() + 4;
+                let length: usize = text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .map_or(0, |n| n.trim().parse().unwrap());
+                while request.len() < head + length {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let first = {
+                    let mut n = count.lock().unwrap();
+                    *n += 1;
+                    *n == 1
+                };
+                let sent = if first {
+                    &body[..body.len() / 2]
+                } else {
+                    &body[..]
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{sent}",
+                    body.len()
+                );
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let mut client = OpenRouter::with_endpoint(
+            KEY.to_owned(),
+            DEFAULT_MODEL,
+            &format!("http://{addr}/api/v1/chat/completions"),
+        )
+        .unwrap();
+        client.retry_delays = [Duration::ZERO; MAX_RETRIES];
+        (client, seen)
+    }
+
+    #[tokio::test]
+    async fn a_body_cut_short_after_200_is_retried() {
+        let (client, seen) = serve_cut_then_whole().await;
+        let lines = client.translate(&block_request()).await.unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(*seen.lock().unwrap(), 2);
+        assert_eq!(client.usage().retries, 1);
     }
 
     #[test]
