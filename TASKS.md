@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-035**.
+Sonraki boş numara: **SS-036**.
 
 ## M0 — İskelet
 
@@ -14,7 +14,7 @@ Sonraki boş numara: **SS-035**.
 
 ## M1 — Keşif
 
-- [~] **SS-003** K1: Masaüstü, Android TV ve Apple TV'nin gönderdiği alanları ölç (istek logu yalnız var/yok basıyor) — kanıt: `docs/spikes/k1-playback-hints.md` (masaüstü ve Android TV bitti; Apple TV bekliyor, Tailscale Funnel ile ölçülecek)
+- [x] **SS-003** K1: Masaüstü, Android TV ve Apple TV'nin gönderdiği alanları ölç (istek logu yalnız var/yok basıyor) — kanıt: `docs/spikes/k1-playback-hints.md` (üç istemcide de `filename`, `videoSize`, `videoHash` var; Apple TV 4K 2026-10-30 Tailscale Funnel üzerinden ölçüldü)
 - [x] **SS-004** K2: AIOStreams stream listesinde filename + boyutla eşleşme ve URL davranışı — kanıt: `docs/spikes/k2-aiostreams-match.md` (Real-Debrid, masaüstü: 5/5 `both: 1`; URL tek yönlendirmeyle RD'ye gidiyor, 206 Range). TorBox → SS-007
 - [x] **SS-005** K3: Real-Debrid ve TorBox linklerinde Range desteği; 10+ gerçek MKV'de altyazı izinin Cues'ta indekslenme oranı — kanıt: `docs/spikes/k3-mkv-cues.md` (RD: Range var; İngilizce metin izi 12 dosyanın 11'inde indekslenmiş). TorBox → SS-007, VPS IP → SS-008
 - [ ] **SS-006** VPS + HTTPS kurulumu (Caddy + systemd). Script'ler hazır ama denenmedi; Oracle ARM kapasitesi dolu olduğu için ertelendi — kanıt: `https://<alan adı>/<token>/manifest.json` çalışıyor, yanlış token 404
@@ -83,6 +83,8 @@ kapsamında sürer.
 
 ## Bakım
 
+- [ ] **SS-035** Varsayılan port 7000 macOS AirPlay Alıcısı (ControlCenter) ile çakışıyor: `scripts/dev.sh` "Address already in use" ile kapanıyor, kurulu `127.0.0.1:7000` linki çalışmıyor. Varsayılanı boş bir porta (ör. 7001) taşı ya da betikte çakışmayı açık mesajla bildir; Funnel notunu güncelle — kanıt: AirPlay Alıcısı açıkken `scripts/dev.sh` ilk denemede açılıyor
+
 - [x] **SS-029** Arka planda dönenleri görmek için canlı olay paneli: sunucunun log satırları (yalnız sayı ve etiket; token, link, kimlik, dosya adı, metin yok) son 1000 olay olarak bellekte de tutulur; `/<token>/dashboard` sayfası `events.json`'u 2 sn'de bir okuyup sayaçları, son istekleri adım adım (dosya eşleşmesi, metin cetveli, PGS, aday, hizalama, menü) ve süzülebilir ham olay akışını gösterir. Panel yoklamaları erişim loguna yazılmaz — kanıt: 108 geçen test (yanlış token 404, sayfada token yok, `after` ile yalnız yeni olaylar, tampon taşması) + yerel test sunucusunda panelin açılıp canlı güncellendiği, telefon genişliğinde taşmadığı görüldü. Her istekte dosyanın MKV olup olmadığı ve gömülü altyazılar okunur biçimde görünür (dil + biçim; "cetvel ✓", "PGS ölçülür", "dizinsiz", zorunlu); cache'ten verilen cevapta dosyanın yeniden okunmadığı yazar. Örnek satırlarla tarayıcıda denendi; satır biçimi `mkv` testinde sabitlendi. Gerçek bir oynatmada adımların doğru ayrıştırıldığı henüz görülmedi
 - [x] **SS-030** Yerel sunucuyu tek komutla aç: token ve AIOStreams linki ilk çalıştırmada macOS Anahtar Zinciri'ne bir kez kaydedilir, kurulum linki her açılışta aynı kalır (her seferinde yeni token + yeniden kurulum yok). `scripts/dev.sh` (çift tıklanabilir `.command` ile) — kanıt: deneme Anahtar Zinciri girdisiyle betik denemesi + Stremio'da aynı linkle iki ayrı açılış → **2026-10-29 doğrulandı:** betik deneme Anahtar Zinciri girdisiyle denendi (ikinci açılış soru sormadı, token aynı kaldı, token log'a düşmedi); gerçek oturumda sunucu birçok kez yeniden açıldı, Stremio'daki kurulum aynı linkle çalışmaya devam etti
 - [x] **SS-031** Olay panelinde her isteğin dosya adını göster; terminal log'u, dump ve cache adsız kalır. Senkron geri bildirimini isteğe bağlamak için (karar: `docs/decisions.md`, 2026-10-29) — kanıt: test (dosya adı `events.json`'da var, log satırında yok) + gerçek oynatmada panelde adın görünmesi → **2026-10-29 doğrulandı:** test geçiyor; kullanıcı gerçek oynatmalarda panelde dosya adlarını gördü
@@ -135,7 +137,7 @@ kapsamında sürer.
   Ayrıntı birleştirme kaydında.
 - **Geçici yayın:** Tailscale Funnel (443 → `127.0.0.1:7000`). Kapatmak:
   `tailscale funnel --https=443 off`. Kalıcı VPS kurulumu henüz yok.
-- **Açık keşif:** SS-003 Apple TV, SS-007 TorBox (abonelik bekliyor; URL
+- **Açık keşif:** SS-007 TorBox (abonelik bekliyor; URL
   çağrısı indirme başlatabilir, ilk gerçek deneme kullanıcı onayıyla),
   SS-008 VPS IP'sinden RD okuması.
 - **Güvenlik notu:** önceki oturumda açığa çıkan SubSync token'ı VPS'e geçerken

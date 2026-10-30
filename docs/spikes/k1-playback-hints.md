@@ -13,7 +13,7 @@ kendisi loglanmaz.
 |---|---|---|---|---|---|---|
 | 2026-10-27 | Stremio masaüstü, macOS 27.2 | 5.1.30 | dizi bölümü | var | var | var |
 | 2026-10-27 | Stremio Android TV | kaydedilmedi | film | var | var | var |
-| — | Apple TV (Stremio Lite) | — | — | ölçülecek | ölçülecek | ölçülecek |
+| 2026-10-30 | Stremio Apple TV 4K | kaydedilmedi | film | var | var | var |
 
 Ham log satırları:
 
@@ -21,6 +21,8 @@ Ham log satırları:
 # masaüstü
 subtitles request kind=series hints=PlaybackHints { has_filename: true, has_video_size: true, has_video_hash: true }
 # Android TV
+subtitles request kind=movie hints=PlaybackHints { has_filename: true, has_video_size: true, has_video_hash: true }
+# Apple TV 4K
 subtitles request kind=movie hints=PlaybackHints { has_filename: true, has_video_size: true, has_video_hash: true }
 ```
 
@@ -35,5 +37,11 @@ yapıldı. Add-on masaüstüne kuruldu, Stremio hesabı üzerinden TV'ye geçti.
 - Masaüstünde aynı bölüm için iki istek geldi: ilkinde `videoHash` **yok**,
   ikincisinde var (2026-10-27, K2 ölçümü sırasında). Hash ilk istekte
   hazır olmayabiliyor; dosya tanıma hash'e dayanmamalı.
-- Apple TV (Stremio Lite) henüz ölçülmedi; cihaza erişim olunca aynı yolla
-  ölçülecek. `videoHash` gelmeyebileceği beklentisi orada test edilecek.
+- Apple TV 4K'da da üç alan geliyor (2026-10-30); `videoHash` gelmeyebilir
+  beklentisi doğrulanmadı. Oynatma tek istek üretti, istek masaüstündekiyle
+  aynı yoldan geçti: AIOStreams eşleşmesi `Both`, RD'den 206 Range, MKV
+  Cues okundu. Film yalnız PGS İngilizce içeriyordu; PGS cetveli (1267 satır)
+  çıktı, 2 OpenSubtitles adayı pencereler arası kaydırma tutmadığı için
+  reddedildi → menüde `NoneAccepted` ("uyan altyazı yok") tek girdi sunuldu.
+- Mac'te 7000 portunu macOS AirPlay Alıcısı (ControlCenter) tuttuğu için
+  sunucu `SUBSYNC_BIND=127.0.0.1:7001` ile açıldı; Funnel 443 → 7001.
