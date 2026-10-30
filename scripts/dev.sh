@@ -11,6 +11,8 @@
 #   scripts/dev.sh openrouter  save an OpenRouter API key (hidden input)
 #   scripts/dev.sh translate-check <english.srt> [out.srt]
 #                              translate a local SRT with that key; prints counts only
+#   scripts/dev.sh balance-check <english.srt> <translated.srt>
+#                              count split sentences moved between cues; no key, no network
 #   scripts/dev.sh forget      remove the secrets; the next start makes a new token
 set -euo pipefail
 
@@ -58,6 +60,10 @@ translate-check)
 	[ -n "$(secret openrouter-key)" ] || { echo "no OpenRouter key: run scripts/dev.sh openrouter" >&2; exit 1; }
 	OPENROUTER_API_KEY="$(secret openrouter-key)" exec cargo run --release -- translate-check "$@"
 	;;
+balance-check)
+	shift
+	exec cargo run --release -- balance-check "$@"
+	;;
 forget)
 	security delete-generic-password -s "$service" -a token >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a aiostreams-url >/dev/null 2>&1 || true
@@ -67,7 +73,7 @@ forget)
 	exit 0
 	;;
 *)
-	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|openrouter|translate-check|forget]" >&2
+	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|openrouter|translate-check|balance-check|forget]" >&2
 	exit 2
 	;;
 esac

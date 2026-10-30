@@ -38,7 +38,8 @@ async fn main() {
     // `stremio-subsync calibrate [dir]` replays saved dumps,
     // `stremio-subsync pgs-check [dir]` checks saved PGS times and
     // `stremio-subsync mp4-check <file> [srt]` reads a local MP4 and
-    // `stremio-subsync translate-check <srt> [out]` translates a local SRT;
+    // `stremio-subsync translate-check <srt> [out]` translates a local SRT and
+    // `stremio-subsync balance-check <english> <translated>` measures one;
     // no server.
     let mut args = std::env::args().skip(1);
     let command = args.next();
@@ -62,6 +63,18 @@ async fn main() {
         let out = out.as_deref().map(std::path::Path::new);
         if let Err(err) = openrouter::check(std::path::Path::new(&file), out).await {
             eprintln!("translate-check: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if command.as_deref() == Some("balance-check") {
+        let (Some(source), Some(target)) = (args.next(), args.next()) else {
+            eprintln!("usage: balance-check <english.srt> <translated.srt>");
+            std::process::exit(2);
+        };
+        let paths = (std::path::Path::new(&source), std::path::Path::new(&target));
+        if let Err(err) = translate::balance_check(paths.0, paths.1) {
+            eprintln!("balance-check: {err}");
             std::process::exit(1);
         }
         return;

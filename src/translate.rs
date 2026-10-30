@@ -534,6 +534,123 @@ fn check(expected: &[u32], answer: Option<Vec<Line>>) -> Result<Vec<String>, Inv
     }
 }
 
+/// A pair of consecutive cues counts as shifted when the first cue's share
+/// of the pair's letters moves by more than this from source to
+/// translation (SS-044).
+pub const SHIFT_LIMIT: f64 = 0.35;
+
+/// How a translation spreads sentences that run across cues (SS-044):
+/// counts only, no text.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Balance {
+    pub lines: usize,
+    /// Consecutive source pairs whose first cue does not end a sentence.
+    pub split_pairs: usize,
+    /// Of those, pairs whose first translated cue took more than
+    /// [`SHIFT_LIMIT`] over its source share (`forward`) or less (`back`).
+    pub forward: usize,
+    pub back: usize,
+}
+
+/// Compares a translation with its source cue by cue. `None` when they are
+/// not the same cues (count or times differ).
+pub fn balance(source: &[Cue], target: &[Cue]) -> Option<Balance> {
+    let same = source.len() == target.len()
+        && source
+            .iter()
+            .zip(target)
+            .all(|(s, t)| s.start_ms == t.start_ms && s.end_ms == t.end_ms);
+    if !same {
+        return None;
+    }
+    let mut out = Balance {
+        lines: source.len(),
+        ..Balance::default()
+    };
+    for i in 1..source.len() {
+        if ends_sentence(&source[i - 1].text) {
+            continue;
+        }
+        let (a, b) = (letters(&source[i - 1].text), letters(&source[i].text));
+        let (c, d) = (letters(&target[i - 1].text), letters(&target[i].text));
+        if a + b == 0 || c + d == 0 {
+            continue;
+        }
+        out.split_pairs += 1;
+        let moved = c as f64 / (c + d) as f64 - a as f64 / (a + b) as f64;
+        if moved > SHIFT_LIMIT {
+            out.forward += 1;
+        } else if moved < -SHIFT_LIMIT {
+            out.back += 1;
+        }
+    }
+    Some(out)
+}
+
+/// Text without `<...>` and `{...}` markup.
+fn visible(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut closing = None;
+    for ch in text.chars() {
+        match (closing, ch) {
+            (None, '<') => closing = Some('>'),
+            (None, '{') => closing = Some('}'),
+            (None, _) => out.push(ch),
+            (Some(end), _) if ch == end => closing = None,
+            _ => {}
+        }
+    }
+    out
+}
+
+fn letters(text: &str) -> usize {
+    visible(text)
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .count()
+}
+
+fn ends_sentence(text: &str) -> bool {
+    let shown = visible(text);
+    let trimmed = shown.trim_end_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '\u{201d}' | '\u{2019}' | ')' | ']' | '\u{bb}'
+            )
+    });
+    trimmed.ends_with(['.', '!', '?', '\u{2026}', '\u{266a}'])
+}
+
+/// `stremio-subsync balance-check <english.srt> <translated.srt>`: prints
+/// [`Balance`] for a translation already on disk; no network.
+pub fn balance_check(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    let read = |path: &std::path::Path, lang: &str| {
+        std::fs::read(path)
+            .map(|bytes| crate::srt::parse(&crate::srt::decode(&bytes, lang)))
+            .map_err(|err| format!("read: {:?}", err.kind()))
+    };
+    let lang = std::env::var("SUBSYNC_LANG").unwrap_or_else(|_| "tur".to_owned());
+    let report = balance(&read(source, "eng")?, &read(target, &lang)?)
+        .ok_or("not the same cues (count or times differ)")?;
+    println!("{}", balance_line(&report));
+    Ok(())
+}
+
+/// One log line for a [`Balance`].
+pub fn balance_line(b: &Balance) -> String {
+    let shifted = b.forward + b.back;
+    let pct = if b.split_pairs == 0 {
+        0.0
+    } else {
+        100.0 * shifted as f64 / b.split_pairs as f64
+    };
+    format!(
+        "balance lines={} split_pairs={} shifted={shifted} ({pct:.1}%) forward={} back={}",
+        b.lines, b.split_pairs, b.forward, b.back
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +747,73 @@ mod tests {
             blocks: 1,
             mode: Mode::Initial,
         }
+    }
+
+    fn cue(i: u64, text: &str) -> Cue {
+        Cue {
+            start_ms: i * 2_000,
+            end_ms: i * 2_000 + 1_500,
+            text: text.to_owned(),
+        }
+    }
+
+    fn pair(first: &str, second: &str) -> Vec<Cue> {
+        vec![cue(0, first), cue(1, second)]
+    }
+
+    #[test]
+    fn balance_counts_split_sentences_moved_between_cues() {
+        let source = pair("I will not", "do this.");
+        let even = balance(&source, &pair("Bunu", "yapmayacağım.")).unwrap();
+        assert_eq!((even.split_pairs, even.forward, even.back), (1, 0, 0));
+        let forward = balance(&source, &pair("Bunu yapmayacağım.", "-")).unwrap();
+        assert_eq!((forward.forward, forward.back), (1, 0));
+        let back = balance(&source, &pair("Ben", "bunu asla yapmayacağım.")).unwrap();
+        assert_eq!((back.forward, back.back), (0, 1));
+    }
+
+    #[test]
+    fn balance_skips_pairs_whose_first_cue_ends_a_sentence() {
+        for first in [
+            "Stop.",
+            "Stop!\"",
+            "<i>Really?</i>",
+            "Wait\u{2026}",
+            "\u{266a} la la \u{266a}",
+        ] {
+            let report = balance(&pair(first, "go"), &pair("Dur bakalım hemen", "-")).unwrap();
+            assert_eq!(report.split_pairs, 0, "{first:?}");
+        }
+        let tagged = balance(
+            &pair("<i>I will</i>", "go home"),
+            &pair("{\\an8}Eve giderim", "-"),
+        )
+        .unwrap();
+        assert_eq!((tagged.split_pairs, tagged.forward), (1, 1));
+    }
+
+    #[test]
+    fn balance_needs_the_same_cues() {
+        let source = pair("I will not", "do this.");
+        assert_eq!(balance(&source, &source[..1]), None);
+        let mut moved = source.clone();
+        moved[1].start_ms += 1;
+        assert_eq!(balance(&source, &moved), None);
+        assert_eq!(balance(&[], &[]), Some(Balance::default()));
+    }
+
+    #[test]
+    fn balance_line_prints_counts_only() {
+        let line = balance_line(&Balance {
+            lines: 10,
+            split_pairs: 4,
+            forward: 1,
+            back: 0,
+        });
+        assert_eq!(
+            line,
+            "balance lines=10 split_pairs=4 shifted=1 (25.0%) forward=1 back=0"
+        );
     }
 
     #[test]
