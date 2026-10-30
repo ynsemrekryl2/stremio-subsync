@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-036**.
+Sonraki boş numara: **SS-039**.
 
 ## M0 — İskelet
 
@@ -73,13 +73,18 @@ kapsamında sürer.
 
 ## Çeviri yedeği (M6'dan öne çekildi)
 
-> M5 bir istek için kabul edilen aday sunamıyorsa, gömülü İngilizce metin izi
-> hedef dile çevrilmesi planlanır; henüz uygulanmadı. Karar:
-> `docs/decisions.md` (çeviri yedeği). Önce SS-028 ile blokların gerçekten
-> okunabildiği ve maliyeti ölçülür. PGS cetveli (SS-025) ayrı bir iştir.
+> M5 bir istek için kabul edilen aday sunamıyorsa, aynı kaynaklardan bir
+> İngilizce aday bulunur, cetvele (metin ya da PGS) hizalanır ve hedef dile
+> çevrilir. 2026-10-30'da metin kaynağı gömülü izden dış İngilizce adaya
+> çevrildi: blok okuma (SS-028) yavaş ve kayıplı, PGS'li dosyaları da
+> kapsamıyordu. Karar: `docs/decisions.md` (2026-10-30, çeviri yedeğinin
+> metin kaynağı). Sıra: SS-036 → SS-037 → SS-038 → SS-026.
 
 - [x] **SS-028** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya). 2026-10-29: 5 bölümde konumlar doğru (`missing` 0, bulunan yükün tamamı UTF-8), RD çoklu aralık vermiyor; ama okumaların %39'u başarısız, 13–56 sn. İki filmde başarısızlıkların %97'si `connect` (bağlantı reddi). Düzeltme (4 eşzamanlı istek, 0.5/1.5/4 sn bekleyip tekrar) sonrası bir bölümde 4000 bloğun %96'sı okundu, saniyede ~5.4 blok (bölüm ~1.5–2 dk, film ~6–7 dk). **Sonuç: metin Cues konumlarından okunabiliyor; SS-026'ya geçilebilir** (diyalog izi seçimi ve kalan ~%4 blok orada ele alınır)
-- [ ] **SS-026** Çeviri yedeği: Nen'in çeviri çekirdeğini taşı (blok + bağlam penceresi, doğrulama/onarım, iki aşamalı belge analizi, OpenRouter adapter'ı); zamanlar modele gitmez, cetvelden birleştirilir; "otomatik çeviri" etiketli SRT, M5 cache'iyle; ilk istek işi arka planda başlatır — kanıt: sahte çeviriciyle testler (sağlayıcı ağı yok) + gerçek bir bölümde Stremio'da görünen çeviri. Tasarım notları (2026-10-29): Stremio listeyi oynatma başında bir kez ister, bu yüzden hazır çeviri ikinci açılışta cache'ten gelir; bir bölüm açılınca sıradaki bölüm de önceden çevrilir; blok okuma ile çeviri aynı anda yürür; çeviri için tabela/şarkı izi değil diyalog izi seçilir; okunamayan ~%4 blok için ikinci tur. Okuma hızı ~5 blok/sn (SS-028)
+- [~] **SS-036** İngilizce yedek aday: hedef dilde aday yoksa ("aday yok") ya da hiçbiri kabul almazsa ("uyan yok"), aynı kaynaklarda `eng` aranır ve aynı sıralama, hizalama ve kabul testinden geçirilir. Kabul edilen en iyi aday, fix uygulanmış olarak menüde `eng` girdisi olur; hedef dilin nedeni yine gösterilir, cevap 1 gün geçerli (hedef dilde aday sonra çıkabilir). Etiketleme modunda ve `SUBSYNC_LANG=eng` iken kapalı. Çeviri (SS-037/SS-038) bu girdinin metnini kullanır — kanıt: testler (sahte kaynaklarla: yedek yalnız gerektiğinde aranır, kabul edilen İngilizce sunulur, reddedilen sunulmaz) + Stremio'da Türkçesi olmayan bir dosyada senkron `eng` girdisi
+- [ ] **SS-037** Çeviri çekirdeği: Nen'in `nen-translate` parçalarını taşı (bağlam pencereli bloklar, iki aşamalı belge analizi, yerel doğrulama, sınırlı onarım); `checkpoint`, `identity` ve WebVTT `artifact` taşınmaz, yerlerini M5 cache'i ve SRT yazıcısı alır. Girdi SS-036'nın kabul edilen İngilizce satırları; modele yalnız `cue_id + metin` gider, zamanlar yerelde birleştirilir. Çevirici bir trait — kanıt: sahte çeviriciyle testler (bozuk/eksik yanıt onarılır ya da reddedilir, zamanlar değişmez, sağlayıcı ağı yok)
+- [ ] **SS-038** OpenRouter adapter'ı (`OPENROUTER_API_KEY`, model ortam değişkeninden; anahtar ve metin loglanmaz; Nen'in istek/yanıt biçimi ve yeniden deneme davranışı) — kanıt: sahte HTTP ile testler + gerçek bir bölümün çevirisi (yalnız satır sayısı, token ve süre not edilir)
+- [ ] **SS-026** Çeviri yedeğini teslime bağla: SS-036 İngilizce kabul edince çeviri işi arka planda başlar (dosya başına tek iş), bitince "otomatik çeviri" etiketli hedef dil girdisi M5 cache'ine yazılır (30 gün); iş sürerken menüde "çeviriliyor" nedeni — kanıt: sahte çeviriciyle testler + gerçek bir bölümde Stremio'da görünen çeviri. Tasarım notları: Stremio listeyi oynatma başında bir kez ister, bu yüzden hazır çeviri ikinci açılışta cache'ten gelir. Denenecek: girdi seçildiğinde o ana kadar çevrilen kısmın SRT olarak dönmesi (Stremio'nun altyazı URL'sini her seçimde yeniden çekip çekmediği ölçülmeli). Sıradaki bölümü önceden çevirmek ayrı iş
 
 ## Bakım
 
@@ -100,17 +105,18 @@ kapsamında sürer.
   izi, 6'sında yalnız PGS var; 3'ünde AIOStreams eşleşmedi, 2'sinde İngilizce
   yok/okunamıyor. Türkçe aday 38 aramanın 35'inde bulundu. Kaynak ve örneklem
   sınırları: `docs/spikes/m4-align.md`, “Kapsama”.
-- **Öncelikler (2026-10-29):** SS-020, SS-024, SS-025, SS-028 bitti → SS-026 çeviri
-  yedeği → SS-006
+- **Öncelikler (2026-10-29):** SS-020, SS-024, SS-025, SS-028 bitti → çeviri
+  yedeği (SS-036 → SS-037 → SS-038 → SS-026) → SS-006
   VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
   SS-019 CD1/CD2 birleştirme de açık.
 - **MKV dışı (2026-10-30):** SS-032/SS-033 kodu ve testleri hazır (126 test):
   kapsayıcı panelde görünür, MP4'te İngilizce `tx3g` izi varsa cetvel olur.
   Sırada kullanıcının MKV olmayan dosyasını açıp `docs/spikes/k4-non-mkv.md`
   tablosunu doldurmak; SS-034 kararı bu tabloya göre.
-- **Çeviri yolu:** SS-028 ölçümü bitti (okuma %96, ~5 blok/sn,
-  `docs/spikes/m6-block-text.md`); sırada SS-026. SS-025 PGS yalnız zaman
-  cetveli üretir, metin çevirisi sağlamaz.
+- **Çeviri yolu (2026-10-30):** metin kaynağı dış İngilizce aday (karar
+  kaydı). Sıra SS-036 İngilizce yedek aday → SS-037 çekirdek → SS-038
+  OpenRouter → SS-026 teslim. Gömülü blok okuma (SS-028) planda yok.
+  PGS cetveli zamanı verdiği için yalnız PGS içeren dosyalar da kapsamda.
 - **M2 konum ölçümü:** ana ölçüm tablosu `with_relative` sayısını kaydetmedi;
   paralel M2 kaydı 5/5 dosyada bulunduğunu bildiriyor. İki kayıt da
   `docs/spikes/m2-ruler.md` içinde korunur; aynı dosyalar olabilir. Bu kayıt,
