@@ -148,6 +148,11 @@ async fn main() {
         }
         let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
         event!("start", "sources probe: on (lang {lang}, {kinds:?})");
+        // English that fits is the text a translation starts from (SS-036).
+        if lang != "eng" {
+            event!("start", "fallback language: eng");
+            state = state.with_fallback_lang("eng".to_owned());
+        }
         state = state.with_subtitle_sources(found, lang);
     } else {
         event!("start", "sources probe: off");

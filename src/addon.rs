@@ -38,6 +38,9 @@ pub struct AppState {
     subtitle_sources: Vec<Arc<dyn SubtitleSource>>,
     /// ISO 639-2 language subtitles are looked for in.
     lang: String,
+    /// Looked for when nothing in `lang` fits (SS-036); the source text for
+    /// translation.
+    fallback_lang: Option<String>,
     /// Where probe timings are saved for calibration, if anywhere.
     dump_dir: Option<std::path::PathBuf>,
     /// Menus already answered: accepted subtitles, or in labeling mode
@@ -59,6 +62,7 @@ impl AppState {
             block_probe: false,
             subtitle_sources: Vec::new(),
             lang: String::new(),
+            fallback_lang: None,
             dump_dir: None,
             menus: Mutex::new(MenuCache::default()),
             label_mode: false,
@@ -92,6 +96,13 @@ impl AppState {
     ) -> Self {
         self.subtitle_sources = sources;
         self.lang = lang;
+        self
+    }
+
+    /// When no subtitle in `lang` fits, searches the same sources in
+    /// `fallback` and offers the best one that does (SS-036).
+    pub fn with_fallback_lang(mut self, fallback: String) -> Self {
+        self.fallback_lang = Some(fallback);
         self
     }
 
@@ -423,10 +434,13 @@ async fn run_probes(
 ) {
     let now = menu::now_s();
     let (entries, keep_s, notice) = match build_menu(&state, kind, id, hints).await {
-        Ok(entries) if !entries.is_empty() => (entries, menu::KEEP_FOUND_S, None),
-        Ok(_) => {
-            let notice = Notice::NoneAccepted;
-            (vec![notice.entry()], notice.keep_s(), Some(notice))
+        Ok(Built::Found(entries)) => (entries, menu::KEEP_FOUND_S, None),
+        // The reason stays first; a subtitle in the wanted language may
+        // appear later, so the answer lasts only as long as the reason.
+        Ok(Built::Missing(notice, fallback)) => {
+            let mut entries = vec![notice.entry()];
+            entries.extend(fallback);
+            (entries, notice.keep_s(), Some(notice))
         }
         Err(notice) => (vec![notice.entry()], notice.keep_s(), Some(notice)),
     };
@@ -530,15 +544,26 @@ async fn save_pgs(state: &AppState, kind: &str, k2: Option<&streams::ProbeOutcom
     }
 }
 
+/// What the probes found once there is a ruler.
+enum Built {
+    /// Subtitles in the wanted language (in labeling mode, every candidate).
+    Found(Vec<menu::MenuEntry>),
+    /// Why there are none, and the fallback-language subtitle that fits, if
+    /// any (SS-036).
+    Missing(Notice, Vec<menu::MenuEntry>),
+}
+
 /// K2 and M3 probes side by side, then alignment, the timing dump and the
 /// menu: accepted subtitles, or in labeling mode every candidate, marked.
-/// A missing ruler answers at once, without waiting for M3.
+/// A missing ruler answers at once, without waiting for M3. When nothing in
+/// the wanted language fits, the fallback language is tried against the
+/// same ruler.
 async fn build_menu(
     state: &Arc<AppState>,
     kind: String,
     id: String,
     hints: PlaybackHints,
-) -> Result<Vec<menu::MenuEntry>, Notice> {
+) -> Result<Built, Notice> {
     let query = Query::new(&kind, &id, &state.lang);
     let m3 = match query {
         Some(query) if !state.subtitle_sources.is_empty() => {
@@ -582,6 +607,68 @@ async fn build_menu(
         Some(m3) => m3.await.map_err(|_| Notice::Failed)?,
         None => return Err(Notice::Failed),
     };
+    let rulers = Arc::new(rulers);
+    let wanted = align_candidates(
+        &outcome,
+        cues,
+        rulers.clone(),
+        kind.clone(),
+        state.lang.clone(),
+        state.dump_dir.clone(),
+        state.label_mode,
+    )
+    .await;
+    let notice = match wanted {
+        Ok(entries) if !entries.is_empty() => return Ok(Built::Found(entries)),
+        Ok(_) => Notice::NoneAccepted,
+        Err(Notice::NoCandidates) => Notice::NoCandidates,
+        Err(notice) => return Err(notice),
+    };
+    let fallback = fallback(state, &kind, &id, hints.filename.as_deref(), rulers).await;
+    Ok(Built::Missing(notice, fallback))
+}
+
+/// The best subtitle in the fallback language that fits the ruler, or none
+/// (SS-036). Searched, ranked, aligned and accepted like the wanted
+/// language; not dumped, and off in labeling mode.
+async fn fallback(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+    filename: Option<&str>,
+    rulers: Arc<Vec<(u64, Vec<Event>)>>,
+) -> Vec<menu::MenuEntry> {
+    let Some(lang) = state.fallback_lang.clone().filter(|_| !state.label_mode) else {
+        return Vec::new();
+    };
+    let Some(query) = Query::new(kind, id, &lang) else {
+        return Vec::new();
+    };
+    let (outcome, cues) = sources::probe(&state.subtitle_sources, &query, filename).await;
+    event!(
+        "m3",
+        "m3 fallback probe query={query:?} outcome={outcome:?}"
+    );
+    let mut entries = align_candidates(&outcome, cues, rulers, kind.to_owned(), lang, None, false)
+        .await
+        .unwrap_or_default();
+    entries.truncate(1);
+    event!("m5", "fallback accepted={}", entries.len());
+    entries
+}
+
+/// Downloaded candidates laid over the ruler: the accepted ones as menu
+/// entries in `lang` (in labeling mode, every one, marked), or why there is
+/// nothing to align. Timings are dumped under `dump_dir`, if given.
+async fn align_candidates(
+    outcome: &sources::SourcesProbe,
+    cues: Vec<Option<Vec<srt::Cue>>>,
+    rulers: Arc<Vec<(u64, Vec<Event>)>>,
+    kind: String,
+    lang: String,
+    dump_dir: Option<std::path::PathBuf>,
+    label_mode: bool,
+) -> Result<Vec<menu::MenuEntry>, Notice> {
     if outcome.searches.iter().all(|(_, found)| found.is_err()) {
         return Err(Notice::Failed);
     }
@@ -604,9 +691,6 @@ async fn build_menu(
     }
     // Alignment, the dump and the menu are CPU and disk work; keep them off
     // the async workers.
-    let dump_dir = state.dump_dir.clone();
-    let label_mode = state.label_mode;
-    let lang = state.lang.clone();
     let (trials, entries) = tokio::task::spawn_blocking(move || {
         let dump_name = match dump_dir
             .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
@@ -945,6 +1029,17 @@ mod tests {
     /// All metadata is in the head; the only later read can be the block probe.
     /// With `pgs`, the file is image-only: one English PGS track, indexed.
     fn probe_head(pgs: bool) -> Vec<u8> {
+        let cues: &[(u64, u64)] = if pgs {
+            &[(10, 100), (20, 100), (20, 100)]
+        } else {
+            &[(0, 100)]
+        };
+        mkv_head(pgs, cues)
+    }
+
+    /// An MKV head whose one English track has a cue point per `(time,
+    /// duration)`, in milliseconds.
+    fn mkv_head(pgs: bool, cues: &[(u64, u64)]) -> Vec<u8> {
         fn el(id: u32, data: &[u8]) -> Vec<u8> {
             let bytes = id.to_be_bytes();
             let skip = bytes.iter().take_while(|&&b| b == 0).count();
@@ -965,16 +1060,16 @@ mod tests {
             ]
             .concat(),
         );
-        let cue_at = |time: u8| {
+        let cue_at = |&(time, duration): &(u64, u64)| {
             el(
                 0xBB,
                 &[
-                    el(0xB3, &[time]),
+                    el(0xB3, &time.to_be_bytes()),
                     el(
                         0xB7,
                         &[
                             el(0xF7, &[2]),
-                            el(0xB2, &[100]),
+                            el(0xB2, &duration.to_be_bytes()),
                             el(0xF1, &[0]),
                             el(0xF0, &[0]),
                         ]
@@ -984,11 +1079,7 @@ mod tests {
                 .concat(),
             )
         };
-        let cue = if pgs {
-            [cue_at(10), cue_at(20), cue_at(20)].concat()
-        } else {
-            cue_at(0)
-        };
+        let cue: Vec<u8> = cues.iter().flat_map(cue_at).collect();
         [
             el(0x1A45DFA3, &el(0x4282, b"matroska")),
             el(
@@ -1024,8 +1115,8 @@ mod tests {
         }
     }
 
-    /// Serves `probe_head`; `.1` makes it the image-only file.
-    struct ProbeRange(Arc<tokio::sync::Notify>, bool);
+    /// Serves the head `.1`; later reads never finish.
+    struct ProbeRange(Arc<tokio::sync::Notify>, Vec<u8>);
 
     impl RangeReader for ProbeRange {
         fn open<'a>(
@@ -1034,7 +1125,7 @@ mod tests {
             _host: &'a str,
             _size: Option<u64>,
         ) -> crate::range::OpenFuture<'a> {
-            let head = probe_head(self.1);
+            let head = self.1.clone();
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_RANGE,
@@ -1062,7 +1153,7 @@ mod tests {
             AppState::new(TOKEN.to_owned())
                 .unwrap()
                 .with_stream_source(Arc::new(ProbeStream))
-                .with_range_reader(Arc::new(ProbeRange(read.clone(), false)))
+                .with_range_reader(Arc::new(ProbeRange(read.clone(), probe_head(false))))
                 .with_subtitle_sources(
                     vec![Arc::new(SignalSubtitles(Mutex::new(None)))],
                     "tur".to_owned(),
@@ -1100,7 +1191,7 @@ mod tests {
                 .with_stream_source(Arc::new(ProbeStream))
                 .with_range_reader(Arc::new(ProbeRange(
                     Arc::new(tokio::sync::Notify::new()),
-                    true,
+                    probe_head(true),
                 )))
                 .with_subtitle_sources(
                     vec![Arc::new(SignalSubtitles(Mutex::new(None)))],
@@ -1126,6 +1217,163 @@ mod tests {
         // No alignment dump: there was nothing to align.
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One candidate per language it has a subtitle for; notes each search.
+    struct LangSubtitles {
+        srt: std::collections::HashMap<&'static str, String>,
+        searched: Mutex<Vec<String>>,
+    }
+
+    impl SubtitleSource for LangSubtitles {
+        fn kind(&self) -> sources::SourceKind {
+            sources::SourceKind::OpenSubtitles
+        }
+
+        fn search<'a>(&'a self, query: &'a Query) -> sources::SearchFuture<'a> {
+            self.searched.lock().unwrap().push(query.lang.clone());
+            let found = self
+                .srt
+                .contains_key(query.lang.as_str())
+                .then(|| sources::Candidate::fake(self.kind(), "A"))
+                .into_iter()
+                .collect();
+            Box::pin(async { Ok(found) })
+        }
+
+        fn download<'a>(
+            &'a self,
+            query: &'a Query,
+            _candidate: &'a sources::Candidate,
+        ) -> sources::DownloadFuture<'a> {
+            let bytes = self
+                .srt
+                .get(query.lang.as_str())
+                .map(|srt| srt.clone().into_bytes())
+                .ok_or(sources::SourceError::Other);
+            Box::pin(async { bytes })
+        }
+    }
+
+    /// A 30-minute film's MKV head with an English text ruler, a subtitle
+    /// for it timed 2.5 s early, and one for another film.
+    fn film() -> (Vec<u8>, String, String) {
+        use crate::synth::{self, Style};
+        let mut rng = synth::Rng::new(36);
+        let speech = synth::speech(&mut rng, 30);
+        let ruler = synth::lines(&mut rng, &speech, &Style::RULER);
+        let early = align::Fix {
+            num: 1,
+            den: 1,
+            shift_ms: 2_500,
+        };
+        let fits = synth::distort(&synth::lines(&mut rng, &speech, &Style::OTHER), early);
+        let elsewhere = synth::speech(&mut rng, 30);
+        let other = synth::lines(&mut rng, &elsewhere, &Style::OTHER);
+        let srt_of = |events: &[Event]| {
+            let cues: Vec<srt::Cue> = events
+                .iter()
+                .enumerate()
+                .map(|(i, e)| srt::Cue {
+                    start_ms: e.start_ms,
+                    end_ms: e.end_ms,
+                    text: format!("line {i}"),
+                })
+                .collect();
+            srt::render(
+                &cues,
+                align::Fix {
+                    num: 1,
+                    den: 1,
+                    shift_ms: 0,
+                },
+            )
+        };
+        let cues: Vec<(u64, u64)> = ruler
+            .iter()
+            .map(|e| (e.start_ms, e.end_ms - e.start_ms))
+            .collect();
+        (mkv_head(false, &cues), srt_of(&fits), srt_of(&other))
+    }
+
+    #[tokio::test]
+    async fn english_fallback_is_offered_only_when_nothing_else_fits() {
+        let (head, fits, other) = film();
+        // (Turkish, English, fallback on) → menu, languages searched.
+        let cases = [
+            (
+                None,
+                Some(&fits),
+                true,
+                vec!["⚠ Aday yok", "eng"],
+                vec!["tur", "eng"],
+            ),
+            (
+                Some(&other),
+                Some(&fits),
+                true,
+                vec!["⚠ Uyan yok", "eng"],
+                vec!["tur", "eng"],
+            ),
+            (Some(&fits), Some(&fits), true, vec!["tur"], vec!["tur"]),
+            (
+                Some(&other),
+                Some(&other),
+                true,
+                vec!["⚠ Uyan yok"],
+                vec!["tur", "eng"],
+            ),
+            (None, Some(&fits), false, vec!["⚠ Aday yok"], vec!["tur"]),
+        ];
+        for (i, (tur, eng, on, menu, searched)) in cases.into_iter().enumerate() {
+            let mut srt = std::collections::HashMap::new();
+            if let Some(tur) = tur {
+                srt.insert("tur", tur.clone());
+            }
+            if let Some(eng) = eng {
+                srt.insert("eng", eng.clone());
+            }
+            let source = Arc::new(LangSubtitles {
+                srt,
+                searched: Mutex::new(Vec::new()),
+            });
+            let mut state = AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    head.clone(),
+                )))
+                .with_subtitle_sources(vec![source.clone()], "tur".to_owned());
+            if on {
+                state = state.with_fallback_lang("eng".to_owned());
+            }
+            let app = router(state);
+            let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
+            let (status, body) = call(&app, uri).await;
+            assert_eq!(status, StatusCode::OK, "case {i}");
+            let list: Value = serde_json::from_str(&body).unwrap();
+            let langs: Vec<&str> = list["subtitles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["lang"].as_str().unwrap())
+                .collect();
+            assert_eq!(langs, menu, "case {i}");
+            assert_eq!(*source.searched.lock().unwrap(), searched, "case {i}");
+
+            // The English entry is the fitting subtitle, moved onto the ruler.
+            if let Some(n) = langs.iter().position(|&l| l == "eng") {
+                let url = list["subtitles"][n]["url"].as_str().unwrap();
+                let path = url.trim_start_matches("http://127.0.0.1:7000").to_owned();
+                let (status, served) = call(&app, path).await;
+                assert_eq!(status, StatusCode::OK, "case {i}");
+                let (served, sent) = (srt::parse(&served), srt::parse(&fits));
+                assert_eq!(served.len(), sent.len(), "case {i}");
+                let moved = served[0].start_ms as i64 - sent[0].start_ms as i64;
+                assert!((moved - 2_500).abs() <= 200, "case {i}: moved {moved} ms");
+            }
+        }
     }
 
     async fn call(app: &Router, uri: String) -> (StatusCode, String) {

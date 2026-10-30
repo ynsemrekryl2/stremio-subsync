@@ -120,6 +120,20 @@ pub struct Candidate {
     link: String,
 }
 
+#[cfg(test)]
+impl Candidate {
+    /// A candidate for fake sources in other modules' tests.
+    pub fn fake(source: SourceKind, release: &str) -> Self {
+        Self {
+            source,
+            release: release.to_owned(),
+            fps_milli: None,
+            hearing_impaired: None,
+            link: String::new(),
+        }
+    }
+}
+
 impl std::fmt::Debug for Candidate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Candidate")
