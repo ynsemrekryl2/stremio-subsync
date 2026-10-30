@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time server setup on Ubuntu 24.04 (Oracle Always Free ARM or any VPS).
-# deploy.sh runs it with sudo on the first deploy. Safe to re-run: the token
-# is kept.
+# deploy.sh runs it with sudo on the first deploy. Safe to re-run: the env
+# file, with the token and the secrets env.sh stored, is kept.
 set -euo pipefail
 
 domain="${1:?usage: setup.sh <domain> <source dir>}"
@@ -21,6 +21,7 @@ if command -v netfilter-persistent >/dev/null; then
 	netfilter-persistent save
 fi
 
+# A fresh token: the one used locally or over Funnel is not carried over.
 if [ ! -f "$env_file" ]; then
 	umask 077
 	printf 'SUBSYNC_TOKEN=%s\nSUBSYNC_DOMAIN=%s\n' "$(openssl rand -hex 32)" "$domain" >"$env_file"

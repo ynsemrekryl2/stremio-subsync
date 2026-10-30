@@ -22,23 +22,59 @@ Caddy HTTPS sertifikasını Let's Encrypt'ten kendisi alır ve yeniler. Uygulama
 
 ## 3. Deploy (Mac'ten)
 
+Ön koşul: `scripts/dev.sh` Mac'te en az bir kez çalışmış olmalı. AIOStreams
+linki (ve varsa SubDL anahtarı) oradaki Anahtar Zinciri girdilerinden
+alınır, ssh'in standart girdisiyle sunucuya gider; ekrana ve komut satırına
+düşmez.
+
 İlk sefer:
 
 ```bash
 SUBSYNC_HOST=ubuntu@<ip> SUBSYNC_DOMAIN=<alan adı> deploy/deploy.sh
 ```
 
-Sonraki seferler yalnız `SUBSYNC_HOST` ister. İlk derleme birkaç dakika sürer.
-Token sunucuda üretilir ve `/etc/stremio-subsync.env` dosyasında (yalnız root
-okuyabilir) durur.
+Sonraki seferler yalnız `SUBSYNC_HOST` ister. İlk derleme 1 OCPU'da uzun
+sürer (Rust araç zinciri de kurulur). Her deploy:
+
+1. Kaynağı `rsync` ile `~/stremio-subsync-src/`'ye kopyalar; `.gitignore`'a
+   uyduğu için `cache/`, `dumps/`, `.local/`, worktree'ler ve `target/` gitmez.
+2. İlk seferde `deploy/setup.sh` çalışır: Caddy, güvenlik duvarı, systemd
+   birimi ve yeni bir token.
+3. AIOStreams linkini ve SubDL anahtarını `deploy/env.sh` ile env dosyasına
+   yazar (Anahtar Zinciri'nde SubDL anahtarı yoksa sunucudan da silinir).
+4. Sunucuda derler, servisi yeniden başlatır.
+
+Yalnız gizli değerleri güncellemek (örneğin AIOStreams şifresi
+değişince önce `scripts/dev.sh forget`, sonra `scripts/dev.sh` ile yeniden
+kaydedip):
+
+```bash
+SUBSYNC_HOST=ubuntu@<ip> deploy/deploy.sh secrets
+```
+
+Sunucudaki dosyalar:
+
+| Yol | İçerik |
+|---|---|
+| `/etc/stremio-subsync.env` | Token, alan adı, AIOStreams linki, SubDL anahtarı (yalnız root, 0600) |
+| `/etc/systemd/system/stremio-subsync.service` | Servis birimi (`deploy/stremio-subsync.service`) |
+| `/etc/caddy/Caddyfile` | HTTPS reverse proxy (`deploy/Caddyfile`) |
+| `/var/lib/stremio-subsync/cache/` | Sunulan menülerin cache'i; deploy ve yeniden başlatmada korunur |
+| `/usr/local/bin/stremio-subsync` | Derlenmiş uygulama |
+
+Dump kapalıdır (`SUBSYNC_DUMP_DIR` verilmez); ölçümler yerelde yapılır.
 
 ## 4. Kurulum linki
 
-Token'ı ekrana basmadan panoya kopyalar:
+Sunucunun token'ı yerelin ya da Funnel'ın token'ından farklıdır. Linki ekrana
+basmadan panoya kopyalar:
 
 ```bash
-ssh ubuntu@<ip> 'sudo sh -c ". /etc/stremio-subsync.env; echo https://\$SUBSYNC_DOMAIN/\$SUBSYNC_TOKEN/manifest.json"' | pbcopy
+SUBSYNC_HOST=ubuntu@<ip> deploy/deploy.sh link
 ```
+
+Stremio'da eski SubSync kurulumunu kaldırıp bu linki kur. Olay paneli aynı
+token'la `https://<alan adı>/<token>/dashboard` adresinde.
 
 ## Loglar
 

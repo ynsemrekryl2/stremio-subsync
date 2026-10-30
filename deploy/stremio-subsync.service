@@ -4,9 +4,14 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# Holds SUBSYNC_TOKEN (root-only, 0600). Never copy it into this unit.
+# Holds the token, the AIOStreams link and API keys (root-only, 0600).
+# Never copy them into this unit; deploy/env.sh writes them.
 EnvironmentFile=/etc/stremio-subsync.env
 ExecStart=/usr/local/bin/stremio-subsync
+# Answered menus survive restarts and deploys here. With DynamicUser this is
+# the only writable place.
+StateDirectory=stremio-subsync
+Environment=SUBSYNC_CACHE_DIR=%S/stremio-subsync/cache
 # The server shuts down gracefully on Ctrl-C only.
 KillSignal=SIGINT
 Restart=on-failure
@@ -21,7 +26,8 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_UNIX: glibc's resolver may ask nscd or systemd-resolved over a socket.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 
