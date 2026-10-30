@@ -17,6 +17,7 @@ mod srt;
 mod streams;
 #[cfg(test)]
 mod synth;
+mod translate;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
