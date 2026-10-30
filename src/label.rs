@@ -86,6 +86,7 @@ mod tests {
                 hit_rate: 0.9,
                 windows: Vec::new(),
                 reject: (!accepted).then_some(Reject::LowHits(0)),
+                local: None,
             },
         }
     }

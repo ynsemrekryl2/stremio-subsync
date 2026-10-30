@@ -342,6 +342,17 @@ fix aldığı için temkinli). Sentetik negatiflerle arada ~40 puan pay var.
 Kurtarılan pay küçük (27 dosyanın 1'i), ama o dosyada hiçbir adayı
 sunamıyorduk.
 
+**Uygulandı (SS-039).** `calibrate` artık yerel kabulü `ACCEPT-local` diye
+yazar; 27 dump'ta sonuç ölçümle aynı: 40 kabul değişmedi, …289899'un 3 adayı
+`ACCEPT-local`, 59 ret. Sentetik `synth::stepped` (gerçek bölümdeki basamak
+biçimi, %80–130 gerilmiş, yarısında ters işaretli, 16 tohum): 6'sı yerel
+geçişle sunuluyor ve satırlar doğru yerine ortanca ~25 ms, p90 ≤ 85 ms
+yakın düşüyor. Diğer 10'u **global testten zaten geçiyor** ve tek kaydırmayla
+sunulunca ortanca 130–320 ms, p90 240–470 ms hatalı kalıyor. Yani hafif
+basamaklı kaymada global kabul de kusursuz değil; kabul edilmiş adaylara da
+yerel kaydırma uygulamak ayrı bir karar (SS-021'de kullanıcı fark görmemişti),
+etiket olmadan açılmadı.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,

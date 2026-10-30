@@ -710,7 +710,7 @@ async fn align_candidates(
         let entries = if label_mode {
             label::build(&trials, (*track, events), &cues, dump_name.as_deref())
         } else {
-            menu::accepted(&trials, &cues, &lang)
+            menu::accepted(&trials, &rulers, &cues, &lang)
         };
         (trials, entries)
     })

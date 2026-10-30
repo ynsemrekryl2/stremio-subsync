@@ -292,3 +292,40 @@ pub fn labeled_set(seed: u64) -> Vec<Case> {
 
     cases
 }
+
+/// A subtitle whose offset steps by a few hundred ms at four act breaks, as
+/// when two releases cut them slightly differently (SS-039): the ruler, the
+/// candidate, and where each candidate line belongs on the ruler.
+pub fn stepped(seed: u64) -> (Vec<Event>, Vec<Event>, Vec<u64>) {
+    let mut rng = Rng::new(seed);
+    let minutes = rng.range(40, 60);
+    let speech = speech(&mut rng, minutes);
+    let ruler = lines(&mut rng, &speech, &Style::RULER);
+    let other = lines(&mut rng, &speech, &Style::OTHER);
+    let end = minutes * 60_000;
+    // The shape seen on a real episode, stretched and maybe mirrored.
+    let stretch = rng.range(80, 130) as i64;
+    let sign = if rng.chance(0.5) { 1 } else { -1 };
+    let offsets: Vec<i64> = [0, 350, 150, -150, -300]
+        .iter()
+        .map(|o| sign * o * stretch / 100)
+        .collect();
+    let breaks: Vec<u64> = (1..5)
+        .map(|k| ((end * k / 5) as i64 + rng.signed(end / 20)) as u64)
+        .collect();
+    let truth = fix(1, 1, rng.signed(30_000));
+    let mut candidate = Vec::new();
+    let mut belongs = Vec::new();
+    for e in &other {
+        let offset = offsets[breaks.iter().filter(|&&b| e.start_ms >= b).count()];
+        let moved = Event {
+            start_ms: (e.start_ms as i64 + offset).max(0) as u64,
+            end_ms: (e.end_ms as i64 + offset).max(0) as u64,
+        };
+        if let Some(&line) = distort(&[moved], truth).first() {
+            candidate.push(line);
+            belongs.push(e.start_ms);
+        }
+    }
+    (ruler, candidate, belongs)
+}

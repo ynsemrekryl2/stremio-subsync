@@ -38,6 +38,14 @@ const LOCAL_PAIR_MS: i64 = 700;
 const LOCAL_SPAN: usize = 10;
 /// Pairs needed among them; with fewer, the line keeps the global fix.
 const LOCAL_MIN_PAIRS: usize = 5;
+/// Second chance (SS-039): every window must hit this share of lines once
+/// each candidate line carries its local shift. Real candidates rejected
+/// for a stepped offset reach 81–85%; synthetic wrong ones stay at or
+/// below 36%.
+const LOCAL_MIN_HIT_RATE: f64 = 0.75;
+/// Local shifts may spread this far, largest minus smallest: act breaks cut
+/// a few hundred ms differently, not seconds.
+const LOCAL_MAX_SPAN_MS: i64 = 1_200;
 
 /// Frame-rate fixes tried, as `time * num / den`: a subtitle timed for one
 /// rate laid over a release that plays at another.
@@ -105,6 +113,9 @@ pub struct Verdict {
     pub hit_rate: f64,
     pub windows: Vec<WindowCheck>,
     pub reject: Option<Reject>,
+    /// The checks again with local shifts, when the global fix fails only
+    /// for disagreeing or thinly hit windows (SS-039).
+    pub local: Option<LocalCheck>,
 }
 
 impl Verdict {
@@ -113,12 +124,20 @@ impl Verdict {
         self.fix.filter(|_| self.reject.is_none())
     }
 
+    /// The fix to serve with local shifts on top, when the global checks
+    /// failed but the local ones hold (SS-039).
+    pub fn accepted_locally(&self) -> Option<Fix> {
+        self.fix
+            .filter(|_| self.reject.is_some() && self.local.as_ref().is_some_and(LocalCheck::holds))
+    }
+
     fn rejected(reject: Reject) -> Self {
         Self {
             fix: None,
             hit_rate: 0.0,
             windows: Vec::new(),
             reject: Some(reject),
+            local: None,
         }
     }
 }
@@ -209,6 +228,10 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
         reject = reject.or(failed);
     }
 
+    // Too few lines or candidate lines are not a timing problem; local
+    // shifts cannot fix them.
+    let local = matches!(reject, Some(Reject::Disagree(_) | Reject::LowHits(_)))
+        .then(|| local_check(&ruler, candidate, fix));
     Verdict {
         fix: Some(fix),
         hit_rate: rate(
@@ -217,6 +240,7 @@ pub fn align(ruler: &[Event], candidate: &[Event]) -> Verdict {
         ),
         windows,
         reject,
+        local,
     }
 }
 
@@ -242,7 +266,7 @@ pub fn trials(rulers: &[(u64, Vec<Event>)], candidates: &[Option<Vec<Event>>]) -
             out.push(Trial {
                 track: *track,
                 candidate,
-                accepted: verdict.accepted().is_some(),
+                accepted: verdict.accepted().or(verdict.accepted_locally()).is_some(),
                 elapsed_ms: started.elapsed().as_millis(),
                 verdict,
             });
@@ -307,13 +331,22 @@ pub fn local_shifts(ruler: &[Event], candidate: &[Event], fix: Fix) -> Vec<i64> 
 }
 
 /// The head / middle / end checks again with every candidate line moved by
-/// its local shift on top of `fix` (SS-039 measurement). Safe to log.
+/// its local shift on top of `fix` (SS-039). Safe to log.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalCheck {
     /// Hit rate of each window, counted like [`WindowCheck::hit_rate`].
     pub hit_rates: Vec<f64>,
     /// Largest minus smallest local shift.
     pub span_ms: i64,
+}
+
+impl LocalCheck {
+    /// Every window well hit, with shifts that stay close together.
+    pub fn holds(&self) -> bool {
+        self.hit_rates.len() == WINDOWS
+            && self.hit_rates.iter().all(|&h| h >= LOCAL_MIN_HIT_RATE)
+            && self.span_ms <= LOCAL_MAX_SPAN_MS
+    }
 }
 
 pub fn local_check(ruler: &[Event], candidate: &[Event], fix: Fix) -> LocalCheck {
@@ -662,6 +695,38 @@ mod tests {
     }
 
     #[test]
+    fn stepped_offsets_are_served_and_local_ones_land_close() {
+        // Milder stretches pass the global checks (and land 130–320 ms off
+        // at the median); the rest must pass the local ones and land close.
+        let mut local = 0;
+        for seed in 0..16 {
+            let (ruler, candidate, belongs) = synth::stepped(seed);
+            let verdict = align(&ruler, &candidate);
+            if verdict.accepted().is_some() {
+                continue;
+            }
+            let Some(fix) = verdict.accepted_locally() else {
+                panic!("seed {seed}: not served: {verdict:?}");
+            };
+            local += 1;
+            let extra = local_shifts(&ruler, &candidate, fix);
+            let mut errors: Vec<i64> = candidate
+                .iter()
+                .zip(&extra)
+                .zip(&belongs)
+                .map(|((c, x), &b)| (fix.apply(c.start_ms) + x - b as i64).abs())
+                .collect();
+            errors.sort_unstable();
+            let (median, p90) = (errors[errors.len() / 2], errors[errors.len() * 9 / 10]);
+            assert!(
+                median <= 60 && p90 <= 150,
+                "seed {seed}: median {median}, p90 {p90}"
+            );
+        }
+        assert!(local >= 4, "only {local} of 16 needed the local pass");
+    }
+
+    #[test]
     fn labeled_set_has_no_false_accepts() {
         let mut accepted = 0;
         let mut positives = 0;
@@ -670,7 +735,10 @@ mod tests {
                 let verdict = align(&case.ruler, &case.candidate);
                 let context = format!("seed {seed} {}: {verdict:?}", case.name);
                 match case.label {
-                    Label::Reject => assert_eq!(verdict.accepted(), None, "{context}"),
+                    Label::Reject => {
+                        assert_eq!(verdict.accepted(), None, "{context}");
+                        assert_eq!(verdict.accepted_locally(), None, "{context}");
+                    }
                     Label::Accept(truth) => {
                         positives += 1;
                         let Some(fix) = verdict.accepted() else {

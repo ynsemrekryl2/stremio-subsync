@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use crate::align::Trial;
+use crate::align::{self, Trial};
+use crate::ruler::Event;
 use crate::srt::{self, Cue};
 
 /// Requests kept in memory.
@@ -144,13 +145,25 @@ impl std::fmt::Debug for MenuEntry {
 
 /// Candidates accepted against any of the file's English tracks, best hit
 /// rate first, each moved by the fix of its best trial. Copies of one
-/// translation (same lines, other release) count once.
+/// translation (same lines, other release) count once. One accepted only
+/// on the second, local pass (SS-039) comes after every globally accepted
+/// one and is moved line by line against its ruler track.
 ///
 /// Any track will do: a file's second English track (often SDH) can trip a
 /// window check the other one passes.
-pub fn accepted(trials: &[Trial], cues: &[Option<Vec<Cue>>], lang: &str) -> Vec<MenuEntry> {
+pub fn accepted(
+    trials: &[Trial],
+    rulers: &[(u64, Vec<Event>)],
+    cues: &[Option<Vec<Cue>>],
+    lang: &str,
+) -> Vec<MenuEntry> {
     let mut chosen: Vec<&Trial> = trials.iter().filter(|t| t.accepted).collect();
-    chosen.sort_by(|a, b| b.verdict.hit_rate.total_cmp(&a.verdict.hit_rate));
+    chosen.sort_by(|a, b| {
+        let global = |t: &Trial| t.verdict.accepted().is_some();
+        global(b)
+            .cmp(&global(a))
+            .then(b.verdict.hit_rate.total_cmp(&a.verdict.hit_rate))
+    });
     let mut seen = std::collections::HashSet::new();
     let mut taken = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -168,9 +181,18 @@ pub fn accepted(trials: &[Trial], cues: &[Option<Vec<Cue>>], lang: &str) -> Vec<
         if !seen.insert(fnv(&text.join("\n"))) {
             continue;
         }
+        let srt = if trial.verdict.accepted().is_some() {
+            srt::render(cues, fix)
+        } else {
+            let Some((_, ruler)) = rulers.iter().find(|(track, _)| *track == trial.track) else {
+                continue;
+            };
+            let extra = align::local_shifts(ruler, &srt::events(cues), fix);
+            srt::render_local(cues, fix, &extra)
+        };
         out.push(MenuEntry {
             lang: lang.to_owned(),
-            srt: srt::render(cues, fix),
+            srt,
         });
         if out.len() == MAX_OFFERED {
             break;
@@ -326,6 +348,7 @@ mod tests {
                 hit_rate,
                 windows: Vec::new(),
                 reject: (!accepted).then_some(Reject::LowHits(0)),
+                local: None,
             },
         }
     }
@@ -342,6 +365,68 @@ mod tests {
                 })
                 .collect(),
         )
+    }
+
+    #[test]
+    fn locally_accepted_comes_last_and_moves_line_by_line() {
+        // Ruler lines every 3 s; the candidate's second half runs 400 ms late.
+        let ruler: Vec<Event> = (0..40)
+            .map(|i| Event {
+                start_ms: 10_000 + 3_000 * i,
+                end_ms: 11_000 + 3_000 * i,
+            })
+            .collect();
+        let late: Vec<Cue> = ruler
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let late = if i < 20 { 0 } else { 400 };
+                Cue {
+                    start_ms: e.start_ms + late,
+                    end_ms: e.end_ms + late,
+                    text: format!("l{i}"),
+                }
+            })
+            .collect();
+        let local = |candidate: usize, hit_rate: f64| Trial {
+            verdict: Verdict {
+                reject: Some(Reject::Disagree(1)),
+                local: Some(align::LocalCheck {
+                    hit_rates: vec![1.0; 3],
+                    span_ms: 400,
+                }),
+                ..trial(candidate, true, hit_rate, 0).verdict
+            },
+            ..trial(candidate, true, hit_rate, 0)
+        };
+        let trials = [
+            local(0, 0.9),
+            trial(1, true, 0.6, 0),
+            Trial {
+                track: 9,
+                ..local(2, 0.95)
+            },
+        ];
+        let all = [Some(late.clone()), cues(&["g"]), cues(&["n"])];
+        let rulers = [(5, ruler.clone())];
+        let offered = accepted(&trials, &rulers, &all, "tur");
+        let same = Fix {
+            num: 1,
+            den: 1,
+            shift_ms: 0,
+        };
+        let moved = srt::render_local(
+            &late,
+            same,
+            &align::local_shifts(&ruler, &srt::events(&late), same),
+        );
+        assert_ne!(moved, srt::render(&late, same));
+        // Global first despite its lower hit rate; the one on a track with
+        // no ruler is dropped.
+        assert_eq!(
+            offered.iter().map(|e| e.srt.as_str()).collect::<Vec<_>>(),
+            vec!["1\n00:00:01,000 --> 00:00:01,500\ng\n\n", moved.as_str()]
+        );
     }
 
     #[test]
@@ -364,7 +449,7 @@ mod tests {
             cues(&["a", "b"]),
             cues(&["z"]),
         ];
-        let offered = accepted(&trials, &all, "tur");
+        let offered = accepted(&trials, &[], &all, "tur");
         assert_eq!(
             offered.iter().map(|e| e.srt.as_str()).collect::<Vec<_>>(),
             vec![

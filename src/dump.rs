@@ -154,7 +154,11 @@ pub fn trial_line(name: &str, dump: &Dump, trial: &Trial) -> String {
             .map_or("-".to_owned(), |s| s.to_string()),
         ruler_lines,
         candidate.map_or(0, |c| c.events.len()),
-        if trial.accepted { "ACCEPT" } else { "reject" },
+        match (trial.accepted, verdict.accepted()) {
+            (true, Some(_)) => "ACCEPT",
+            (true, None) => "ACCEPT-local",
+            (false, _) => "reject",
+        },
     );
     if let Some(fix) = verdict.fix {
         let _ = write!(
