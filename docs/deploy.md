@@ -17,8 +17,15 @@ Caddy HTTPS sertifikasını Let's Encrypt'ten kendisi alır ve yeniler. Uygulama
 
 - Instance → Subnet → Security List → Ingress kuralı ekle:
   kaynak `0.0.0.0/0`, TCP, hedef port `80` ve `443`.
-- Alan adında bir **A kaydı** (ör. `subs.ornek.com`) → sunucunun public IP'si.
-  Cloudflare kullanıyorsan kayıt **DNS only** (gri bulut) olmalı.
+  OCI CLI ile (oturum yoksa önce `oci session authenticate --region eu-turin-1`):
+  `oci network security-list update --ingress-security-rules file://...`
+  mevcut kuralların **tamamını** değiştirir; önce `get` ile alıp 80/443'ü
+  ekleyerek gönder. Kural yoksa Let's Encrypt sunucuya ulaşamaz ve Caddy
+  sertifika alamaz (log'da `challenge failed ... connection`).
+- Ad: kendi alan adı gerekmez. Şu an `92-4-220-81.sslip.io` kullanılıyor
+  (IP'yi tire ile yazan ücretsiz isim). Kendi alan adına geçersen bir **A kaydı**
+  (ör. `subs.ornek.com`) → sunucunun public IP'si; Cloudflare kullanıyorsan
+  kayıt **DNS only** (gri bulut) olmalı.
 
 ## 3. Deploy (Mac'ten)
 
@@ -30,7 +37,7 @@ düşmez.
 İlk sefer:
 
 ```bash
-SUBSYNC_HOST=ubuntu@<ip> SUBSYNC_DOMAIN=<alan adı> deploy/deploy.sh
+SUBSYNC_HOST=oracle SUBSYNC_DOMAIN=92-4-220-81.sslip.io deploy/deploy.sh
 ```
 
 Sonraki seferler yalnız `SUBSYNC_HOST` ister. İlk derleme 1 OCPU'da uzun
