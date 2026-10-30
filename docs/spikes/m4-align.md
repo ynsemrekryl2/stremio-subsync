@@ -279,6 +279,31 @@ Bir bölümde 3 aday da ret aldı (`Disagree` / `LowHits`, en iyi %36); menüde
 Eşik değişikliği için hâlâ seçilen girdinin bilindiği etiket gerekir; dosya
 adı artık olay panelinde göründüğü için (SS-031) bu mümkün.
 
+## Basamaklı kayma (2026-10-30, SS-036 denemesi)
+
+Bir dizi bölümünde (gömülü İngilizce SRT, 506 satır) 3 Türkçe ve 3 İngilizce
+adayın altısı da ret aldı; hepsinde orta pencere düştü (isabet ~%12,
+`Disagree` / `LowHits`). Dump'ta cetvel ile Türkçe adaylar 2 dakikalık
+dilimlerle karşılaştırıldı (global fix 25025/24000, +2.0–2.3 sn):
+
+- Kesik yok; kayma **basamak basamak** değişiyor. En iyi adayda 4–16. dk
+  ~+80 ms, 16–26. dk ~+350 ms, 26–30. dk ~+170 ms, 32–38. dk ~−125 ms,
+  38–46. dk ~−270 ms. Üç adayda da aynı biçim, yani fark dosyanın kendisinde
+  (yayın ile web sürümü arasında perde aralarının birkaç yüz ms farklı
+  olması gibi). Toplam açıklık ~0.6–0.9 sn.
+- SS-021'in yerel kaydırması (her satıra ±20 komşusunun 1 sn içindeki
+  eşleşmelerinin ortancası) üç adayda da isabeti eşitliyor:
+
+| aday | global ±400 ms | yerel ±400 ms | global ±200 ms | yerel ±200 ms | üçte birler, global → yerel (±400 ms) | yerel kaydırma aralığı |
+|---|---|---|---|---|---|---|
+| 0 | %59 | %84 | %32 | %72 | 78/25/78 → 83/84/85 | −587…+140 ms |
+| 1 | %61 | %87 | %33 | %71 | 86/23/77 → 86/86/88 | −584…+302 ms |
+| 2 | %74 | %84 | %45 | %72 | 82/62/77 → 82/83/86 | −416…+272 ms |
+
+Sonuç: SS-021 kabul edilmiş dosyalarda fayda göstermemişti; burada tam
+kullanım yerini buldu. Global olarak tutup yerel olarak tutmayan dosyalar
+için ikinci şans: SS-039.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
