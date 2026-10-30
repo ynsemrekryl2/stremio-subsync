@@ -358,6 +358,16 @@ etiket olmadan açılmadı.
 seçtiği girdiyi baş, orta (16–30. dk) ve sonda **senkron** buldu. Etiket:
 yerel kabul doğru (1 bölüm, 3 aday).
 
+**İkinci gerçek kabul (2026-10-30, yalnız PGS film, SubDL'siz):** İngilizce
+yalnız PGS (izler 5, 6, 7); cetvel PGS `Even` fazından. 2 Türkçe aday iz 5
+ve 7'de globalde `Disagree(2)` (son pencere isabeti %26–30). Pencere
+kaymaları 8.52 → 8.82 → 9.07 sn: basamak değil, film boyunca ~0.55 sn
+açılan yavaş bir kayma. Yerel isabet %91–95, aralık **1015 ms** (sınır
+1200). İz 6'da aday tutmadı (yerelde de ≤%16), ret doğru. Kullanıcı
+altyazıyı baş, orta ve sonda **senkron** buldu. Etiket: yerel kabul doğru;
+aralığı sınıra yakın (1015 ms) bir doğru kabul, eşik gevşetilmeden
+korunuyor. Toplam: 2 dosya, 2 doğru yerel kabul, 0 yanlış.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
