@@ -68,7 +68,7 @@ kapsamında sürer.
 > İngilizcesi olmayanlar için yol ölçümden sonra seçilir.
 
 - [~] **SS-032** K4: MKV olmayan dosyaları tanı — kapsayıcıyı ilk 64 KB'tan ayırt et (MP4 `ftyp`, AVI `RIFF…AVI `, MPEG-TS senkron baytları); MP4'te `moov`'u bulup izleri listele (tür, kodek, dil, örnek sayısı, dolu örnek sayısı, fragmented mı); panelde ve log'da görünür — kanıt: testler + `docs/spikes/k4-non-mkv.md` (kullanıcının MKV olmayan dosyası + karşılaşılan diğerleri)
-- [~] **SS-033** MP4 metin izinden cetvel: İngilizce `tx3g`/`text` izinin dolu örneklerinden (`stts` + `stsz`, `elst` kaydırması) olay listesi, mevcut hizalama/teslim yoluna girer — kanıt: testler + (böyle bir dosya bulunursa) Stremio'da kabul edilen altyazı
+- [~] **SS-033** MP4 metin izinden cetvel: İngilizce `tx3g`/`text` izinin dolu örneklerinden (`stts` + `stsz`, `elst` kaydırması) olay listesi, mevcut hizalama/teslim yoluna girer — kanıt: testler + (böyle bir dosya bulunursa) Stremio'da kabul edilen altyazı. **2026-10-30:** gerçek İngilizce tx3g MP4 bulunamadı; ffmpeg ile üretilen 4 dosyada (`moov` sonda / başta, öndeki boşlukla kaydırma, QuickTime `.mov`) cetvel ffmpeg'in geri çıkardığı zamanlarla birebir (120/120 satır, 0 ms), parçalı dosya "biçim dışı", altyazısız dosya "İng. iz yok" (`docs/spikes/k4-non-mkv.md`, `cargo run -- mp4-check`). Stremio'da uçtan uca deneme kalıyor
 - [ ] **SS-034** Gömülü İngilizcesi olmayan MKV dışı dosyalar (çoğu MP4/AVI) için yol kararı: referans İngilizce altyazı (hash / birebir sürüm adı) mı, desteklenmez mi — SS-032 ölçümünden sonra; kanıt: `docs/decisions.md` satırı
 
 ## Çeviri yedeği (M6'dan öne çekildi)

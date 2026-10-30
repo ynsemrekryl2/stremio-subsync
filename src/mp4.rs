@@ -84,8 +84,8 @@ pub struct Mp4Report {
     pub retries: usize,
     pub bytes_read: usize,
     pub elapsed_ms: u128,
-    /// `moov` was inside the first read (a "fast start" file).
-    pub moov_in_head: bool,
+    /// `moov` comes before any `mdat` (a "fast start" file).
+    pub moov_first: bool,
     /// `mvex` is present: samples live in movie fragments, not in `moov`.
     pub fragmented: bool,
     pub tracks: Vec<Mp4Track>,
@@ -202,26 +202,27 @@ pub async fn inspect(file: &dyn ByteSource, head: &[u8]) -> Mp4Outcome {
         bytes_read: 0,
         requests: 0,
     };
-    let (moov, moov_in_head) = find_moov(&mut budget, head).await?;
+    let (moov, moov_first) = find_moov(&mut budget, head).await?;
     let (fragmented, tracks, rulers) = parse_moov(&moov)?;
     Ok(Mp4Report {
         requests: budget.requests,
         retries: file.retries(),
         bytes_read: budget.bytes_read,
         elapsed_ms: started.elapsed().as_millis(),
-        moov_in_head,
+        moov_first,
         fragmented,
         tracks,
         rulers: Rulers(rulers),
     })
 }
 
-/// The data of the top-level `moov` box, and whether the head held it.
+/// The data of the top-level `moov` box, and whether it came before `mdat`.
 async fn find_moov(budget: &mut Budget<'_>, head: &[u8]) -> Result<(Vec<u8>, bool), Mp4Error> {
     // Bytes in hand starting at `at`: the head, or the last chunk read.
     let mut at = 0u64;
     let mut held: Vec<u8> = head.to_vec();
     let mut pos = 0u64;
+    let mut mdat_seen = false;
     for _ in 0..MAX_TOP_BOXES {
         let offset = pos.checked_sub(at).map(|o| o as usize);
         let in_hand = offset.filter(|&o| o + 16 <= held.len());
@@ -253,8 +254,9 @@ async fn find_moov(budget: &mut Budget<'_>, head: &[u8]) -> Result<(Vec<u8>, boo
             let data = held
                 .get(offset + header.len..end as usize)
                 .ok_or(Mp4Error::Malformed("moov cut short"))?;
-            return Ok((data.to_vec(), budget.requests == 0));
+            return Ok((data.to_vec(), !mdat_seen));
         }
+        mdat_seen |= &header.kind == b"mdat";
         match header.size {
             Some(size) => pos += size,
             None => break,
@@ -476,6 +478,67 @@ fn events(sizes: &SampleSizes, runs: &[(u32, u32)], scale: u32, shift: i64) -> V
     out
 }
 
+/// A local file, for `mp4-check`.
+struct LocalFile(std::sync::Mutex<std::fs::File>);
+
+impl ByteSource for LocalFile {
+    fn read(&self, start: u64, len: usize) -> crate::range::ReadFuture<'_> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut out = Vec::new();
+        let read = self.0.lock().map_err(|_| ()).and_then(|mut file| {
+            file.seek(SeekFrom::Start(start)).map_err(|_| ())?;
+            file.by_ref()
+                .take(len as u64)
+                .read_to_end(&mut out)
+                .map_err(|_| ())
+        });
+        Box::pin(async move { read.map(|_| out).map_err(|()| ReadError::Timeout) })
+    }
+}
+
+/// Reads a local MP4 as the server would read a remote one and prints the
+/// report; with a reference SRT (the one muxed in), compares the first
+/// ruler's events with its cue times. Prints counts and times only.
+pub async fn check(path: &std::path::Path, srt: Option<&std::path::Path>) -> std::io::Result<()> {
+    let file = LocalFile(std::sync::Mutex::new(std::fs::File::open(path)?));
+    let head = file
+        .read(0, crate::range::HEAD_BYTES)
+        .await
+        .map_err(|_| std::io::Error::other("head read"))?;
+    println!("container={:?}", sniff(&head));
+    let report = match inspect(&file, &head).await {
+        Ok(report) => report,
+        Err(err) => {
+            println!("error={err:?}");
+            return Ok(());
+        }
+    };
+    println!("report={report:?}");
+    let Some(srt) = srt else {
+        return Ok(());
+    };
+    let text = crate::srt::decode(&std::fs::read(srt)?, "eng");
+    let mut expected = crate::srt::events(&crate::srt::parse(&text));
+    expected.sort_unstable();
+    let Some((track, events)) = report.rulers.0.first() else {
+        println!("compare: no ruler, reference has {} lines", expected.len());
+        return Ok(());
+    };
+    let diff = |a: u64, b: u64| a.abs_diff(b);
+    let pairs = events.iter().zip(&expected);
+    let start = pairs
+        .clone()
+        .map(|(e, r)| diff(e.start_ms, r.start_ms))
+        .max();
+    let end = pairs.map(|(e, r)| diff(e.end_ms, r.end_ms)).max();
+    println!(
+        "compare: track={track} ruler={} reference={} max_start_diff_ms={start:?} max_end_diff_ms={end:?}",
+        events.len(),
+        expected.len()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -668,7 +731,7 @@ pub(crate) mod tests {
         let mem = MemFile::new(bytes.clone());
         let report = inspect(&mem, &head(&bytes)).await.unwrap();
         assert_eq!(report.requests, 0);
-        assert!(report.moov_in_head);
+        assert!(report.moov_first);
         assert!(!report.fragmented);
         assert_eq!(report.tracks.len(), 2);
         assert_eq!(report.tracks[0].handler, "vide");
@@ -708,7 +771,7 @@ pub(crate) mod tests {
         let bytes = file(moov, media, false);
         let mem = MemFile::new(bytes.clone());
         let report = inspect(&mem, &head(&bytes)).await.unwrap();
-        assert!(!report.moov_in_head);
+        assert!(!report.moov_first);
         assert_eq!(report.requests, 1, "one read at moov");
         let reads = mem.reads.lock().unwrap();
         let moov_at = (ftyp().len() + 8 + media) as u64;

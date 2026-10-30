@@ -30,10 +30,23 @@ const MIN_TOKEN_LEN: usize = 32;
 
 #[tokio::main]
 async fn main() {
-    // `stremio-subsync calibrate [dir]` replays saved dumps and
-    // `stremio-subsync pgs-check [dir]` checks saved PGS times; no server.
+    // `stremio-subsync calibrate [dir]` replays saved dumps,
+    // `stremio-subsync pgs-check [dir]` checks saved PGS times and
+    // `stremio-subsync mp4-check <file> [srt]` reads a local MP4; no server.
     let mut args = std::env::args().skip(1);
     let command = args.next();
+    if command.as_deref() == Some("mp4-check") {
+        let (Some(file), srt) = (args.next(), args.next()) else {
+            eprintln!("usage: mp4-check <file> [reference.srt]");
+            std::process::exit(2);
+        };
+        let srt = srt.as_deref().map(std::path::Path::new);
+        if let Err(err) = mp4::check(std::path::Path::new(&file), srt).await {
+            eprintln!("mp4-check: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     type Offline = fn(&std::path::Path) -> std::io::Result<()>;
     let offline: Option<(&str, &str, Offline)> = match command.as_deref() {
         Some("calibrate") => Some(("calibrate", "dumps", dump::calibrate)),

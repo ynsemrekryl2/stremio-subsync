@@ -695,7 +695,7 @@ mod tests {
             retries: 0,
             bytes_read: 0,
             elapsed_ms: 0,
-            moov_in_head: true,
+            moov_first: true,
             fragmented,
             tracks: Vec::new(),
             rulers: crate::mkv::Rulers(rulers),
