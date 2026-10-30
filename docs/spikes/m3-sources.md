@@ -11,7 +11,7 @@ indirilebiliyor mu, ve sıralama doğru sürümü öne alıyor mu?
 | SubDL (`api.subdl.com/api/v1/subtitles`) | ücretsiz (`SUBDL_API_KEY`) | `imdb_id`, `type=movie|tv`, `languages=TR`, `season_number`/`episode_number`; `release_name`, `url`, `hi` | `dl.subdl.com{url}` → ZIP; bölüm adına uyan SRT seçilir |
 
 SubDL'in dokümanı Cloudflare arkasında; alan adları CloudStream'in SubDL
-istemcisinden alındı. Gerçek SubDL denemesi anahtar alınınca yapılacak (SS-017).
+istemcisinden alındı. Gerçek deneme 2026-10-30'da yapıldı (SS-017, aşağıda).
 
 ## Probe
 
@@ -59,6 +59,27 @@ Aynı dosyalarda `m3 probe` (yalnız OpenSubtitles, `tur`). Cetvel M2 tablosunda
   ikinci kaynak olarak önemli.
 - Puanın hizalamaya etkisi SS-014'te ölçülecek: yüksek puanlı aday daha sık
   kabul ediliyor mu?
+
+## SubDL gerçek denemesi (2026-10-30, SS-017)
+
+Anahtar `scripts/dev.sh subdl` ile Anahtar Zinciri'nde; açılışta
+`sources probe: on (lang tur, [OpenSubtitles, SubDl])`.
+
+| İçerik | OpenSubtitles | SubDL | İndirilen 3 aday | Hizalama | Menü |
+|---|---|---|---|---|---|
+| film (WEB-DL, çok dilli gömülü altyazı, dosya boyutla eşleşti) | 0 aday | 4 aday (puan 80, 75, 60, 30) | 3 ZIP'in üçünden de SRT okundu, 1768 satır | en-GB / en-US izlerinde kabul: fix 1/1, 0–3 ms, isabet %94 / %97 / %98 | 2 girdi (3 kabulden kopyalar teke indi); Stremio altyazıyı çekti |
+
+- OpenSubtitles'ta Türkçesi hiç olmayan bir film SubDL sayesinde ilk
+  açılışta senkron Türkçe altyazı aldı; SubDL olmasa "Aday yok" → İngilizce
+  yedek yoluna düşecekti.
+- Adayların satır sayısı (1768) dosyadaki gömülü Türkçe izin cue sayısıyla
+  aynı: SubDL'deki altyazı büyük olasılıkla bu sürümden çıkarılmış. Bu tür
+  dosyalarda Stremio gömülü Türkçe izi zaten kendisi gösterir.
+- Metin izleri 3 ve 4'te (SDH, farklı satır bölme) kabul yok; yerel geçiş de
+  %68–72'de kaldı. İki iz yeterliyse kabul için bir iz yetiyor, sorun değil.
+- Aynı oynatma için Stremio iki istek gönderdi (`videoHash` önce yok, sonra
+  var); iki probe paralel koştu ve aynı sonucu verdi. Çift iş, ama doğruluk
+  sorunu değil.
 
 ## Paralel dalın ek ölçümü
 

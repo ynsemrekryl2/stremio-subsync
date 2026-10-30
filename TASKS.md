@@ -37,7 +37,7 @@ gerçek servis normal kullanımda çağrılır (M5); testler sağlayıcı ağı 
 
 - [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
 - [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
-- [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca). Kapsama sayımında Türkçe aday 38 aramanın 35'inde bulundu; bu yüzden öncelik düşük, ama "uyan yok" durumlarında ikinci kaynak işe yarar
+- [x] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`; `scripts/dev.sh subdl` ile Anahtar Zinciri'nde): adaylar, ZIP içinden doğru SRT — kanıt: testler + **2026-10-30 gerçek deneme:** OpenSubtitles'ta 0 Türkçe adayı olan bir filmde SubDL 4 aday buldu, 3 ZIP'ten de SRT okundu, en-GB/en-US izlerine 0–3 ms ve %94–98 isabetle kabul edildi, menüde 2 girdi sunuldu ve Stremio altyazıyı çekti (`docs/spikes/m3-sources.md`)
 - [ ] **SS-040** Aday genişliği: indirilen ilk 3 adayın hiçbiri kabul almazsa sıradakiler (en çok 3 daha) indirilip denenir — kanıt: testler + daha önce "uyan yok" alan bir dosyada sonraki adayın kabulü. **Ölçüm (2026-10-30):** 18 farklı dump'ın 15'inde SS-039 sonrası kabul var. Kabulsüz 3 dosyanın 2'sinde aramada toplam 2 aday çıkmış (denenecek başka aday yok); yalnız 1'inde (etiketli "kullanılabilir ama gevşek" bölüm) 3'ten fazla aday olmuş olabilir. Dump'lar aramada kaç aday bulunduğunu tutmuyor, bu yüzden kesin pay bilinmiyor. Beklenen kazanç küçük; az adaylı "uyan yok" durumlarında ikinci kaynak (SS-017 SubDL) daha umutlu
 - [ ] **SS-019** İki parçalı (CD1/CD2) altyazıları birleştir: aynı sürümün parçaları art arda eklenip tek aday olarak hizalanır — kanıt: testler + gerçek bir CD1/CD2 örneği
 - [x] **SS-018** Adayları dosya adına benzerliğe göre sırala (sürüm grubu, kaynak, çözünürlük; CAM/TS en sona) — kanıt: `cargo test rank` + gerçek denemede aynı sürüm 165 puanla başta
@@ -107,10 +107,12 @@ kapsamında sürer.
   izi, 6'sında yalnız PGS var; 3'ünde AIOStreams eşleşmedi, 2'sinde İngilizce
   yok/okunamıyor. Türkçe aday 38 aramanın 35'inde bulundu. Kaynak ve örneklem
   sınırları: `docs/spikes/m4-align.md`, “Kapsama”.
-- **Öncelikler (2026-10-29):** SS-020, SS-024, SS-025, SS-028 bitti → çeviri
-  yedeği (SS-036 → SS-037 → SS-038 → SS-026) → SS-006
-  VPS/HTTPS. SS-014 gerçek etiketleri artırma, SS-017 SubDL gerçek denemesi,
-  SS-019 CD1/CD2 birleştirme de açık.
+- **Öncelikler (2026-10-30):** çeviriden önce senkron ve aday seçimi
+  güçlendirildi: SS-039 (basamaklı kaymada yerel ikinci şans) ve SS-017
+  (SubDL ikinci kaynak) bitti. SS-040 (fazladan aday indirme) ölçüldü,
+  kazancı küçük. Sırada: SS-036'nın Stremio kanıtı, sonra çeviri yedeği
+  (SS-037 → SS-038 → SS-026), sonra SS-006 VPS/HTTPS. SS-014 gerçek
+  etiketleri artırma, SS-019 CD1/CD2 birleştirme de açık.
 - **MKV dışı (2026-10-30):** SS-032/SS-033 kodu ve testleri hazır (126 test):
   kapsayıcı panelde görünür, MP4'te İngilizce `tx3g` izi varsa cetvel olur.
   Sırada kullanıcının MKV olmayan dosyasını açıp `docs/spikes/k4-non-mkv.md`
