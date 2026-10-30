@@ -353,6 +353,11 @@ basamaklı kaymada global kabul de kusursuz değil; kabul edilmiş adaylara da
 yerel kaydırma uygulamak ayrı bir karar (SS-021'de kullanıcı fark görmemişti),
 etiket olmadan açılmadı.
 
+**Stremio'da (2026-10-30):** …289899'un bölümü yeniden açıldı; 3 aday
+`accepted: true` (yerel isabet %81–85), menüde 3 `tur` girdisi. Kullanıcı
+seçtiği girdiyi baş, orta (16–30. dk) ve sonda **senkron** buldu. Etiket:
+yerel kabul doğru (1 bölüm, 3 aday).
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,
