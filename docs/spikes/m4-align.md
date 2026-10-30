@@ -304,6 +304,44 @@ Sonuç: SS-021 kabul edilmiş dosyalarda fayda göstermemişti; burada tam
 kullanım yerini buldu. Global olarak tutup yerel olarak tutmayan dosyalar
 için ikinci şans: SS-039.
 
+### İkinci şans ölçümü (2026-10-30, `align::local_check`)
+
+Üç pencere, her aday satırı kendi yerel kaydırmasıyla taşındıktan sonra
+yeniden sayıldı (isabet ±300 ms, pencere başına, global testle aynı sayım).
+`calibrate` satırındaki `local=[… span … h…% h…% h…%]` bu değerleri basar.
+
+**Gerçek dump'lar** (27 dosya, 102 deneme; 40 kabul, 62 ret). Yalnız
+`Disagree` / `LowHits` retleri ikinci şansın konusu; `Sparse` (eksik aday,
+CD1) ve `ThinWindow` (forced iz) ayrı nedenler, dokunulmaz.
+
+| Dump | Aday | Global ret | Global isabet | Yerel isabet | Yerel aralık |
+|---|---|---|---|---|---|
+| …289899 (bölüm, bu not) | 0 · 1 · 2 | `Disagree` / `LowHits` | %12–43 orta | **%81–85** her pencerede | 751–970 ms |
+| …662918 (bölüm, 3 iz) | 1 (1001/1000) | `LowHits(1)` | %48 orta | %73–74 en düşük | 811 ms |
+| …057530 (film A) | 0 (puan 97) | `LowHits(0)` | %37–43 | %58–63 | 1130–1208 ms |
+| …538153 (bölüm) | 1 · 2 | `LowHits(0)` | %42–51 | %50–55 | 640 ms |
+| …265984 (etiketli: "kullanılabilir, gevşek") | 0 | `Disagree(0)` | %28–46 | %47–51 | 921 ms |
+| diğer 30+ ret | | | ≤%40 | ≤%40 | |
+
+Kabul edilenlerde yerel isabet %47–100, aralık 30–822 ms; yerel geçiş
+kabulleri bozmuyor.
+
+**Sentetik etiketli set** (32 tohum × 14 durum): `Disagree`/`LowHits` ile
+reddedilen negatiflerde yerel en düşük pencere isabeti en çok **%36**
+(other-cut), diğerlerinde ≤%17. Pozitiflerde en az **%91**. `forced-ruler`
+negatifi yerelde %67–100'e çıkıyor ama globalde `ThinWindow` alıyor, yani
+ikinci şansa girmiyor. Sette basamaklı kayma pozitif durumu yok; SS-039'da
+eklenecek.
+
+**Önerilen kural (SS-039):** global ret `Disagree` ya da `LowHits` ise ve
+yerel geçişte üç pencerenin hepsi ≥ **%75** isabetliyse ve yerel aralık
+≤ **1200 ms** ise kabul; altyazı `srt::render_local` ile sunulur. Bu kural
+gerçek dump'larda yalnız …289899'un üç adayını kabule çevirir (…662918'in
+1001/1000 adayı %73–74 ile dışarıda kalır; etiketsiz ve kardeş adaylar 1/1
+fix aldığı için temkinli). Sentetik negatiflerle arada ~40 puan pay var.
+Kurtarılan pay küçük (27 dosyanın 1'i), ama o dosyada hiçbir adayı
+sunamıyorduk.
+
 ## Açık
 
 - Sentetik veri gerçekten kolay: pozitiflerde satırların %84–94'ü karşılanıyor,

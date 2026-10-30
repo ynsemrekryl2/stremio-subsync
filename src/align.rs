@@ -306,6 +306,56 @@ pub fn local_shifts(ruler: &[Event], candidate: &[Event], fix: Fix) -> Vec<i64> 
     out
 }
 
+/// The head / middle / end checks again with every candidate line moved by
+/// its local shift on top of `fix` (SS-039 measurement). Safe to log.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalCheck {
+    /// Hit rate of each window, counted like [`WindowCheck::hit_rate`].
+    pub hit_rates: Vec<f64>,
+    /// Largest minus smallest local shift.
+    pub span_ms: i64,
+}
+
+pub fn local_check(ruler: &[Event], candidate: &[Event], fix: Fix) -> LocalCheck {
+    let mut ruler = ruler.to_vec();
+    ruler.sort_unstable();
+    let shifts = local_shifts(&ruler, candidate, fix);
+    let mut starts: Vec<i64> = candidate
+        .iter()
+        .zip(&shifts)
+        .map(|(e, s)| fix.apply(e.start_ms) + s)
+        .collect();
+    starts.sort_unstable();
+    let span_ms = shifts.iter().max().unwrap_or(&0) - shifts.iter().min().unwrap_or(&0);
+    let Some(first) = ruler.first().map(|e| e.start_ms) else {
+        return LocalCheck {
+            hit_rates: Vec::new(),
+            span_ms,
+        };
+    };
+    let last = ruler.iter().map(|e| e.end_ms).max().unwrap_or(first);
+    let length = (last - first).max(1);
+    let hit_rates = (0..WINDOWS)
+        .map(|w| {
+            let lo = first + length * w as u64 / WINDOWS as u64;
+            let hi = first + length * (w as u64 + 1) / WINDOWS as u64;
+            let last_window = w + 1 == WINDOWS;
+            let part: Vec<Event> = ruler
+                .iter()
+                .filter(|e| e.start_ms >= lo && (e.start_ms < hi || last_window))
+                .copied()
+                .collect();
+            let (lo, hi) = (lo as i64, hi as i64);
+            let in_window = starts
+                .iter()
+                .filter(|&&s| s >= lo && (s < hi || last_window))
+                .count();
+            rate(hits(&part, &starts).len(), part.len().min(in_window))
+        })
+        .collect();
+    LocalCheck { hit_rates, span_ms }
+}
+
 fn scale(ms: u64, num: u64, den: u64) -> i64 {
     let scaled = (u128::from(ms) * u128::from(num) + u128::from(den) / 2) / u128::from(den);
     i64::try_from(scaled).unwrap_or(i64::MAX)
@@ -637,5 +687,39 @@ mod tests {
             }
         }
         assert_eq!(accepted, positives, "every positive should be accepted");
+    }
+}
+
+#[cfg(test)]
+mod local_measure {
+    use super::*;
+    use crate::synth::{self, Label};
+
+    #[test]
+    #[ignore = "measurement for SS-039; run with --ignored --nocapture"]
+    fn local_check_on_labeled_set() {
+        for seed in 0..32 {
+            for case in synth::labeled_set(seed) {
+                let verdict = align(&case.ruler, &case.candidate);
+                let Some(fix) = verdict.fix else { continue };
+                let check = local_check(&case.ruler, &case.candidate, fix);
+                let label = match case.label {
+                    Label::Accept(_) => "pos",
+                    Label::Reject => "neg",
+                };
+                println!(
+                    "{label} {seed:2} {:16} global={:?} local_min={:.2} span={} global_min={:.2}",
+                    case.name,
+                    verdict.reject,
+                    check.hit_rates.iter().copied().fold(1.0, f64::min),
+                    check.span_ms,
+                    verdict
+                        .windows
+                        .iter()
+                        .map(|w| w.hit_rate)
+                        .fold(1.0, f64::min),
+                );
+            }
+        }
     }
 }

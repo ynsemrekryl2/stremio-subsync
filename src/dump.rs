@@ -116,11 +116,19 @@ fn local_summary(ruler: &[Event], candidate: &[Event], fix: align::Fix) -> Strin
         .collect();
     moves.sort_unstable();
     let moved = moves.iter().filter(|&&m| m > 0).count();
+    let check = align::local_check(ruler, candidate, fix);
+    let hits: Vec<String> = check
+        .hit_rates
+        .iter()
+        .map(|h| format!("h{:.0}%", h * 100.0))
+        .collect();
     format!(
-        "[moved {}% median {}ms max {}ms]",
+        "[moved {}% median {}ms max {}ms span {}ms {}]",
         100 * moved / moves.len().max(1),
         moves.get(moves.len() / 2).copied().unwrap_or(0),
-        moves.last().copied().unwrap_or(0)
+        moves.last().copied().unwrap_or(0),
+        check.span_ms,
+        hits.join(" ")
     )
 }
 
