@@ -7,7 +7,8 @@
 #   scripts/dev.sh             start the server (extra SUBSYNC_* vars pass through)
 #   scripts/dev.sh link        copy the install link to the clipboard
 #   scripts/dev.sh dashboard   open the live event view in the browser
-#   scripts/dev.sh forget      remove both secrets; the next start makes a new token
+#   scripts/dev.sh subdl       save a SubDL API key (hidden input); later starts use it
+#   scripts/dev.sh forget      remove the secrets; the next start makes a new token
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -31,14 +32,24 @@ dashboard)
 	open "$(base_url)/dashboard"
 	exit 0
 	;;
+subdl)
+	read -rsp "SubDL API key (hidden, Enter): " key
+	echo
+	[ -n "$key" ] || { echo "empty key, nothing saved" >&2; exit 1; }
+	store subdl-key "$key"
+	unset key
+	echo "SubDL key saved; restart the server to use it"
+	exit 0
+	;;
 forget)
 	security delete-generic-password -s "$service" -a token >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a aiostreams-url >/dev/null 2>&1 || true
+	security delete-generic-password -s "$service" -a subdl-key >/dev/null 2>&1 || true
 	echo "secrets removed from the Keychain ($service)"
 	exit 0
 	;;
 *)
-	echo "usage: scripts/dev.sh [start|link|dashboard|forget]" >&2
+	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|forget]" >&2
 	exit 2
 	;;
 esac
@@ -60,4 +71,9 @@ fi
 SUBSYNC_TOKEN="$(secret token)"
 SUBSYNC_AIOSTREAMS_URL="$(secret aiostreams-url)"
 export SUBSYNC_TOKEN SUBSYNC_AIOSTREAMS_URL
+# Optional second subtitle source; an explicit SUBDL_API_KEY wins.
+if [ -z "${SUBDL_API_KEY:-}" ] && [ -n "$(secret subdl-key)" ]; then
+	SUBDL_API_KEY="$(secret subdl-key)"
+	export SUBDL_API_KEY
+fi
 exec cargo run

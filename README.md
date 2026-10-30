@@ -33,8 +33,9 @@ scripts/dev.sh
 ikisi macOS Anahtar Zinciri'ne kaydedilir ve kurulum linki panoya kopyalanır.
 Sonraki açılışlar hiçbir şey sormaz; kurulum linki aynı kalır, eklentiyi
 yeniden kurmak gerekmez. `scripts/dev.sh link` linki yeniden panoya kopyalar,
-`scripts/dev.sh dashboard` olay panelini açar, `scripts/dev.sh forget` iki
-sırrı siler (sonraki açılışta yeni token). Ek `SUBSYNC_*` değişkenleri
+`scripts/dev.sh dashboard` olay panelini açar, `scripts/dev.sh subdl` SubDL
+anahtarını gizli girişle Anahtar Zinciri'ne kaydeder (sonraki açılışlar onu
+kullanır), `scripts/dev.sh forget` sırları siler (sonraki açılışta yeni token). Ek `SUBSYNC_*` değişkenleri
 geçer, örneğin `SUBSYNC_DUMP_DIR=dumps scripts/dev.sh`.
 
 Elle çalıştırmak için:
@@ -60,7 +61,7 @@ http://127.0.0.1:7001/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_SOURCES_PROBE` | açık | `0` ise aday altyazı aranmaz. Açıkken en iyi 3 aday indirilir. |
 | `SUBSYNC_BLOCK_PROBE` | kapalı | `1` ise cetvel izinin bloklarını arka planda ölçer (SS-028); metin saklanmaz. Gerçek okuma maliyeti henüz doğrulanmadı. |
 | `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
-| `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. |
+| `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. `scripts/dev.sh` bunu Anahtar Zinciri'nden alır (`scripts/dev.sh subdl`). |
 | `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
 | `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Kaydırması olan her adayın bir de `yerel` sürümü gelir (SS-021: kayma filmin içinde değişiyorsa satırları çevresine göre ayrıca kaydırır). Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
 
