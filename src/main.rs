@@ -19,6 +19,7 @@ mod streams;
 #[cfg(test)]
 mod synth;
 mod translate;
+mod translations;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -148,6 +149,8 @@ async fn main() {
         eprintln!("SUBSYNC_LANG must be a three-letter ISO 639-2 code such as tur");
         std::process::exit(2);
     }
+    // Translation needs the English fallback, so the sources (SS-026).
+    let mut translate_into = None;
     // Candidate search and download. On by default since M5;
     // `SUBSYNC_SOURCES_PROBE=0` turns it off.
     if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() != Ok("0") {
@@ -168,6 +171,7 @@ async fn main() {
         if lang != "eng" {
             event!("start", "fallback language: eng");
             state = state.with_fallback_lang("eng".to_owned());
+            translate_into = Some(lang.clone());
         }
         state = state.with_subtitle_sources(found, lang);
     } else {
@@ -180,7 +184,8 @@ async fn main() {
         }
         _ => event!("start", "timing dump: off"),
     }
-    if std::env::var("SUBSYNC_LABEL_MODE").as_deref() == Ok("1") {
+    let label_mode = std::env::var("SUBSYNC_LABEL_MODE").as_deref() == Ok("1");
+    if label_mode {
         event!(
             "start",
             "label mode: on (every candidate listed in Stremio, marked; no disk cache)"
@@ -189,12 +194,40 @@ async fn main() {
     }
     // Answered menus survive restarts here; `off` keeps them in memory only.
     let cache_dir = std::env::var("SUBSYNC_CACHE_DIR").unwrap_or_else(|_| "cache".to_owned());
-    match cache_dir.trim() {
-        "" | "off" => event!("start", "subtitle cache: memory only"),
+    let cache_dir = match cache_dir.trim() {
+        "" | "off" => {
+            event!("start", "subtitle cache: memory only");
+            None
+        }
         dir => {
             event!("start", "subtitle cache: {dir}");
             state = state.with_cache_dir(dir.into());
+            Some(std::path::PathBuf::from(dir))
         }
+    };
+    // The fitting English subtitle, translated when nothing in the wanted
+    // language fits (SS-026). The key is never printed.
+    let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
+    match translate_into.filter(|_| !key.trim().is_empty() && !label_mode) {
+        Some(lang) => {
+            let model = std::env::var("SUBSYNC_TRANSLATE_MODEL")
+                .unwrap_or_else(|_| openrouter::DEFAULT_MODEL.to_owned());
+            let Some(client) = openrouter::OpenRouter::new(key.trim().to_owned(), &model) else {
+                eprintln!(
+                    "SUBSYNC_TRANSLATE_MODEL must be a model id such as {}",
+                    openrouter::DEFAULT_MODEL
+                );
+                std::process::exit(2);
+            };
+            event!("start", "translation: on (model {model}, into {lang})");
+            state = state.with_translations(translations::Translations::new(
+                Arc::new(client),
+                lang,
+                model,
+                cache_dir,
+            ));
+        }
+        None => event!("start", "translation: off"),
     }
     let listener = tokio::net::TcpListener::bind(bind)
         .await

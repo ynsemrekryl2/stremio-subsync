@@ -58,12 +58,14 @@ pub fn build(
         subs.push(MenuEntry {
             lang: label(trial, false, dump),
             srt: srt::render(cues, fix),
+            translated: false,
         });
         if trial.verdict.fix.is_some() {
             let extra = align::local_shifts(ruler, &srt::events(cues), fix);
             subs.push(MenuEntry {
                 lang: label(trial, true, dump),
                 srt: srt::render_local(cues, fix, &extra),
+                translated: false,
             });
         }
     }

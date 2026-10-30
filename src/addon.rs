@@ -27,6 +27,7 @@ use crate::ruler::Event;
 use crate::sources::{self, Query, SubtitleSource};
 use crate::srt;
 use crate::streams::{self, StreamSource};
+use crate::translations::Translations;
 
 /// Shared state for the HTTP handlers.
 pub struct AppState {
@@ -50,6 +51,9 @@ pub struct AppState {
     label_mode: bool,
     /// Where answered menus are kept across restarts (not in labeling mode).
     cache_dir: Option<std::path::PathBuf>,
+    /// Translates the fitting English subtitle when nothing in `lang` fits
+    /// (SS-026).
+    translations: Option<Arc<Translations>>,
 }
 
 impl AppState {
@@ -67,6 +71,7 @@ impl AppState {
             menus: Mutex::new(MenuCache::default()),
             label_mode: false,
             cache_dir: None,
+            translations: None,
         })
     }
 
@@ -103,6 +108,13 @@ impl AppState {
     /// `fallback` and offers the best one that does (SS-036).
     pub fn with_fallback_lang(mut self, fallback: String) -> Self {
         self.fallback_lang = Some(fallback);
+        self
+    }
+
+    /// Offers a translation of the fitting English subtitle when nothing in
+    /// the wanted language fits (SS-026).
+    pub fn with_translations(mut self, translations: Translations) -> Self {
+        self.translations = Some(Arc::new(translations));
         self
     }
 
@@ -392,6 +404,18 @@ fn menu_list(
         })
         .collect();
     let offered = subtitles.len();
+    // A listed translation gets its job going before anyone picks it.
+    let english: Vec<String> = entries
+        .iter()
+        .filter(|e| e.translated)
+        .map(|e| e.srt.clone())
+        .collect();
+    drop(menus);
+    if let Some(translations) = &state.translations {
+        for english in &english {
+            translations.ensure(english);
+        }
+    }
     Some((
         Json(SubtitlesResponse { subtitles }).into_response(),
         offered,
@@ -408,11 +432,20 @@ async fn menu_srt(
     let Some(n) = file.strip_suffix(".srt").and_then(|n| n.parse().ok()) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let srt = state
+    let picked = state
         .menus
         .lock()
         .ok()
-        .and_then(|menus| menus.srt(entry, n).map(str::to_owned));
+        .and_then(|menus| menus.get(entry, n).cloned());
+    // A translation is served as far as it has got (SS-026); with no
+    // translator any more, as the English it starts from.
+    let srt = picked.map(|picked| match &state.translations {
+        Some(translations) if picked.translated => {
+            translations.ensure(&picked.srt);
+            translations.current(&picked.srt).unwrap_or(picked.srt)
+        }
+        _ => picked.srt,
+    });
     // Whether Stremio fetches the file again on each pick (SS-042).
     event!(
         "fetch",
@@ -449,6 +482,10 @@ async fn run_probes(
         // appear later, so the answer lasts only as long as the reason.
         Ok(Built::Missing(notice, fallback)) => {
             let mut entries = vec![notice.entry()];
+            // The best English that fits is what gets translated (SS-026).
+            if let (Some(translations), Some(english)) = (&state.translations, fallback.first()) {
+                entries.push(translations.entry(&english.srt));
+            }
             entries.extend(fallback);
             (entries, notice.keep_s(), Some(notice))
         }
@@ -1386,6 +1423,195 @@ mod tests {
         }
     }
 
+    /// Translates each asked line as `tr <text>`; blocks wait for `go`
+    /// permits, so a test can look at a translation half way.
+    struct GatedTranslator {
+        go: tokio::sync::Semaphore,
+        analyzed: Mutex<usize>,
+    }
+
+    impl crate::translate::Translator for GatedTranslator {
+        fn analyze<'a>(
+            &'a self,
+            _request: &'a crate::translate::AnalysisRequest,
+        ) -> crate::translate::AnalyzeFuture<'a> {
+            *self.analyzed.lock().unwrap() += 1;
+            Box::pin(async {
+                Ok(crate::translate::Analysis {
+                    summary: "A film".to_owned(),
+                    characters: Vec::new(),
+                    glossary: Vec::new(),
+                })
+            })
+        }
+
+        fn translate<'a>(
+            &'a self,
+            request: &'a crate::translate::BlockRequest,
+        ) -> crate::translate::TranslateFuture<'a> {
+            Box::pin(async move {
+                self.go.acquire().await.unwrap().forget();
+                Ok(request
+                    .context
+                    .iter()
+                    .filter(|l| request.output_ids.contains(&l.id))
+                    .map(|l| crate::translate::Line {
+                        id: l.id,
+                        text: format!("tr {}", l.text),
+                    })
+                    .collect())
+            })
+        }
+    }
+
+    fn translated_app(
+        head: &[u8],
+        eng: &str,
+        translator: Arc<GatedTranslator>,
+        cache: &std::path::Path,
+    ) -> Router {
+        let mut srt = std::collections::HashMap::new();
+        srt.insert("eng", eng.to_owned());
+        let source = Arc::new(LangSubtitles {
+            srt,
+            searched: Mutex::new(Vec::new()),
+        });
+        router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    head.to_vec(),
+                )))
+                .with_subtitle_sources(vec![source], "tur".to_owned())
+                .with_fallback_lang("eng".to_owned())
+                .with_cache_dir(cache.to_owned())
+                .with_translations(crate::translations::Translations::new(
+                    translator,
+                    "tur".to_owned(),
+                    "test/model".to_owned(),
+                    Some(cache.to_owned()),
+                )),
+        )
+    }
+
+    /// The menu's languages and the path of each entry's file.
+    async fn menu_of(app: &Router) -> Vec<(String, String)> {
+        let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
+        let (status, body) = call(app, uri).await;
+        assert_eq!(status, StatusCode::OK);
+        let list: Value = serde_json::from_str(&body).unwrap();
+        list["subtitles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let url = s["url"].as_str().unwrap();
+                (
+                    s["lang"].as_str().unwrap().to_owned(),
+                    url.trim_start_matches("http://127.0.0.1:7000").to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn english_fallback_is_translated_and_served_as_far_as_it_got() {
+        let (head, fits, _) = film();
+        let cache = std::env::temp_dir().join(format!(
+            "subsync-translation-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let translator = Arc::new(GatedTranslator {
+            go: tokio::sync::Semaphore::new(0),
+            analyzed: Mutex::new(0),
+        });
+        let app = translated_app(&head, &fits, translator.clone(), &cache);
+        let menu = menu_of(&app).await;
+        let langs: Vec<&str> = menu.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(langs, vec!["⚠ Aday yok", "Türkçe çeviri", "eng"]);
+        let (english, translation) = (&menu[2].1, &menu[1].1);
+        let english = srt::parse(&call(&app, english.clone()).await.1);
+
+        // Nothing translated yet: the English, with a note on the first line.
+        let served = srt::parse(&call(&app, translation.clone()).await.1);
+        assert_eq!(served.len(), english.len());
+        assert!(served[0].text.starts_with("[SubSync: çeviri %0,"));
+        assert_eq!(served[1].text, english[1].text);
+
+        // Every block let through: the whole translation, on the same times.
+        translator.go.add_permits(1_000);
+        let done = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let body = call(&app, translation.clone()).await.1;
+                if !body.contains("SubSync") {
+                    break srt::parse(&body);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(done.len(), english.len());
+        for (got, en) in done.iter().zip(&english) {
+            assert_eq!((got.start_ms, got.end_ms), (en.start_ms, en.end_ms));
+            assert_eq!(got.text, format!("tr {}", en.text));
+        }
+        assert_eq!(*translator.analyzed.lock().unwrap(), 1, "one job");
+
+        // After a restart the translation comes from disk, untranslated again.
+        let fresh = Arc::new(GatedTranslator {
+            go: tokio::sync::Semaphore::new(0),
+            analyzed: Mutex::new(0),
+        });
+        let app = translated_app(&head, &fits, fresh.clone(), &cache);
+        let menu = menu_of(&app).await;
+        assert_eq!(menu[1].0, "Türkçe çeviri");
+        let again = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let body = call(&app, menu[1].1.clone()).await.1;
+                if !body.contains("SubSync") {
+                    break srt::parse(&body);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(again, done);
+        assert_eq!(*fresh.analyzed.lock().unwrap(), 0, "not translated again");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[tokio::test]
+    async fn no_translator_means_no_translation_entry() {
+        let (head, fits, _) = film();
+        let mut srt = std::collections::HashMap::new();
+        srt.insert("eng", fits);
+        let source = Arc::new(LangSubtitles {
+            srt,
+            searched: Mutex::new(Vec::new()),
+        });
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    head,
+                )))
+                .with_subtitle_sources(vec![source], "tur".to_owned())
+                .with_fallback_lang("eng".to_owned()),
+        );
+        let langs: Vec<String> = menu_of(&app).await.into_iter().map(|(l, _)| l).collect();
+        assert_eq!(langs, vec!["⚠ Aday yok", "eng"]);
+    }
+
     async fn call(app: &Router, uri: String) -> (StatusCode, String) {
         let request = Request::get(uri)
             .header(header::HOST, "127.0.0.1:7000")
@@ -1403,6 +1629,7 @@ mod tests {
         vec![menu::MenuEntry {
             lang: "tur".to_owned(),
             srt: SRT.to_owned(),
+            translated: false,
         }]
     }
 
