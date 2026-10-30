@@ -8,6 +8,7 @@ mod label;
 mod menu;
 mod mkv;
 mod mp4;
+mod openrouter;
 mod pgs;
 mod range;
 mod rank;
@@ -36,7 +37,9 @@ const DEFAULT_BIND: &str = "127.0.0.1:7001";
 async fn main() {
     // `stremio-subsync calibrate [dir]` replays saved dumps,
     // `stremio-subsync pgs-check [dir]` checks saved PGS times and
-    // `stremio-subsync mp4-check <file> [srt]` reads a local MP4; no server.
+    // `stremio-subsync mp4-check <file> [srt]` reads a local MP4 and
+    // `stremio-subsync translate-check <srt> [out]` translates a local SRT;
+    // no server.
     let mut args = std::env::args().skip(1);
     let command = args.next();
     if command.as_deref() == Some("mp4-check") {
@@ -47,6 +50,18 @@ async fn main() {
         let srt = srt.as_deref().map(std::path::Path::new);
         if let Err(err) = mp4::check(std::path::Path::new(&file), srt).await {
             eprintln!("mp4-check: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if command.as_deref() == Some("translate-check") {
+        let (Some(file), out) = (args.next(), args.next()) else {
+            eprintln!("usage: translate-check <english.srt> [out.srt]");
+            std::process::exit(2);
+        };
+        let out = out.as_deref().map(std::path::Path::new);
+        if let Err(err) = openrouter::check(std::path::Path::new(&file), out).await {
+            eprintln!("translate-check: {err}");
             std::process::exit(1);
         }
         return;

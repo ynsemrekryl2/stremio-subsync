@@ -8,6 +8,9 @@
 #   scripts/dev.sh link        copy the install link to the clipboard
 #   scripts/dev.sh dashboard   open the live event view in the browser
 #   scripts/dev.sh subdl       save a SubDL API key (hidden input); later starts use it
+#   scripts/dev.sh openrouter  save an OpenRouter API key (hidden input)
+#   scripts/dev.sh translate-check <english.srt> [out.srt]
+#                              translate a local SRT with that key; prints counts only
 #   scripts/dev.sh forget      remove the secrets; the next start makes a new token
 set -euo pipefail
 
@@ -41,15 +44,30 @@ subdl)
 	echo "SubDL key saved; restart the server to use it"
 	exit 0
 	;;
+openrouter)
+	read -rsp "OpenRouter API key (hidden, Enter): " key
+	echo
+	[ -n "$key" ] || { echo "empty key, nothing saved" >&2; exit 1; }
+	store openrouter-key "$key"
+	unset key
+	echo "OpenRouter key saved"
+	exit 0
+	;;
+translate-check)
+	shift
+	[ -n "$(secret openrouter-key)" ] || { echo "no OpenRouter key: run scripts/dev.sh openrouter" >&2; exit 1; }
+	OPENROUTER_API_KEY="$(secret openrouter-key)" exec cargo run --release -- translate-check "$@"
+	;;
 forget)
 	security delete-generic-password -s "$service" -a token >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a aiostreams-url >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a subdl-key >/dev/null 2>&1 || true
+	security delete-generic-password -s "$service" -a openrouter-key >/dev/null 2>&1 || true
 	echo "secrets removed from the Keychain ($service)"
 	exit 0
 	;;
 *)
-	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|forget]" >&2
+	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|openrouter|translate-check|forget]" >&2
 	exit 2
 	;;
 esac

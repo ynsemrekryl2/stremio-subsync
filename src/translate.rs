@@ -13,9 +13,6 @@
 //! Subtitle text never reaches `Debug` or `Display`: every type that holds
 //! it prints counts and lengths only.
 
-// Wired into delivery by SS-026.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::future::Future;
