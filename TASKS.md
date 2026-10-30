@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-040**.
+Sonraki boş numara: **SS-041**.
 
 ## M0 — İskelet
 
@@ -38,6 +38,7 @@ gerçek servis normal kullanımda çağrılır (M5); testler sağlayıcı ağı 
 - [x] **SS-015** SRT okuma: bayt → metin (UTF-8 / UTF-16 / dile göre eski kod sayfası), satır zamanları; bir `Fix` ile yeniden yazma — kanıt: `cargo test srt` (7 test; CP1254, bozuk bloklar, gidiş-dönüş)
 - [x] **SS-016** OpenSubtitles v3 (anahtarsız Stremio add-on'u): IMDb id + dil için adaylar, indirme — kanıt: testler + `docs/spikes/m3-sources.md` (4 içerikte 2–7 Türkçe aday, 12 indirmenin hepsi okundu)
 - [~] **SS-017** SubDL (ücretsiz anahtar, `SUBDL_API_KEY`): adaylar, ZIP içinden doğru SRT — kanıt: testler (gerçek deneme anahtar alınınca). Kapsama sayımında Türkçe aday 38 aramanın 35'inde bulundu; bu yüzden öncelik düşük, ama "uyan yok" durumlarında ikinci kaynak işe yarar
+- [ ] **SS-040** Aday genişliği: indirilen ilk 3 adayın hiçbiri kabul almazsa sıradakiler (en çok 3 daha) indirilip denenir — kanıt: testler + daha önce "uyan yok" alan bir dosyada sonraki adayın kabulü. **Ölçüm (2026-10-30):** 18 farklı dump'ın 15'inde SS-039 sonrası kabul var. Kabulsüz 3 dosyanın 2'sinde aramada toplam 2 aday çıkmış (denenecek başka aday yok); yalnız 1'inde (etiketli "kullanılabilir ama gevşek" bölüm) 3'ten fazla aday olmuş olabilir. Dump'lar aramada kaç aday bulunduğunu tutmuyor, bu yüzden kesin pay bilinmiyor. Beklenen kazanç küçük; az adaylı "uyan yok" durumlarında ikinci kaynak (SS-017 SubDL) daha umutlu
 - [ ] **SS-019** İki parçalı (CD1/CD2) altyazıları birleştir: aynı sürümün parçaları art arda eklenip tek aday olarak hizalanır — kanıt: testler + gerçek bir CD1/CD2 örneği
 - [x] **SS-018** Adayları dosya adına benzerliğe göre sırala (sürüm grubu, kaynak, çözünürlük; CAM/TS en sona) — kanıt: `cargo test rank` + gerçek denemede aynı sürüm 165 puanla başta
 
