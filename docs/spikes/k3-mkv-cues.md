@@ -7,7 +7,15 @@ Soru: Debrid linkleri Range isteğini destekliyor mu? Gerçek MKV'lerde
 
 Real-Debrid: **evet**. Ayrıntı ve ham satırlar K2 notunda
 (`docs/spikes/k2-aiostreams-match.md`, "Range okuma sonuçları"). Okumalar
-oynatmayla aynı ev IP'sinden yapıldı; VPS IP'sinden okuma henüz denenmedi.
+oynatmayla aynı ev IP'sinden yapıldı.
+
+**VPS IP'sinden (2026-10-30, SS-008): evet.** Oracle sunucusu (eu-turin-1)
+Stremio oynatması evden sürerken aynı filmi okudu: AIOStreams 14 stream,
+`both: 1` eşleşme (0,5 sn); dosyanın Tracks/Cues'u ve iki PGS izinin cetveli
+(2087 ve 2044 olay) okundu; 4 deneme (2 aday × 2 iz) 40–45 ms; istekten
+menüye ~7 sn. Debrid sunucu IP'sinden gelen okumayı reddetmedi, oynatma
+kesilmedi. İstek tekrarında (Stremio aynı isteği iki kez attı) okuma yine
+sorunsuz.
 TorBox: SS-007.
 
 ## Yöntem
@@ -90,7 +98,7 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
   ayrı bir satır yok: ya Stremio altyazı istemedi, ya da hata yalnız oynatıcı
   tarafında oldu. Sayılan her satırda EBML başlığı, Tracks ve Cues dosyanın
   kendisinden okunduğu için sayımı etkilemiyor.
-- Açık kalanlar: VPS IP'sinden okuma (SS-008), TorBox (SS-007).
+- Açık kalanlar: TorBox (SS-007). VPS IP'sinden okuma SS-008 ile doğrulandı.
 
 ## Notlar
 
