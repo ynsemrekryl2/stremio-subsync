@@ -168,6 +168,10 @@ pub enum TranslateError {
     /// Worth trying again later (timeout, rate limit, 5xx).
     Transient,
     Permanent,
+    /// The answer could not be read in the asked shape (broken JSON, a
+    /// refusal, a filtered or cut answer). A model slip, not a dead
+    /// service: it is repaired like a wrong answer.
+    BadAnswer,
 }
 
 pub type AnalyzeFuture<'a> =
@@ -218,7 +222,10 @@ pub async fn translate(
             terms: context_terms(&lines),
         })
         .await
-        .map_err(Failure::Translator)?;
+        .map_err(|err| match err {
+            TranslateError::BadAnswer => Failure::BadAnalysis,
+            err => Failure::Translator(err),
+        })?;
     if !analysis.is_valid() {
         return Err(Failure::BadAnalysis);
     }
@@ -372,6 +379,8 @@ pub enum Violation {
     Malformed {
         id: u32,
     },
+    /// The whole answer could not be read ([`TranslateError::BadAnswer`]).
+    Unreadable,
 }
 
 /// A failed check: what was wrong, which ids to ask again, and the lines
@@ -449,18 +458,15 @@ fn clean_text(text: &str) -> String {
 
 /// One block with the fixed repair budget: the first answer, up to
 /// [`MAX_TARGETED_REPAIRS`] asking only for the bad lines (merged with
-/// those that passed), then one clean full retry. A translator error ends
-/// it at once; only a fully valid block comes back.
+/// those that passed), then one clean full retry. An unreadable answer uses
+/// the budget like a wrong one; any other translator error ends it at once.
+/// Only a fully valid block comes back.
 async fn translate_block(
     translator: &dyn Translator,
     request: &BlockRequest,
 ) -> Result<Vec<String>, Failure> {
     let expected = request.output_ids.clone();
-    let answer = translator
-        .translate(request)
-        .await
-        .map_err(Failure::Translator)?;
-    let mut invalid = match validate(&expected, &answer) {
+    let mut invalid = match check(&expected, ask(translator, request).await?) {
         Ok(texts) => return Ok(texts),
         Err(invalid) => invalid,
     };
@@ -473,10 +479,7 @@ async fn translate_block(
             mode: Mode::TargetedRepair,
             ..request.clone()
         };
-        let answer = translator
-            .translate(&repair)
-            .await
-            .map_err(Failure::Translator)?;
+        let answer = ask(translator, &repair).await?;
         let mut merged: Vec<Line> = invalid
             .accepted
             .iter()
@@ -485,7 +488,7 @@ async fn translate_block(
                 text: text.clone(),
             })
             .collect();
-        merged.extend(answer);
+        merged.extend(answer.unwrap_or_default());
         invalid = match validate(&expected, &merged) {
             Ok(texts) => return Ok(texts),
             Err(invalid) => invalid,
@@ -496,11 +499,7 @@ async fn translate_block(
         ..request.clone()
     };
     for _ in 0..MAX_FULL_RETRIES {
-        let answer = translator
-            .translate(&retry)
-            .await
-            .map_err(Failure::Translator)?;
-        invalid = match validate(&expected, &answer) {
+        invalid = match check(&expected, ask(translator, &retry).await?) {
             Ok(texts) => return Ok(texts),
             Err(invalid) => invalid,
         };
@@ -509,6 +508,30 @@ async fn translate_block(
         block: request.block,
         violations: invalid.violations,
     })
+}
+
+/// The translator's answer, or `None` when it could not be read.
+async fn ask(
+    translator: &dyn Translator,
+    request: &BlockRequest,
+) -> Result<Option<Vec<Line>>, Failure> {
+    match translator.translate(request).await {
+        Ok(answer) => Ok(Some(answer)),
+        Err(TranslateError::BadAnswer) => Ok(None),
+        Err(err) => Err(Failure::Translator(err)),
+    }
+}
+
+/// [`validate`], with an unreadable answer asking for every line again.
+fn check(expected: &[u32], answer: Option<Vec<Line>>) -> Result<Vec<String>, Invalid> {
+    match answer {
+        Some(answer) => validate(expected, &answer),
+        None => Err(Invalid {
+            violations: vec![Violation::Unreadable],
+            repair_ids: expected.to_vec(),
+            accepted: BTreeMap::new(),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -758,6 +781,33 @@ mod tests {
                 (Mode::TargetedRepair, vec![2]),
                 (Mode::FullRetry, vec![1, 2, 3]),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_answers_use_the_repair_budget() {
+        let good = || Ok(vec![line(1, "one"), line(2, "two")]);
+        let fake = Fake::scripted(vec![Err(TranslateError::BadAnswer), good()]);
+        let texts = translate_block(&fake, &block_request(&[1, 2]))
+            .await
+            .unwrap();
+        assert_eq!(texts, vec!["one", "two"]);
+        let asked = fake.asked();
+        assert_eq!(asked[1].mode, Mode::TargetedRepair);
+        assert_eq!(asked[1].output_ids, vec![1, 2], "every line asked again");
+
+        let bad = || Err(TranslateError::BadAnswer);
+        let fake = Fake::scripted(vec![bad(), bad(), bad(), bad(), good()]);
+        let err = translate_block(&fake, &block_request(&[1, 2]))
+            .await
+            .unwrap_err();
+        assert_eq!(fake.asked().len(), 4, "bounded like any wrong answer");
+        assert_eq!(
+            err,
+            Failure::Exhausted {
+                block: 1,
+                violations: vec![Violation::Unreadable]
+            }
         );
     }
 

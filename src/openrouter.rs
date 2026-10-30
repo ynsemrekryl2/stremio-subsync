@@ -9,12 +9,15 @@
 //! keep prompts are excluded with `data_collection: deny`).
 //!
 //! The key, prompts and answers never reach a log or an error: errors are
-//! [`TranslateError`] kinds, and the per-call event line carries counts.
+//! [`TranslateError`] kinds, and the per-call event line carries counts,
+//! the failure kind (`why`: status code, unreadable JSON, refusal, missing
+//! content, wrong shape) and the model's `finish_reason`.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use reqwest::{StatusCode, Url, header};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -97,23 +100,32 @@ impl OpenRouter {
         self.usage.lock().map(|u| u.clone()).unwrap_or_default()
     }
 
-    /// One logical call: POST with the retry budget, then the parsed JSON
-    /// payload the schema asked for. Logs one count-only line.
-    async fn call(&self, kind: &str, body: Vec<u8>, field: &str) -> Result<Value, TranslateError> {
+    /// One logical call: POST with the retry budget, then the answer in
+    /// the shape the schema asked for. Logs one line of counts and kinds.
+    async fn call<T: DeserializeOwned>(
+        &self,
+        kind: &str,
+        body: Vec<u8>,
+        field: &str,
+    ) -> Result<T, TranslateError> {
         let started = Instant::now();
         let mut retries = 0;
-        let outcome = async {
+        let mut usage = Usage::default();
+        let mut finish = None;
+        let outcome: Result<T, Why> = async {
             if body.len() > MAX_BODY {
-                return Err(TranslateError::Permanent);
+                return Err(Why::TooLarge);
             }
             let bytes = self.post(body, &mut retries).await?;
-            payload(&bytes, field)
+            let root: Value = serde_json::from_slice(&bytes).map_err(|_| Why::NotJson)?;
+            usage = usage_of(&root);
+            finish = finish_of(&root);
+            if contains_refusal(&root) {
+                return Err(Why::Refusal);
+            }
+            serde_json::from_value(payload(root, field)?).map_err(|_| Why::Schema)
         }
         .await;
-        let (payload, usage) = match outcome {
-            Ok((payload, usage)) => (Ok(payload), usage),
-            Err(err) => (Err(err), Usage::default()),
-        };
         if let Ok(mut total) = self.usage.lock() {
             total.calls += 1;
             total.retries += u32::try_from(retries).unwrap_or(u32::MAX);
@@ -124,18 +136,18 @@ impl OpenRouter {
         }
         event!(
             "translate",
-            "openrouter call kind={kind} ok={} error={:?} retries={retries} ms={} in={} cached={} out={}",
-            payload.is_ok(),
-            payload.as_ref().err(),
+            "openrouter call kind={kind} ok={} why={:?} finish={finish:?} retries={retries} ms={} in={} cached={} out={}",
+            outcome.is_ok(),
+            outcome.as_ref().err(),
             started.elapsed().as_millis(),
             usage.input_tokens,
             usage.cached_input_tokens,
             usage.output_tokens
         );
-        payload
+        outcome.map_err(Why::error)
     }
 
-    async fn post(&self, body: Vec<u8>, retries: &mut usize) -> Result<Vec<u8>, TranslateError> {
+    async fn post(&self, body: Vec<u8>, retries: &mut usize) -> Result<Vec<u8>, Why> {
         loop {
             let sent = self
                 .client
@@ -146,21 +158,24 @@ impl OpenRouter {
                 .body(body.clone())
                 .send()
                 .await;
-            let delay = match sent {
+            let (why, delay) = match sent {
                 // OpenRouter sends the headers at once and the body when the
                 // model is done, so a body cut short is a transport error too.
                 Ok(response) if response.status().is_success() => {
                     match read_capped(response).await {
-                        Err(TranslateError::Transient) => None,
+                        Err(Why::Transport) => (Why::Transport, None),
                         done => return done,
                     }
                 }
-                Ok(response) if retryable(response.status()) => retry_after(&response),
-                Ok(_) => return Err(TranslateError::Permanent),
-                Err(_) => None,
+                Ok(response) if retryable(response.status().as_u16()) => (
+                    Why::Status(response.status().as_u16()),
+                    retry_after(&response),
+                ),
+                Ok(response) => return Err(Why::Status(response.status().as_u16())),
+                Err(_) => (Why::Transport, None),
             };
             let Some(&fallback) = self.retry_delays.get(*retries) else {
-                return Err(TranslateError::Transient);
+                return Err(why);
             };
             tokio::time::sleep(delay.unwrap_or(fallback)).await;
             *retries += 1;
@@ -197,9 +212,7 @@ impl Translator for OpenRouter {
                 ANALYSIS_SCHEMA,
                 analysis_schema(),
             );
-            let payload = self.call("analysis", body, "summary").await?;
-            let answer: AnalysisPayload =
-                serde_json::from_value(payload).map_err(|_| TranslateError::Permanent)?;
+            let answer: AnalysisPayload = self.call("analysis", body, "summary").await?;
             let analysis = Analysis {
                 summary: answer.summary,
                 characters: answer
@@ -223,7 +236,7 @@ impl Translator for OpenRouter {
             if analysis.is_valid() {
                 Ok(analysis)
             } else {
-                Err(TranslateError::Permanent)
+                Err(TranslateError::BadAnswer)
             }
         })
     }
@@ -239,9 +252,7 @@ impl Translator for OpenRouter {
                 TRANSLATION_SCHEMA,
                 translation_schema(&request.output_ids),
             );
-            let payload = self.call("block", body, "translations").await?;
-            let answer: TranslationPayload =
-                serde_json::from_value(payload).map_err(|_| TranslateError::Permanent)?;
+            let answer: TranslationPayload = self.call("block", body, "translations").await?;
             Ok(answer
                 .translations
                 .into_iter()
@@ -264,10 +275,38 @@ fn valid_model(model: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_./:".contains(c))
 }
 
-fn retryable(status: StatusCode) -> bool {
-    status == StatusCode::REQUEST_TIMEOUT
-        || status == StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
+/// Why a call failed. Codes and kinds only, safe to log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Why {
+    /// The last HTTP status, when it was not a success.
+    Status(u16),
+    Transport,
+    TooLarge,
+    NotJson,
+    Refusal,
+    /// No message content (often a filtered or cut answer; see `finish`).
+    NoContent,
+    /// Content that is not the asked JSON shape.
+    Schema,
+}
+
+impl Why {
+    fn error(self) -> TranslateError {
+        match self {
+            Self::Status(status) if retryable(status) => TranslateError::Transient,
+            Self::Transport => TranslateError::Transient,
+            Self::Status(_) | Self::TooLarge => TranslateError::Permanent,
+            Self::NotJson | Self::Refusal | Self::NoContent | Self::Schema => {
+                TranslateError::BadAnswer
+            }
+        }
+    }
+}
+
+fn retryable(status: u16) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT.as_u16()
+        || status == StatusCode::TOO_MANY_REQUESTS.as_u16()
+        || (500..600).contains(&status)
 }
 
 fn retry_after(response: &reqwest::Response) -> Option<Duration> {
@@ -282,35 +321,26 @@ fn retry_after(response: &reqwest::Response) -> Option<Duration> {
     Some(Duration::from_secs(seconds).min(MAX_RETRY_AFTER))
 }
 
-async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, TranslateError> {
+async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, Why> {
     if response
         .content_length()
         .is_some_and(|n| n > MAX_BODY as u64)
     {
-        return Err(TranslateError::Permanent);
+        return Err(Why::TooLarge);
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| TranslateError::Transient)?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|_| Why::Transport)? {
         body.extend_from_slice(&chunk);
         if body.len() > MAX_BODY {
-            return Err(TranslateError::Permanent);
+            return Err(Why::TooLarge);
         }
     }
     Ok(body)
 }
 
-/// The schema-shaped payload inside a response, and the call's usage. A
-/// refusal, an unreadable body or a missing payload is permanent.
-fn payload(body: &[u8], field: &str) -> Result<(Value, Usage), TranslateError> {
-    let root: Value = serde_json::from_slice(body).map_err(|_| TranslateError::Permanent)?;
-    if contains_refusal(&root) {
-        return Err(TranslateError::Permanent);
-    }
-    let usage = usage_of(&root);
+/// The schema-shaped payload inside a response: the first message's
+/// content, or the response itself when it already has `field`.
+fn payload(root: Value, field: &str) -> Result<Value, Why> {
     let content = root
         .get("choices")
         .and_then(Value::as_array)
@@ -322,12 +352,25 @@ fn payload(body: &[u8], field: &str) -> Result<(Value, Usage), TranslateError> {
                     .and_then(Value::as_str)
             })
         });
-    let payload = match content {
-        Some(text) => serde_json::from_str(text).map_err(|_| TranslateError::Permanent)?,
-        None if root.get(field).is_some() => root,
-        None => return Err(TranslateError::Permanent),
-    };
-    Ok((payload, usage))
+    match content {
+        Some(text) => serde_json::from_str(text).map_err(|_| Why::Schema),
+        None if root.get(field).is_some() => Ok(root),
+        None => Err(Why::NoContent),
+    }
+}
+
+/// The first choice's `finish_reason`, if it is one of the known words.
+fn finish_of(root: &Value) -> Option<&'static str> {
+    let reason = root
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("finish_reason")?
+        .as_str()?;
+    ["stop", "length", "content_filter", "tool_calls", "error"]
+        .into_iter()
+        .find(|known| *known == reason)
+        .or(Some("other"))
 }
 
 /// Missing or odd `usage` counts as zero; bookkeeping never fails a call.
@@ -585,9 +628,11 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
     );
     let started = Instant::now();
     let mut first_block_s = None;
+    let mut ready = Vec::new();
     let result = crate::translate::translate(&client, &cues, &langs, |done| {
         let at = started.elapsed().as_secs_f32();
         first_block_s.get_or_insert(at);
+        ready = done.to_vec();
         println!("  {:>6.1} s  {}/{} lines", at, done.len(), cues.len());
     })
     .await;
@@ -607,17 +652,21 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
         usage.output_tokens,
         usage.cost_usd
     );
-    let translated = result.map_err(|_| "translation failed")?;
+    // A failed run still writes the blocks that finished.
+    let translated = result.as_ref().map_or(&ready, |all| all);
     if let Some(out) = out {
         let identity = crate::align::Fix {
             num: 1,
             den: 1,
             shift_ms: 0,
         };
-        std::fs::write(out, crate::srt::render(&translated, identity))
+        std::fs::write(out, crate::srt::render(translated, identity))
             .map_err(|err| format!("write: {:?}", err.kind()))?;
+        println!("written lines={}", translated.len());
     }
-    Ok(())
+    result
+        .map(|_| ())
+        .map_err(|_| "translation failed".to_owned())
 }
 
 #[cfg(test)]
@@ -863,28 +912,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_errors_and_bad_answers_are_permanent_and_not_retried() {
+    async fn client_errors_are_permanent_and_bad_answers_are_not_retried_here() {
         let refusal = json!({
             "choices": [{ "message": { "content": null, "refusal": "I can't help with that." } }],
         })
         .to_string();
         let extra_field = json!({ "translations": [], "note": "x" });
         let summary_only = json!({ "summary": "  ", "characters": [], "glossary": [] });
-        for answer in [
-            (401, None, String::new()),
-            (400, None, String::new()),
-            (200, None, refusal),
-            (200, None, "not json".to_owned()),
-            ok(extra_field),
+        for (answer, expected) in [
+            ((401, None, String::new()), TranslateError::Permanent),
+            ((400, None, String::new()), TranslateError::Permanent),
+            ((200, None, refusal), TranslateError::BadAnswer),
+            ((200, None, "not json".to_owned()), TranslateError::BadAnswer),
+            (ok(extra_field), TranslateError::BadAnswer),
             (
-                200,
-                None,
-                json!({ "choices": [{ "message": { "content": "{oops" } }] }).to_string(),
+                (
+                    200,
+                    None,
+                    json!({ "choices": [{ "message": { "content": "{oops" } }] }).to_string(),
+                ),
+                TranslateError::BadAnswer,
+            ),
+            (
+                (
+                    200,
+                    None,
+                    json!({ "choices": [{ "message": { "content": null }, "finish_reason": "content_filter" }] })
+                        .to_string(),
+                ),
+                TranslateError::BadAnswer,
             ),
         ] {
             let (client, script) = serve(vec![answer]).await;
             let err = client.translate(&block_request()).await.unwrap_err();
-            assert_eq!(err, TranslateError::Permanent);
+            assert_eq!(err, expected);
             assert_eq!(script.seen.lock().unwrap().len(), 1);
         }
         let (client, _) = serve(vec![ok(summary_only)]).await;
@@ -895,7 +956,7 @@ mod tests {
         };
         assert_eq!(
             client.analyze(&request).await.unwrap_err(),
-            TranslateError::Permanent
+            TranslateError::BadAnswer
         );
     }
 
@@ -922,8 +983,14 @@ mod tests {
     #[tokio::test]
     async fn log_lines_carry_counts_not_key_or_text() {
         let before = crate::events::since(0).next;
-        let (client, _) = serve(vec![ok(translations())]).await;
+        let filtered = json!({
+            "choices": [{ "message": { "content": null }, "finish_reason": "content_filter" }],
+            "usage": { "prompt_tokens": 900, "completion_tokens": 0 },
+        })
+        .to_string();
+        let (client, _) = serve(vec![ok(translations()), (200, None, filtered)]).await;
         client.translate(&block_request()).await.unwrap();
+        client.translate(&block_request()).await.unwrap_err();
         let lines: Vec<String> = crate::events::since(before)
             .events
             .into_iter()
@@ -935,6 +1002,10 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("kind=block ok=true") && l.contains("in=1200"))
         );
+        assert!(lines.iter().any(|l| {
+            l.contains(r#"ok=false why=Some(NoContent) finish=Some("content_filter")"#)
+                && l.contains("in=900")
+        }));
         for l in &lines {
             assert!(
                 !l.contains(KEY) && !l.contains("Killua") && !l.contains("Selam"),
