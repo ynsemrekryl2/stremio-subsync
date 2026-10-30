@@ -37,6 +37,28 @@ metin olarak diyalogla aynı işi görüyor.
 - Çıkış token'ının girişe yakın olması modelin düşünme token'larından;
   bu fiyatta maliyete etkisi küçük.
 
+## Gemini 3.8 Flash ile karşılaştırma (yarıda bırakıldı)
+
+Aynı film `google/gemini-3.8-flash` ile (milyon token 0,825 $ giriş /
+4,125 $ çıkış; GPT-6 Luna'nın ~8 katı) denendi. 1. çalıştırma 22. blokta
+okunamayan bir cevapla düştü (o sırada bu durum onarıma girmiyordu,
+nedeni loglanmıyordu; ikisi de düzeltildi). 2. çalıştırma 2 blok sonra
+kullanıcı isteğiyle durduruldu: tam film ~1 $ tutacaktı.
+
+| Blok başına (1. çalıştırma, 22 blok) | Gemini 3.8 Flash | GPT-6 Luna |
+|---|---|---|
+| Süre | ortanca 24,6 sn | ortanca 11,1 sn |
+| Çıkış token'ı | ~3 660 | ~1 220 |
+| Saniyede çıkış token'ı | ~143 | ~94 |
+| Maliyet | ~0,017 $ | ~0,001 $ |
+
+- Gemini daha hızlı yazıyor ama blok başına ~3 kat fazla token üretiyor
+  (çoğu düşünme), bu yüzden blok iki kat geç bitiyor ve ~16 kat pahalı.
+- Analiz Gemini'de daha kısa sürdü (17 sn), ilk blok iki modelde de ~36 sn.
+- Kalite karşılaştırılamadı: hiçbir Gemini çalıştırması çıktı dosyası
+  bırakmadı. Toplam harcama ~0,45 $.
+- Sonuç: varsayılan GPT-6 Luna kalır.
+
 ## 1. denemedeki hata
 
 25. blokta OpenRouter 200 başlığını hemen gönderdi, gövde 120 sn'lik
