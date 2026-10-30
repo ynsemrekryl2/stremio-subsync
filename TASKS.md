@@ -5,7 +5,7 @@ Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
 [`docs/history/branch-consolidation.md`](docs/history/branch-consolidation.md).
-Sonraki boş numara: **SS-042**.
+Sonraki boş numara: **SS-043**.
 
 ## M0 — İskelet
 
@@ -84,6 +84,7 @@ kapsamında sürer.
 
 - [x] **SS-028** Spike: İngilizce metin izinin blok metnini Cues konumlarından (`CueClusterPosition` + `CueRelativePosition`) hedefli oku; satır başına Range ile çoklu aralık (`bytes=a-b,c-d,…`) Real-Debrid'de karşılaştırılır. Metin loglanmaz, yalnız sayılar — kanıt: `docs/spikes/m6-block-text.md` (`with_relative`, istek sayısı, bayt, süre, okunan/beklenen satır; 5+ gerçek dosya). 2026-10-29: 5 bölümde konumlar doğru (`missing` 0, bulunan yükün tamamı UTF-8), RD çoklu aralık vermiyor; ama okumaların %39'u başarısız, 13–56 sn. İki filmde başarısızlıkların %97'si `connect` (bağlantı reddi). Düzeltme (4 eşzamanlı istek, 0.5/1.5/4 sn bekleyip tekrar) sonrası bir bölümde 4000 bloğun %96'sı okundu, saniyede ~5.4 blok (bölüm ~1.5–2 dk, film ~6–7 dk). **Sonuç: metin Cues konumlarından okunabiliyor; SS-026'ya geçilebilir** (diyalog izi seçimi ve kalan ~%4 blok orada ele alınır)
 - [~] **SS-036** İngilizce yedek aday: hedef dilde aday yoksa ("aday yok") ya da hiçbiri kabul almazsa ("uyan yok"), aynı kaynaklarda `eng` aranır ve aynı sıralama, hizalama ve kabul testinden geçirilir. Kabul edilen en iyi aday, fix uygulanmış olarak menüde `eng` girdisi olur; hedef dilin nedeni yine gösterilir, cevap 1 gün geçerli (hedef dilde aday sonra çıkabilir). Etiketleme modunda ve `SUBSYNC_LANG=eng` iken kapalı. Çeviri (SS-037/SS-038) bu girdinin metnini kullanır — kanıt: testler (sahte kaynaklarla: yedek yalnız gerektiğinde aranır, kabul edilen İngilizce sunulur, reddedilen sunulmaz) + Stremio'da Türkçesi olmayan bir dosyada senkron `eng` girdisi
+- [~] **SS-042** Spike: Stremio altyazı dosyasını (`/sub/<girdi>/<n>.srt`) her seçimde yeniden çekiyor mu? Liste oynatma başında bir kez isteniyor; dosya her seçimde çekiliyorsa sabit bir "çeviri" girdisi o ana kadar çevrilen kısmı döndürebilir ve SS-026 ikinci açılışı beklemez. Sunucu her dosya isteğini panelde `fetch` olayı olarak gösterir (girdi, sıra, bayt; metin yok) ve yanıta `Cache-Control: no-store` ekler. Deneme: bir oynatmada aynı girdiyi seç, kapat, yeniden seç; başka girdiye geç, geri dön; videoyu ileri sar — kanıt: `docs/spikes/` altında ölçüm notu (istemci başına kaç seçimde kaç çekme)
 - [ ] **SS-037** Çeviri çekirdeği: Nen'in `nen-translate` parçalarını taşı (bağlam pencereli bloklar, iki aşamalı belge analizi, yerel doğrulama, sınırlı onarım); `checkpoint`, `identity` ve WebVTT `artifact` taşınmaz, yerlerini M5 cache'i ve SRT yazıcısı alır. Girdi SS-036'nın kabul edilen İngilizce satırları; modele yalnız `cue_id + metin` gider, zamanlar yerelde birleştirilir. Çevirici bir trait — kanıt: sahte çeviriciyle testler (bozuk/eksik yanıt onarılır ya da reddedilir, zamanlar değişmez, sağlayıcı ağı yok)
 - [ ] **SS-038** OpenRouter adapter'ı (`OPENROUTER_API_KEY`, model ortam değişkeninden; anahtar ve metin loglanmaz; Nen'in istek/yanıt biçimi ve yeniden deneme davranışı) — kanıt: sahte HTTP ile testler + gerçek bir bölümün çevirisi (yalnız satır sayısı, token ve süre not edilir)
 - [ ] **SS-026** Çeviri yedeğini teslime bağla: SS-036 İngilizce kabul edince çeviri işi arka planda başlar (dosya başına tek iş), bitince "otomatik çeviri" etiketli hedef dil girdisi M5 cache'ine yazılır (30 gün); iş sürerken menüde "çeviriliyor" nedeni — kanıt: sahte çeviriciyle testler + gerçek bir bölümde Stremio'da görünen çeviri. Tasarım notları: Stremio listeyi oynatma başında bir kez ister, bu yüzden hazır çeviri ikinci açılışta cache'ten gelir. Denenecek: girdi seçildiğinde o ana kadar çevrilen kısmın SRT olarak dönmesi (Stremio'nun altyazı URL'sini her seçimde yeniden çekip çekmediği ölçülmeli). Sıradaki bölümü önceden çevirmek ayrı iş
@@ -112,8 +113,9 @@ kapsamında sürer.
 - **Öncelikler (2026-10-30):** çeviriden önce senkron ve aday seçimi
   güçlendirildi: SS-039 (basamaklı kaymada yerel ikinci şans) ve SS-017
   (SubDL ikinci kaynak) bitti. SS-040 (fazladan aday indirme) ölçüldü,
-  kazancı küçük. Sırada: SS-036'nın Stremio kanıtı, sonra çeviri yedeği
-  (SS-037 → SS-038 → SS-026), sonra SS-006 VPS/HTTPS. SS-014 gerçek
+  kazancı küçük. SS-006 VPS/HTTPS bitti (2026-10-30). Sırada: SS-042
+  (Stremio altyazı dosyasını yeniden çekiyor mu), SS-036'nın Stremio kanıtı,
+  sonra çeviri yedeği (SS-037 → SS-038 → SS-026). SS-014 gerçek
   etiketleri artırma, SS-019 CD1/CD2 birleştirme de açık.
 - **MKV dışı (2026-10-30):** SS-032/SS-033 kodu ve testleri hazır (126 test):
   kapsayıcı panelde görünür, MP4'te İngilizce `tx3g` izi varsa cetvel olur.
@@ -147,11 +149,11 @@ kapsamında sürer.
   `codex/archive/` altında; worktree'ler açık Claude süreçleri kullandığı
   için silinmedi. Güncel geliştirme kökteki `main` üzerinde yapılır.
   Ayrıntı birleştirme kaydında.
-- **Geçici yayın:** Tailscale Funnel (443 → `127.0.0.1:7001`, `tailscale funnel 7001`). Kapatmak:
-  `tailscale funnel --https=443 off`. Kalıcı VPS kurulumu henüz yok.
+- **Yayın:** kalıcı kurulum Oracle ARM sunucusunda (SS-006, `deploy/deploy.sh`,
+  `docs/deploy.md`). Yerel deneme için Tailscale Funnel (443 → `127.0.0.1:7001`,
+  `tailscale funnel 7001`); kapatmak: `tailscale funnel --https=443 off`.
 - **Açık keşif:** SS-007 TorBox (abonelik bekliyor; URL
-  çağrısı indirme başlatabilir, ilk gerçek deneme kullanıcı onayıyla),
-  SS-008 VPS IP'sinden RD okuması.
-- **Güvenlik notu:** önceki oturumda açığa çıkan SubSync token'ı VPS'e geçerken
-  yenilenmeli; AIOStreams şifresi keşif ölçümleri bitince değiştirilmeli.
+  çağrısı indirme başlatabilir, ilk gerçek deneme kullanıcı onayıyla).
+- **Güvenlik notu:** SubSync token'ı sunucuda yeniden üretildi (SS-006);
+  AIOStreams şifresi keşif ölçümleri bitince değiştirilmeli.
   Linkler sohbete veya loga yazılmaz.

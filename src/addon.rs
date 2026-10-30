@@ -413,9 +413,19 @@ async fn menu_srt(
         .lock()
         .ok()
         .and_then(|menus| menus.srt(entry, n).map(str::to_owned));
+    // Whether Stremio fetches the file again on each pick (SS-042).
+    event!(
+        "fetch",
+        "subtitle fetched entry={entry} n={n} bytes={}",
+        srt.as_ref().map_or(0, String::len)
+    );
     match srt {
+        // `no-store`, so a later pick can get a longer file.
         Some(srt) => (
-            [(header::CONTENT_TYPE, "application/x-subrip; charset=utf-8")],
+            [
+                (header::CONTENT_TYPE, "application/x-subrip; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
             srt,
         )
             .into_response(),
@@ -1423,8 +1433,26 @@ mod tests {
             })
         );
 
+        let before = crate::events::since(0).next;
         let (status, body) = call(&app, format!("/{TOKEN}/sub/0/1.srt")).await;
         assert_eq!((status, body.as_str()), (StatusCode::OK, SRT));
+        let fetched = format!("subtitle fetched entry=0 n=1 bytes={}", SRT.len());
+        assert!(
+            crate::events::since(before)
+                .events
+                .iter()
+                .any(|e| e.area == "fetch" && e.line == fetched)
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/{TOKEN}/sub/0/1.srt"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         for uri in [
             "/wrong-token/sub/0/1.srt".to_owned(),
             format!("/{TOKEN}/sub/0/2.srt"),
