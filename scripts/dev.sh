@@ -12,7 +12,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 service="${SUBSYNC_KEYCHAIN_SERVICE:-stremio-subsync}"
-bind="${SUBSYNC_BIND:-127.0.0.1:7000}"
+bind="${SUBSYNC_BIND:-127.0.0.1:7001}"
 
 secret() { security find-generic-password -s "$service" -a "$1" -w 2>/dev/null || true; }
 store() { security add-generic-password -U -s "$service" -a "$1" -w "$2"; }

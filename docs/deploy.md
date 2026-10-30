@@ -2,7 +2,7 @@
 
 Hedef: Oracle Cloud **Always Free** ARM sunucu (ücretsiz), Ubuntu 24.04.
 Caddy HTTPS sertifikasını Let's Encrypt'ten kendisi alır ve yeniler. Uygulama
-`127.0.0.1:7000`'de systemd servisi olarak çalışır; dışarıya yalnız Caddy açıktır.
+`127.0.0.1:7001`'de systemd servisi olarak çalışır; dışarıya yalnız Caddy açıktır.
 
 ## 1. Sunucuyu aç (Oracle konsolu)
 

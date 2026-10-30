@@ -27,6 +27,9 @@ use sources::SubtitleSource;
 /// Minimum length for the secret path token. The install link is the only
 /// thing protecting the server, so short tokens are refused.
 const MIN_TOKEN_LEN: usize = 32;
+/// Listen address when `SUBSYNC_BIND` is unset. Port 7000 is avoided because
+/// macOS AirPlay Receiver holds it on all interfaces.
+const DEFAULT_BIND: &str = "127.0.0.1:7001";
 
 #[tokio::main]
 async fn main() {
@@ -67,7 +70,7 @@ async fn main() {
         std::process::exit(2);
     }
     let bind: SocketAddr = std::env::var("SUBSYNC_BIND")
-        .unwrap_or_else(|_| "127.0.0.1:7000".to_owned())
+        .unwrap_or_else(|_| DEFAULT_BIND.to_owned())
         .parse()
         .unwrap_or_else(|_| {
             eprintln!("SUBSYNC_BIND is not a valid socket address");
@@ -176,6 +179,12 @@ async fn main() {
         .await
         .unwrap_or_else(|err| {
             eprintln!("cannot bind {bind}: {err}");
+            if err.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!(
+                    "the port is taken by another program (on macOS, AirPlay Receiver \
+                     holds 7000); pick a free one with SUBSYNC_BIND=127.0.0.1:<port>"
+                );
+            }
             std::process::exit(1);
         });
     // The token is deliberately not printed: it is the install link's secret.

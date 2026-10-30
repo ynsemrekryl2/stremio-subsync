@@ -47,13 +47,13 @@ cargo run
 Stremio'ya kurulacak link:
 
 ```
-http://127.0.0.1:7000/<SUBSYNC_TOKEN>/manifest.json
+http://127.0.0.1:7001/<SUBSYNC_TOKEN>/manifest.json
 ```
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
 | `SUBSYNC_TOKEN` | — (zorunlu) | Kurulum linkindeki gizli parça. Linki bilen sunucuyu kullanır. |
-| `SUBSYNC_BIND` | `127.0.0.1:7000` | Dinlenen adres. VPS'te HTTPS reverse proxy'nin arkasında kalır. |
+| `SUBSYNC_BIND` | `127.0.0.1:7001` | Dinlenen adres. VPS'te HTTPS reverse proxy'nin arkasında kalır. 7000 kullanılmaz: macOS'ta AirPlay Alıcısı tutar. |
 | `SUBSYNC_LANG` | `tur` | Aranan altyazı dili (ISO 639-2, OpenSubtitles adlarıyla: `tur`, `eng`, `pob`). |
 | `SUBSYNC_AIOSTREAMS_URL` | — | AIOStreams manifest linki; oynatılan dosyayı bulmak için. Yoksa cetvel çıkmaz, altyazı sunulmaz. Loglanmaz. |
 | `SUBSYNC_RANGE_PROBE` | açık | `0` ise dosyadan cetvel okunmaz (altyazı da sunulmaz). |

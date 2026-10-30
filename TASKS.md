@@ -83,7 +83,7 @@ kapsamında sürer.
 
 ## Bakım
 
-- [ ] **SS-035** Varsayılan port 7000 macOS AirPlay Alıcısı (ControlCenter) ile çakışıyor: `scripts/dev.sh` "Address already in use" ile kapanıyor, kurulu `127.0.0.1:7000` linki çalışmıyor. Varsayılanı boş bir porta (ör. 7001) taşı ya da betikte çakışmayı açık mesajla bildir; Funnel notunu güncelle — kanıt: AirPlay Alıcısı açıkken `scripts/dev.sh` ilk denemede açılıyor
+- [x] **SS-035** Varsayılan port 7000 macOS AirPlay Alıcısı (ControlCenter, `*:7000`) ile çakışıyor: 2026-10-30'da `scripts/dev.sh` "Address already in use" ile kapandı; aynı gün sonraki denemede 7000'e bağlanabildi, yani çakışma aralıklı. Varsayılan `127.0.0.1:7001`'e taşındı (`main.rs`, `dev.sh`, README, Caddyfile, deploy notu); port doluysa sunucu `SUBSYNC_BIND` ile başka port seçmeyi söyler. Yerel `127.0.0.1:7000` kurulum linki Stremio'da yeniden kurulmalı (`scripts/dev.sh link`); Funnel linki etkilenmez — kanıt: 126 test + AirPlay Alıcısı açıkken `scripts/dev.sh` ilk denemede 7001'de açıldı; 7001 doluyken ikinci kopya yeni mesajla `exit=1` verdi
 
 - [x] **SS-029** Arka planda dönenleri görmek için canlı olay paneli: sunucunun log satırları (yalnız sayı ve etiket; token, link, kimlik, dosya adı, metin yok) son 1000 olay olarak bellekte de tutulur; `/<token>/dashboard` sayfası `events.json`'u 2 sn'de bir okuyup sayaçları, son istekleri adım adım (dosya eşleşmesi, metin cetveli, PGS, aday, hizalama, menü) ve süzülebilir ham olay akışını gösterir. Panel yoklamaları erişim loguna yazılmaz — kanıt: 108 geçen test (yanlış token 404, sayfada token yok, `after` ile yalnız yeni olaylar, tampon taşması) + yerel test sunucusunda panelin açılıp canlı güncellendiği, telefon genişliğinde taşmadığı görüldü. Her istekte dosyanın MKV olup olmadığı ve gömülü altyazılar okunur biçimde görünür (dil + biçim; "cetvel ✓", "PGS ölçülür", "dizinsiz", zorunlu); cache'ten verilen cevapta dosyanın yeniden okunmadığı yazar. Örnek satırlarla tarayıcıda denendi; satır biçimi `mkv` testinde sabitlendi. Gerçek bir oynatmada adımların doğru ayrıştırıldığı henüz görülmedi
 - [x] **SS-030** Yerel sunucuyu tek komutla aç: token ve AIOStreams linki ilk çalıştırmada macOS Anahtar Zinciri'ne bir kez kaydedilir, kurulum linki her açılışta aynı kalır (her seferinde yeni token + yeniden kurulum yok). `scripts/dev.sh` (çift tıklanabilir `.command` ile) — kanıt: deneme Anahtar Zinciri girdisiyle betik denemesi + Stremio'da aynı linkle iki ayrı açılış → **2026-10-29 doğrulandı:** betik deneme Anahtar Zinciri girdisiyle denendi (ikinci açılış soru sormadı, token aynı kaldı, token log'a düşmedi); gerçek oturumda sunucu birçok kez yeniden açıldı, Stremio'daki kurulum aynı linkle çalışmaya devam etti
@@ -135,7 +135,7 @@ kapsamında sürer.
   `codex/archive/` altında; worktree'ler açık Claude süreçleri kullandığı
   için silinmedi. Güncel geliştirme kökteki `main` üzerinde yapılır.
   Ayrıntı birleştirme kaydında.
-- **Geçici yayın:** Tailscale Funnel (443 → `127.0.0.1:7000`). Kapatmak:
+- **Geçici yayın:** Tailscale Funnel (443 → `127.0.0.1:7001`, `tailscale funnel 7001`). Kapatmak:
   `tailscale funnel --https=443 off`. Kalıcı VPS kurulumu henüz yok.
 - **Açık keşif:** SS-007 TorBox (abonelik bekliyor; URL
   çağrısı indirme başlatabilir, ilk gerçek deneme kullanıcı onayıyla),
