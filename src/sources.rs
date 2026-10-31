@@ -345,6 +345,9 @@ struct AdbEntry {
     hearing_impaired: Option<u32>,
     #[serde(default, deserialize_with = "lenient_u32")]
     forced: Option<u32>,
+    /// 1 for a machine translation.
+    #[serde(default, deserialize_with = "lenient_u32")]
+    ai_ceviri: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -353,7 +356,9 @@ struct AdbVersion {
 }
 
 /// AltyaziDB list (filtered by language and episode on the server), kept to
-/// the language and episode again; forced-only subtitles are left out.
+/// the language and episode again. Forced-only subtitles and machine
+/// translations are left out: our own translation of a fitting English
+/// subtitle reads better (SS-052).
 pub fn parse_altyazidb(body: &[u8], query: &Query) -> Result<Vec<Candidate>, SourceError> {
     let list: AdbList = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
     let lang = altyazidb_language(&query.lang);
@@ -363,6 +368,7 @@ pub fn parse_altyazidb(body: &[u8], query: &Query) -> Result<Vec<Candidate>, Sou
         .filter(|e| lang.is_some() && e.language.as_deref() == lang)
         .filter(|e| query.fits(e.season, e.episode))
         .filter(|e| e.forced != Some(1))
+        .filter(|e| e.ai_ceviri != Some(1))
         .filter_map(|e| {
             let id = match e.id {
                 Value::Number(n) => n.as_u64()?.to_string(),
@@ -1157,16 +1163,18 @@ mod tests {
     }
 
     #[test]
-    fn altyazidb_keeps_language_episode_and_packs_but_not_forced() {
+    fn altyazidb_keeps_language_episode_and_packs_but_not_forced_or_machine() {
         let body = json!({ "success": true, "movie": { "search_method": "imdb_id" }, "data": [
             { "id": "101", "language": "tr", "season": 1, "episode": "2", "fps": "23.976",
               "versions": [{ "group": "FLUX", "file": "Show.S01E02.1080p.WEB.h264-FLUX" }],
-              "releases": ["Show.S01E02.720p"], "hearing_impaired": 1, "forced": 0 },
+              "releases": ["Show.S01E02.720p"], "hearing_impaired": 1, "forced": 0,
+              "ai_ceviri": 0 },
             { "id": 102, "language": "tr", "season": 1, "episode": "PAKET", "fps": "N/A",
               "releases": ["Show.S01.1080p.BluRay"], "is_package": 1 },
             { "id": "103", "language": "tr", "season": 1, "episode": "5" },
             { "id": "104", "language": "en", "season": 1, "episode": "2" },
             { "id": "105", "language": "tr", "season": 1, "episode": "2", "forced": 1 },
+            { "id": "106", "language": "tr", "season": 1, "episode": "2", "ai_ceviri": 1 },
             { "id": "../x", "language": "tr", "season": 1, "episode": "2" }
         ]})
         .to_string();
