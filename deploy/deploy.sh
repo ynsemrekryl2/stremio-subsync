@@ -8,7 +8,7 @@
 #   deploy/deploy.sh secrets  send secrets only, then restart
 #   deploy/deploy.sh link     copy the server's install link to the clipboard
 #
-# The AIOStreams link, the SubDL key and the OpenRouter key come from the Keychain entries
+# The AIOStreams link, the SubDL and AltyaziDB keys and the OpenRouter key come from the Keychain entries
 # scripts/dev.sh keeps and go over ssh stdin; neither is printed. The
 # install token is the server's own (setup.sh makes it).
 set -euo pipefail
@@ -22,13 +22,15 @@ src=stremio-subsync-src
 secret() { security find-generic-password -s "$service" -a "$1" -w 2>/dev/null || true; }
 
 send_secrets() {
-	local url key
+	local url key altyazidb translator
 	url="$(secret aiostreams-url)"
 	[ -n "$url" ] || { echo "no AIOStreams link in the Keychain: run scripts/dev.sh once" >&2; exit 1; }
 	# An empty key removes it on the server: the Keychain is the source.
 	key="$(secret subdl-key)"
+	altyazidb="$(secret altyazidb-key)"
 	translator="$(secret openrouter-key)"
-	printf 'SUBSYNC_AIOSTREAMS_URL=%s\nSUBDL_API_KEY=%s\nOPENROUTER_API_KEY=%s\n' "$url" "$key" "$translator" |
+	printf 'SUBSYNC_AIOSTREAMS_URL=%s\nSUBDL_API_KEY=%s\nALTYAZIDB_API_KEY=%s\nOPENROUTER_API_KEY=%s\n' \
+		"$url" "$key" "$altyazidb" "$translator" |
 		ssh "$host" "sudo bash $src/deploy/env.sh"
 }
 

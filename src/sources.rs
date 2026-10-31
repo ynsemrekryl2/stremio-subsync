@@ -1,8 +1,9 @@
-//! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on) and
-//! SubDL (free key) for one title and language, and one candidate's SRT bytes.
+//! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on),
+//! SubDL (free key) and AltyaziDB (free key) for one title and language, and
+//! one candidate's SRT bytes.
 //!
-//! IMDb ids, release names, download links and the SubDL key never reach the
-//! log: `Debug` on these types prints only kinds, counts and flags.
+//! IMDb ids, release names, download links and the source keys never reach
+//! the log: `Debug` on these types prints only kinds, counts and flags.
 
 use reqwest::Url;
 use serde::{Deserialize, Deserializer};
@@ -29,6 +30,8 @@ const MORE_DOWNLOADS: usize = 3;
 const OPENSUBTITLES_V3: &str = "https://opensubtitles-v3.strem.io/";
 const SUBDL_API: &str = "https://api.subdl.com/api/v1/subtitles";
 const SUBDL_DOWNLOAD: &str = "https://dl.subdl.com";
+const ALTYAZIDB_SEARCH: &str = "https://altyazidb.com/api/v1/search";
+const ALTYAZIDB_SUBTITLE: &str = "https://altyazidb.com/api/v1/subtitle";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -109,6 +112,7 @@ impl Query {
 pub enum SourceKind {
     OpenSubtitles,
     SubDl,
+    AltyaziDb,
 }
 
 /// One subtitle a source offers. `Debug` shows no name and no link.
@@ -315,6 +319,87 @@ pub fn subdl_language(lang: &str) -> Option<&'static str> {
     })
 }
 
+#[derive(Deserialize)]
+struct AdbList {
+    #[serde(default, alias = "subtitles", alias = "results")]
+    data: Vec<AdbEntry>,
+}
+
+#[derive(Deserialize)]
+struct AdbEntry {
+    id: Value,
+    language: Option<String>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    season: Option<u32>,
+    /// A number, or `PAKET` for a season pack (read as absent).
+    #[serde(default, deserialize_with = "lenient_u32")]
+    episode: Option<u32>,
+    fps: Option<String>,
+    #[serde(default)]
+    versions: Vec<AdbVersion>,
+    #[serde(default)]
+    releases: Vec<String>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    hearing_impaired: Option<u32>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    forced: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct AdbVersion {
+    file: Option<String>,
+}
+
+/// AltyaziDB list (filtered by language and episode on the server), kept to
+/// the language and episode again; forced-only subtitles are left out.
+pub fn parse_altyazidb(body: &[u8], query: &Query) -> Result<Vec<Candidate>, SourceError> {
+    let list: AdbList = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
+    let lang = altyazidb_language(&query.lang);
+    Ok(list
+        .data
+        .into_iter()
+        .filter(|e| lang.is_some() && e.language.as_deref() == lang)
+        .filter(|e| query.fits(e.season, e.episode))
+        .filter(|e| e.forced != Some(1))
+        .filter_map(|e| {
+            let id = match e.id {
+                Value::Number(n) => n.as_u64()?.to_string(),
+                Value::String(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => s,
+                _ => return None,
+            };
+            // A subtitle lists every release it fits; the fullest name ranks best.
+            let release = e
+                .versions
+                .into_iter()
+                .filter_map(|v| v.file)
+                .chain(e.releases)
+                .max_by_key(|n| word_count(n))
+                .unwrap_or_default();
+            let fps_milli = e
+                .fps
+                .and_then(|f| f.trim().parse::<f64>().ok())
+                .filter(|f| *f > 0.0 && *f < 1000.0)
+                .map(|f| (f * 1000.0).round() as u32);
+            Some(Candidate {
+                source: SourceKind::AltyaziDb,
+                release,
+                fps_milli,
+                hearing_impaired: e.hearing_impaired.map(|h| h == 1),
+                link: format!("{ALTYAZIDB_SUBTITLE}?sub_id={id}"),
+            })
+        })
+        .collect())
+}
+
+/// AltyaziDB's language code for an ISO 639-2 one; it has only these two.
+pub fn altyazidb_language(lang: &str) -> Option<&'static str> {
+    match lang {
+        "tur" => Some("tr"),
+        "eng" => Some("en"),
+        _ => None,
+    }
+}
+
 /// `(season, episode)` pairs written in a file name: `S01E02`, `s1e2`, `1x02`.
 fn episode_marks(name: &str) -> Vec<(u32, u32)> {
     let b = name.to_ascii_lowercase().into_bytes();
@@ -424,9 +509,8 @@ fn classify(err: &reqwest::Error) -> SourceError {
 }
 
 /// GET with a size cap; errors never carry the URL.
-async fn get_capped(client: &reqwest::Client, url: Url) -> Result<Vec<u8>, SourceError> {
-    let mut response = client
-        .get(url)
+async fn get_capped(request: reqwest::RequestBuilder) -> Result<Vec<u8>, SourceError> {
+    let mut response = request
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
@@ -476,14 +560,14 @@ impl SubtitleSource for OpenSubtitlesV3 {
                 .base
                 .join(&format!("subtitles/{kind}/{}.json", query.stremio_id()))
                 .map_err(|_| SourceError::Other)?;
-            parse_opensubtitles(&get_capped(&self.client, url).await?, query)
+            parse_opensubtitles(&get_capped(self.client.get(url)).await?, query)
         })
     }
 
     fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            get_capped(&self.client, url).await
+            get_capped(self.client.get(url)).await
         })
     }
 }
@@ -529,14 +613,78 @@ impl SubtitleSource for SubDl {
                 params.push(("episode_number", e.to_string()));
             }
             let url = Url::parse_with_params(SUBDL_API, &params).map_err(|_| SourceError::Other)?;
-            parse_subdl(&get_capped(&self.client, url).await?, query)
+            parse_subdl(&get_capped(self.client.get(url)).await?, query)
         })
     }
 
     fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            pick_srt(&get_capped(&self.client, url).await?, query)
+            pick_srt(&get_capped(self.client.get(url)).await?, query)
+        })
+    }
+}
+
+/// AltyaziDB with the user's key. No `Debug`: the key is in every request's
+/// `X-API-Key` header.
+pub struct AltyaziDb {
+    key: String,
+    client: reqwest::Client,
+}
+
+impl AltyaziDb {
+    pub fn new(key: String) -> Option<Self> {
+        Some(Self {
+            key,
+            client: client()?,
+        })
+    }
+
+    fn get(&self, url: Url) -> reqwest::RequestBuilder {
+        self.client.get(url).header("X-API-Key", &self.key)
+    }
+}
+
+impl SubtitleSource for AltyaziDb {
+    fn kind(&self) -> SourceKind {
+        SourceKind::AltyaziDb
+    }
+
+    fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a> {
+        Box::pin(async move {
+            let Some(language) = altyazidb_language(&query.lang) else {
+                return Ok(Vec::new());
+            };
+            let mut params = vec![
+                ("imdb_id", query.imdb.clone()),
+                ("lang", language.to_owned()),
+                ("limit", "30".to_owned()),
+            ];
+            if let (Some(s), Some(e)) = (query.season, query.episode) {
+                params.push(("season", s.to_string()));
+                params.push(("episode", e.to_string()));
+            }
+            let url = Url::parse_with_params(ALTYAZIDB_SEARCH, &params)
+                .map_err(|_| SourceError::Other)?;
+            parse_altyazidb(&get_capped(self.get(url)).await?, query)
+        })
+    }
+
+    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+        Box::pin(async move {
+            let mut url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
+            // The server takes the episode out of a season pack.
+            if let (Some(s), Some(e)) = (query.season, query.episode) {
+                url.query_pairs_mut()
+                    .append_pair("season", &s.to_string())
+                    .append_pair("episode", &e.to_string());
+            }
+            let body = get_capped(self.get(url)).await?;
+            // Errors come back as JSON; a subtitle never starts with `{`.
+            if body.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{') {
+                return Err(SourceError::NoSubtitle);
+            }
+            Ok(body)
         })
     }
 }
@@ -798,6 +946,51 @@ mod tests {
         assert_eq!(parse_subdl(empty.as_bytes(), &episode()), Ok(Vec::new()));
         assert_eq!(subdl_language("tur"), Some("TR"));
         assert_eq!(subdl_language("xxx"), None);
+    }
+
+    #[test]
+    fn altyazidb_keeps_language_episode_and_packs_but_not_forced() {
+        let body = json!({ "success": true, "movie": { "search_method": "imdb_id" }, "data": [
+            { "id": "101", "language": "tr", "season": 1, "episode": "2", "fps": "23.976",
+              "versions": [{ "group": "FLUX", "file": "Show.S01E02.1080p.WEB.h264-FLUX" }],
+              "releases": ["Show.S01E02.720p"], "hearing_impaired": 1, "forced": 0 },
+            { "id": 102, "language": "tr", "season": 1, "episode": "PAKET", "fps": "N/A",
+              "releases": ["Show.S01.1080p.BluRay"], "is_package": 1 },
+            { "id": "103", "language": "tr", "season": 1, "episode": "5" },
+            { "id": "104", "language": "en", "season": 1, "episode": "2" },
+            { "id": "105", "language": "tr", "season": 1, "episode": "2", "forced": 1 },
+            { "id": "../x", "language": "tr", "season": 1, "episode": "2" }
+        ]})
+        .to_string();
+        let found = parse_altyazidb(body.as_bytes(), &episode()).unwrap();
+        let links: Vec<&str> = found.iter().map(|c| c.link.as_str()).collect();
+        assert_eq!(
+            links,
+            vec![
+                "https://altyazidb.com/api/v1/subtitle?sub_id=101",
+                "https://altyazidb.com/api/v1/subtitle?sub_id=102"
+            ]
+        );
+        assert_eq!(found[0].release, "Show.S01E02.1080p.WEB.h264-FLUX");
+        assert_eq!(found[0].fps_milli, Some(23_976));
+        assert_eq!(found[0].hearing_impaired, Some(true));
+        assert_eq!(found[1].release, "Show.S01.1080p.BluRay");
+        assert_eq!(found[1].fps_milli, None);
+        let empty = json!({ "success": true, "data": [] }).to_string();
+        assert_eq!(
+            parse_altyazidb(empty.as_bytes(), &episode()),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            parse_altyazidb(b"<html>", &episode()),
+            Err(SourceError::Decode)
+        );
+        let other_lang = Query::new("series", "tt0903747:1:2", "pob").unwrap();
+        assert_eq!(
+            parse_altyazidb(body.as_bytes(), &other_lang),
+            Ok(Vec::new())
+        );
+        assert_eq!(altyazidb_language("eng"), Some("en"));
     }
 
     #[test]
