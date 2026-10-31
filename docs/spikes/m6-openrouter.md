@@ -79,3 +79,35 @@ en uzun blok 69 sn sürdü.
   satırı konsun; dizide sıradaki bölüm önceden çevrilsin.
 - Ölçülmedi: ileri sarmanın dosyayı yeniden çektirip çektirmediği ve
   uzayan dosyanın Apple TV'de görünmesi.
+
+## Satıra bölünmüş cümlede kayma (SS-044)
+
+Soru: İngilizcede iki satıra bölünen cümle Türkçeye (fiil sonda)
+çevrilince içerik bir satıra yığılıyor mu? Fikir
+[better-ai-srt-translation](https://github.com/yusufipk/better-ai-srt-translation)
+README'sinden. `balance-check <ingilizce.srt> <ceviri.srt>`: kaynakta cümle
+bitmeden sonraki satıra geçen çiftlerde, ilk satırın harf payının
+kaynaktan çeviriye ne kadar oynadığı (`moved`); 0.35'ten fazlası "kaymış".
+Metin basılmaz.
+
+**Öncesi (2026-10-31, yukarıdaki 2. denemenin çıktısı, prompt sürümü 2):**
+
+| Eşik | Kaymış çift (619'dan) | İleri | Geri |
+|---|---|---|---|
+| > 0.15 | 105 | 35 | 70 |
+| > 0.20 | 54 | 18 | 36 |
+| > 0.25 | 23 | 6 | 17 |
+| > 0.30 | 7 | 2 | 5 |
+| **> 0.35** | **3 (%0,5)** | 1 | 2 |
+
+`|moved|` ortanca 0.07, p90 0.19, p99 0.31. 2 034 satırın 619 çifti
+bölünmüş cümle.
+
+- README'deki "cümle ilk satıra yığılır, ikincisi boş kalır" durumu
+  GPT-6 Luna'da bu filmde neredeyse yok (619'da 3). Nen'in istemi zaten
+  her cue'yu ayrı id ile istiyor ve bağlam veriyor.
+- Küçük kaymalar çoğunlukla geri yönde (ikinci satır daha fazla metin
+  alıyor): Türkçede fiilin sona gelmesiyle uyumlu, doğal.
+- Prompt sürümü 3 (kural eklendi) için aynı filmin "sonrası" ölçümü
+  yapılmadı (~0,06 $). Kazanç payı en çok 3 çift; asıl soru kuralın
+  doğallığı bozup bozmadığı.
