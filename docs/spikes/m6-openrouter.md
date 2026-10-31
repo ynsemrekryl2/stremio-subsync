@@ -60,6 +60,37 @@ Aynı film, aynı model; analizden sonra en çok 6 blok aynı anda
 - Sonuç: 6 kalır. Darboğaz artık analiz (toplamın ~%15'i) ve blok
   dalgaları; 6'yı artırmak en çok ~1 dk kazandırır.
 
+## Düşünme düzeyi (SS-046, 2026-10-31)
+
+GPT-6 Luna OpenRouter'da varsayılan olarak `medium` düşünüyor
+(`supported_efforts`: none, low, medium, high, xhigh, max).
+`SUBSYNC_TRANSLATE_REASONING` ile aynı film, 6 paralel blok, sırayla
+çalıştırıldı. `medium` satırı SS-045 denemesi (ayar verilmemiş; düşünme
+token'ı o zaman ayrıca sayılmıyordu).
+
+| Düzey | Toplam | İlk blok | Analiz | Blok ortanca / p90 / en uzun | Çıkış token | Düşünme token | Kayma (`balance`) | Maliyet |
+|---|---|---|---|---|---|---|---|---|
+| `medium` (varsayılan) | 153,1 sn | 30,5 sn | 22,8 sn | 11,4 / 14,5 / 17,7 sn | 78 000 | ölçülmedi (~31 000*) | 8 / 619 (%1,3) | 0,0642 $ |
+| `low` | **90,6 sn** | **18,8 sn** | 12,4 sn | 7,2 / 7,9 / 9,7 sn | 47 339 | 296 (2 blok) | 5 / 619 (%0,8) | 0,0484 $ |
+| `none` | 93,9 sn | 20,9 sn | 14,2 sn | 7,2 / 8,6 / 10,2 sn | 47 160 | 0 | 4 / 619 (%0,6) | 0,0489 $ |
+
+\* `medium`'un fazladan çıkış token'ı, diğer ikisiyle aradaki fark.
+
+- Üç denemede de 61 çağrı, tekrar ve onarım 0; 2 034 / 2 034 satır.
+- `medium`'da blok başına ~1 300 çıkış token'ının ~550'si düşünme.
+  Düşünme kapanınca blok ~11 sn'den ~7 sn'ye, analiz ~23 sn'den ~13
+  sn'ye iniyor: film **~1,7 kat hızlı**, ilk satırlar ~10 sn erken,
+  maliyet ~%25 düşük.
+- `low` neredeyse hiç düşünmüyor (60 bloğun 2'sinde 113 ve 183 token);
+  hızda `none` ile aynı. Model gerekirse düşünebildiği için güvenlik payı
+  var.
+- `balance` kayması üçünde de çok düşük; düşünmeyi kısmak satırlar arası
+  içerik kaymasını artırmadı. Bu yalnız kayma ölçüsü, çeviri kalitesi
+  değil.
+- Kalite: üç çıktıdan rastgele 40 satır körleme yan yana konup kullanıcıya
+  okutuluyor (sayfa yerel; metin depoya ve log'a girmez). Varsayılan bu
+  okumayla seçilir.
+
 ## Gemini 3.8 Flash ile karşılaştırma (yarıda bırakıldı)
 
 Aynı film `google/gemini-3.8-flash` ile (milyon token 0,825 $ giriş /
