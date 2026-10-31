@@ -133,5 +133,6 @@ başına ~1 560 çıkış token'ı (~1 220).
   gürültü içinde: kural ne iyileştirdi ne açıkça bozdu.
 - Bedeli var: blok başına daha çok çıkış token'ı (büyük olasılıkla
   düşünme), ~%35 daha uzun blok süresi, ~%25 daha pahalı.
-- Sonuç: sorun bu kurulumda zaten nadir (%0,5–1,1); kural kaldırılmalı,
-  `balance` ölçümü kalır (model ya da istem değişince tekrar bakmak için).
+- Sonuç: sorun bu kurulumda zaten nadir (%0,5–1,1); kural kaldırıldı
+  (prompt sürümü yine 2), `balance` ölçümü kalır (model ya da istem
+  değişince tekrar bakmak için).

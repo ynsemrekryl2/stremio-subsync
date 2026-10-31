@@ -34,7 +34,7 @@ pub const ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "openai/gpt-6-luna";
 
 /// Bumped by hand when the prompt text or the data sent and received change.
-pub const PROMPT_VERSION: u32 = 3;
+pub const PROMPT_VERSION: u32 = 2;
 pub const SCHEMA_VERSION: u32 = 2;
 
 /// Request and response bodies are capped; a whole film's transcript is
@@ -431,9 +431,6 @@ fn translation_instructions(request: &BlockRequest) -> String {
          Use cues marked translate=false only as context. Return exactly one translation for every requested output cue ID, in order, and no others.\n\
          Preserve meaningful line breaks and lightweight subtitle markup when practical. Do not add explanations, speaker labels, or timing information.\n\
          Keep meaning, register, names, and terminology consistent with the supplied analysis and its glossary.\n\
-         When a sentence runs across several cues, each cue must carry the part of the meaning its source cue carries, because it is shown only during that cue's time. \
-         Never put the whole sentence into the first cue and leave later cues nearly empty, and never pull content back into an earlier cue. \
-         If the target word order differs (for example a verb that comes last), reorder naturally within the sentence but keep each cue's share of the text close to its source cue's share.\n\
          {mode}",
         request.langs.source, request.langs.target
     )
