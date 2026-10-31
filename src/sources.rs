@@ -23,6 +23,8 @@ const MAX_DOWNLOAD: usize = 4 * 1024 * 1024;
 const MAX_SRT: u64 = 2 * 1024 * 1024;
 /// Candidates the probe downloads.
 const PROBE_DOWNLOADS: usize = 3;
+/// Candidates downloaded once more when none of the first fits (SS-040).
+const MORE_DOWNLOADS: usize = 3;
 
 const OPENSUBTITLES_V3: &str = "https://opensubtitles-v3.strem.io/";
 const SUBDL_API: &str = "https://api.subdl.com/api/v1/subtitles";
@@ -560,14 +562,43 @@ pub struct SourcesProbe {
     pub downloads: Vec<Result<SrtStats, SourceError>>,
 }
 
+/// One M3 probe: the report and the cues of each download (`None` where it
+/// failed), in the same order. Keeps the ranked candidates not downloaded
+/// yet, with their links; no `Debug`, so they cannot reach the log.
+pub struct Probe {
+    pub report: SourcesProbe,
+    pub cues: Vec<Option<Vec<Cue>>>,
+    sources: Vec<Arc<dyn SubtitleSource>>,
+    query: Query,
+    filename: Option<String>,
+    rest: Vec<(usize, Candidate)>,
+}
+
+impl Probe {
+    /// Whether ranked candidates are left to download.
+    pub fn has_more(&self) -> bool {
+        !self.rest.is_empty()
+    }
+
+    /// Downloads the next few ranked candidates and appends them to the
+    /// report and the cues (SS-040).
+    pub async fn download_more(&mut self) {
+        let take = self.rest.len().min(MORE_DOWNLOADS);
+        let batch: Vec<_> = self.rest.drain(..take).collect();
+        let (downloads, cues) =
+            download(&self.sources, &self.query, self.filename.as_deref(), &batch).await;
+        self.report.downloads.extend(downloads);
+        self.cues.extend(cues);
+    }
+}
+
 /// Searches every source, ranks the candidates against `filename` and
-/// downloads the best few. Beside the report, the cues of each download
-/// (`None` where it failed), in the same order.
+/// downloads the best few.
 pub async fn probe(
     sources: &[Arc<dyn SubtitleSource>],
     query: &Query,
     filename: Option<&str>,
-) -> (SourcesProbe, Vec<Option<Vec<Cue>>>) {
+) -> Probe {
     let started = Instant::now();
     let mut searches = Vec::new();
     let mut found: Vec<(usize, Candidate)> = Vec::new();
@@ -582,9 +613,33 @@ pub async fn probe(
         .take(5)
         .map(|(_, c)| rank::score(&c.release, filename))
         .collect();
+    let rest = found.split_off(found.len().min(PROBE_DOWNLOADS));
+    let (downloads, cues) = download(sources, query, filename, &found).await;
+    Probe {
+        report: SourcesProbe {
+            elapsed_ms: started.elapsed().as_millis(),
+            searches,
+            top_scores,
+            downloads,
+        },
+        cues,
+        sources: sources.to_vec(),
+        query: query.clone(),
+        filename: filename.map(str::to_owned),
+        rest,
+    }
+}
+
+/// Downloads `batch` in order: each one's shape and cues.
+async fn download(
+    sources: &[Arc<dyn SubtitleSource>],
+    query: &Query,
+    filename: Option<&str>,
+    batch: &[(usize, Candidate)],
+) -> (Vec<Result<SrtStats, SourceError>>, Vec<Option<Vec<Cue>>>) {
     let mut downloads = Vec::new();
     let mut read = Vec::new();
-    for (i, candidate) in found.iter().take(PROBE_DOWNLOADS) {
+    for (i, candidate) in batch {
         let result = sources[*i].download(query, candidate).await.map(|bytes| {
             let cues = srt::parse(&srt::decode(&bytes, &query.lang));
             let stats = SrtStats {
@@ -609,13 +664,7 @@ pub async fn probe(
         };
         downloads.push(result);
     }
-    let report = SourcesProbe {
-        elapsed_ms: started.elapsed().as_millis(),
-        searches,
-        top_scores,
-        downloads,
-    };
-    (report, read)
+    (downloads, read)
 }
 
 #[cfg(test)]
@@ -825,6 +874,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_more_takes_the_next_ranked_candidates_once() {
+        let file = "Movie.2020.1080p.BluRay.x264-GRP.mkv";
+        let found = (0..8)
+            .map(|i| {
+                let link = if i == 4 { "bad" } else { "ok" };
+                candidate(SourceKind::OpenSubtitles, &format!("Movie.2020.r{i}"), link)
+            })
+            .collect();
+        let sources: Vec<Arc<dyn SubtitleSource>> = vec![Arc::new(FakeSource {
+            kind: SourceKind::OpenSubtitles,
+            found: Ok(found),
+        })];
+        let mut probe = probe(&sources, &movie(), Some(file)).await;
+        assert_eq!((probe.report.downloads.len(), probe.cues.len()), (3, 3));
+        assert!(probe.has_more());
+        probe.download_more().await;
+        assert_eq!((probe.report.downloads.len(), probe.cues.len()), (6, 6));
+        assert_eq!(probe.report.downloads[4], Err(SourceError::Status(404)));
+        assert!(probe.cues[4].is_none() && probe.cues[5].is_some());
+        assert!(probe.has_more(), "two are left");
+        probe.download_more().await;
+        assert_eq!(probe.report.downloads.len(), 8);
+        assert!(!probe.has_more());
+        probe.download_more().await;
+        assert_eq!(probe.report.downloads.len(), 8, "nothing left to take");
+    }
+
+    #[tokio::test]
     async fn probe_ranks_across_sources_and_downloads_best() {
         let file = "Movie.2020.1080p.BluRay.x264-GRP.mkv";
         let sources: Vec<Arc<dyn SubtitleSource>> = vec![
@@ -852,7 +929,11 @@ mod tests {
                 found: Err(SourceError::Status(403)),
             }),
         ];
-        let (outcome, times) = probe(&sources, &movie(), Some(file)).await;
+        let Probe {
+            report: outcome,
+            cues: times,
+            ..
+        } = probe(&sources, &movie(), Some(file)).await;
         assert_eq!(
             outcome.searches,
             vec![

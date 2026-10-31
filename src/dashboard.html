@@ -248,6 +248,10 @@ function track(ev) {
     const tracks = (line.match(/\((\d+), \d+\)/g) || []).length;
     if (tracks) c.ruler++;
     add("cetvel: PGS'ten (" + tracks + " iz)", "ok");
+  } else if (ev.area === "m3" && /m3 more /.test(line)) {
+    // None of the first downloads fitted; the next ranked ones (SS-040).
+    const read = (line.match(/Ok\(SrtStats/g) || []).length;
+    add("aday: " + read + " tane daha indirildi", read ? "" : "warn");
   } else if (ev.area === "m3") {
     const found = [...line.matchAll(/Ok\((\d+)\)/g)].reduce((s, m) => s + Number(m[1]), 0);
     add("aday: " + found + " bulundu", found ? "ok" : "warn");

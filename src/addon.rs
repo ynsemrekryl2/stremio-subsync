@@ -685,9 +685,9 @@ async fn build_menu(
             let sources = state.subtitle_sources.clone();
             let filename = hints.filename.clone();
             Some(tokio::spawn(async move {
-                let (outcome, cues) = sources::probe(&sources, &query, filename.as_deref()).await;
-                event!("m3", "m3 probe query={query:?} outcome={outcome:?}");
-                (outcome, cues)
+                let probe = sources::probe(&sources, &query, filename.as_deref()).await;
+                event!("m3", "m3 probe query={query:?} outcome={:?}", probe.report);
+                probe
             }))
         }
         _ => None,
@@ -718,14 +718,13 @@ async fn build_menu(
             return Err(notice);
         }
     };
-    let (outcome, cues) = match m3 {
+    let mut probe = match m3 {
         Some(m3) => m3.await.map_err(|_| Notice::Failed)?,
         None => return Err(Notice::Failed),
     };
     let rulers = Arc::new(rulers);
     let wanted = align_candidates(
-        &outcome,
-        cues,
+        &mut probe,
         rulers.clone(),
         kind.clone(),
         state.lang.clone(),
@@ -759,12 +758,13 @@ async fn fallback(
     let Some(query) = Query::new(kind, id, &lang) else {
         return Vec::new();
     };
-    let (outcome, cues) = sources::probe(&state.subtitle_sources, &query, filename).await;
+    let mut probe = sources::probe(&state.subtitle_sources, &query, filename).await;
     event!(
         "m3",
-        "m3 fallback probe query={query:?} outcome={outcome:?}"
+        "m3 fallback probe query={query:?} outcome={:?}",
+        probe.report
     );
-    let mut entries = align_candidates(&outcome, cues, rulers, kind.to_owned(), lang, None, false)
+    let mut entries = align_candidates(&mut probe, rulers, kind.to_owned(), lang, None, false)
         .await
         .unwrap_or_default();
     entries.truncate(1);
@@ -774,67 +774,120 @@ async fn fallback(
 
 /// Downloaded candidates laid over the ruler: the accepted ones as menu
 /// entries in `lang` (in labeling mode, every one, marked), or why there is
-/// nothing to align. Timings are dumped under `dump_dir`, if given.
+/// nothing to align. When none of the first downloads fits, the next few
+/// ranked candidates are downloaded and tried too (SS-040); not in labeling
+/// mode, which shows every candidate anyway. Timings of every download are
+/// dumped under `dump_dir`, if given.
 async fn align_candidates(
-    outcome: &sources::SourcesProbe,
-    cues: Vec<Option<Vec<srt::Cue>>>,
+    probe: &mut sources::Probe,
     rulers: Arc<Vec<(u64, Vec<Event>)>>,
     kind: String,
     lang: String,
     dump_dir: Option<std::path::PathBuf>,
     label_mode: bool,
 ) -> Result<Vec<menu::MenuEntry>, Notice> {
-    if outcome.searches.iter().all(|(_, found)| found.is_err()) {
+    let searches = &probe.report.searches;
+    if searches.iter().all(|(_, found)| found.is_err()) {
         return Err(Notice::Failed);
     }
-    if outcome
-        .searches
+    if searches
         .iter()
         .all(|(_, found)| matches!(found, Ok(0) | Err(_)))
     {
         return Err(Notice::NoCandidates);
     }
-    let scores: Vec<Option<i32>> = outcome
-        .downloads
-        .iter()
-        .map(|d| d.as_ref().ok().map(|stats| stats.score))
-        .collect();
-    let times: Vec<Option<Vec<Event>>> =
-        cues.iter().map(|c| c.as_deref().map(srt::events)).collect();
-    if times.iter().all(Option::is_none) {
+    if probe.cues.iter().all(Option::is_none) {
         return Err(Notice::Failed);
     }
-    // Alignment, the dump and the menu are CPU and disk work; keep them off
-    // the async workers.
+    if label_mode {
+        let dump_name = write_dump(dump_dir, kind, rulers.clone(), probe).await;
+        return align_round(probe, rulers, lang, Some(dump_name), 0).await;
+    }
+    let mut entries = align_round(probe, rulers.clone(), lang.clone(), None, 0).await?;
+    if entries.is_empty() && probe.has_more() {
+        let tried = probe.cues.len();
+        probe.download_more().await;
+        event!(
+            "m3",
+            "m3 more downloads={:?}",
+            &probe.report.downloads[tried..]
+        );
+        entries = align_round(probe, rulers.clone(), lang, None, tried).await?;
+    }
+    write_dump(dump_dir, kind, rulers, probe).await;
+    Ok(entries)
+}
+
+/// Every download of `probe` laid over the ruler: the accepted ones as menu
+/// entries, or in labeling mode (`label` holds the dump's name, if one was
+/// written) every one, marked. Trials of downloads before `logged` were
+/// logged by an earlier round and are not logged again.
+async fn align_round(
+    probe: &sources::Probe,
+    rulers: Arc<Vec<(u64, Vec<Event>)>>,
+    lang: String,
+    label: Option<Option<String>>,
+    logged: usize,
+) -> Result<Vec<menu::MenuEntry>, Notice> {
+    let cues = probe.cues.clone();
+    // Alignment and the menu are CPU work; keep them off the async workers.
     let (trials, entries) = tokio::task::spawn_blocking(move || {
-        let dump_name = match dump_dir
-            .map(|dir| dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores)))
-        {
-            Some(Ok(name)) => {
-                event!("dump", "dump written file={name}");
-                Some(name)
-            }
-            Some(Err(err)) => {
-                event!("dump", "dump failed error={:?}", err.kind());
-                None
-            }
-            None => None,
-        };
+        let times: Vec<Option<Vec<Event>>> =
+            cues.iter().map(|c| c.as_deref().map(srt::events)).collect();
         let trials = align::trials(&rulers, &times);
         let (track, events) = &rulers[0];
-        let entries = if label_mode {
-            label::build(&trials, (*track, events), &cues, dump_name.as_deref())
-        } else {
-            menu::accepted(&trials, &rulers, &cues, &lang)
+        let entries = match label {
+            Some(dump_name) => label::build(&trials, (*track, events), &cues, dump_name.as_deref()),
+            None => menu::accepted(&trials, &rulers, &cues, &lang),
         };
         (trials, entries)
     })
     .await
     .map_err(|_| Notice::Failed)?;
-    for trial in &trials {
+    for trial in trials.iter().filter(|t| t.candidate >= logged) {
         event!("m4", "m4 probe {trial:?}");
     }
     Ok(entries)
+}
+
+/// Writes the timings of every download of `probe` under `dump_dir`, if
+/// given; the dump's file name.
+async fn write_dump(
+    dump_dir: Option<std::path::PathBuf>,
+    kind: String,
+    rulers: Arc<Vec<(u64, Vec<Event>)>>,
+    probe: &sources::Probe,
+) -> Option<String> {
+    let dir = dump_dir?;
+    let scores: Vec<Option<i32>> = probe
+        .report
+        .downloads
+        .iter()
+        .map(|d| d.as_ref().ok().map(|stats| stats.score))
+        .collect();
+    let times: Vec<Option<Vec<Event>>> = probe
+        .cues
+        .iter()
+        .map(|c| c.as_deref().map(srt::events))
+        .collect();
+    let written = tokio::task::spawn_blocking(move || {
+        dump::write(&dir, &Dump::new(&kind, &rulers, &times, &scores))
+    })
+    .await;
+    match written {
+        Ok(Ok(name)) => {
+            event!("dump", "dump written file={name}");
+            Some(name)
+        }
+        Ok(Err(err)) => {
+            event!("dump", "dump failed error={:?}", err.kind());
+            None
+        }
+        Err(_) => {
+            event!("dump", "dump failed error=task");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1367,6 +1420,124 @@ mod tests {
                 .map(|srt| srt.clone().into_bytes())
                 .ok_or(sources::SourceError::Other);
             Box::pin(async { bytes })
+        }
+    }
+
+    /// Candidates `r0`, `r1`, … in the wanted language, ranked in that
+    /// order, one file each; records which ones were downloaded.
+    struct RankedSubtitles {
+        files: Vec<String>,
+        downloaded: Mutex<Vec<String>>,
+    }
+
+    impl SubtitleSource for RankedSubtitles {
+        fn kind(&self) -> sources::SourceKind {
+            sources::SourceKind::OpenSubtitles
+        }
+
+        fn search<'a>(&'a self, _query: &'a Query) -> sources::SearchFuture<'a> {
+            let found = (0..self.files.len())
+                .map(|i| sources::Candidate::fake(self.kind(), &format!("r{i}")))
+                .collect();
+            Box::pin(async { Ok(found) })
+        }
+
+        fn download<'a>(
+            &'a self,
+            _query: &'a Query,
+            candidate: &'a sources::Candidate,
+        ) -> sources::DownloadFuture<'a> {
+            self.downloaded
+                .lock()
+                .unwrap()
+                .push(candidate.release.clone());
+            let i: usize = candidate.release[1..].parse().unwrap();
+            let bytes = self.files[i].clone().into_bytes();
+            Box::pin(async { Ok(bytes) })
+        }
+    }
+
+    #[tokio::test]
+    async fn more_candidates_are_tried_only_when_none_of_the_first_fits() {
+        let (head, fits, other) = film();
+        let o = || other.clone();
+        // (ranked files, labeling mode) → menu, downloads.
+        let cases = [
+            (
+                vec![o(), o(), o(), fits.clone(), o()],
+                false,
+                vec!["tur"],
+                5,
+            ),
+            (
+                vec![fits.clone(), o(), o(), o(), o()],
+                false,
+                vec!["tur"],
+                3,
+            ),
+            (vec![o(), o(), o(), o()], false, vec!["⚠ Uyan yok"], 4),
+            (vec![o(), o(), o()], false, vec!["⚠ Uyan yok"], 3),
+            (
+                vec![o(), o(), o(), o(), o(), o(), o(), fits.clone()],
+                false,
+                vec!["⚠ Uyan yok"],
+                6,
+            ),
+            // Labeling mode lists every candidate anyway.
+            (vec![o(), o(), o(), fits.clone()], true, vec![], 3),
+        ];
+        for (i, (files, label_mode, menu, downloads)) in cases.into_iter().enumerate() {
+            let dir = std::env::temp_dir().join(format!(
+                "subsync-more-{}-{i}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let source = Arc::new(RankedSubtitles {
+                files,
+                downloaded: Mutex::new(Vec::new()),
+            });
+            let mut state = AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(ProbeStream))
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    head.clone(),
+                )))
+                .with_subtitle_sources(vec![source.clone()], "tur".to_owned())
+                .with_dump_dir(dir.clone());
+            if label_mode {
+                state = state.with_label_mode();
+            }
+            let app = router(state);
+            let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
+            let (status, body) = call(&app, uri).await;
+            assert_eq!(status, StatusCode::OK, "case {i}");
+            let list: Value = serde_json::from_str(&body).unwrap();
+            let langs: Vec<&str> = list["subtitles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["lang"].as_str().unwrap())
+                .collect();
+            if !label_mode {
+                assert_eq!(langs, menu, "case {i}");
+            }
+            let downloaded = source.downloaded.lock().unwrap().clone();
+            let ranked: Vec<String> = (0..downloads).map(|n| format!("r{n}")).collect();
+            assert_eq!(downloaded, ranked, "case {i}");
+
+            // One dump, with every download.
+            let names: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            assert_eq!(names.len(), 1, "case {i}");
+            let saved: Dump = serde_json::from_slice(&std::fs::read(&names[0]).unwrap()).unwrap();
+            assert_eq!(saved.candidates.len(), downloads, "case {i}");
+            std::fs::remove_dir_all(&dir).unwrap();
         }
     }
 
