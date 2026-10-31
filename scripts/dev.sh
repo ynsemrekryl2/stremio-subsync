@@ -8,7 +8,8 @@
 #   scripts/dev.sh link        copy the install link to the clipboard
 #   scripts/dev.sh dashboard   open the live event view in the browser
 #   scripts/dev.sh subdl       save a SubDL API key (hidden input); later starts use it
-#   scripts/dev.sh openrouter  save an OpenRouter API key (hidden input)
+#   scripts/dev.sh openrouter  save an OpenRouter API key (hidden input); later starts
+#                              translate the fitting English subtitle with it
 #   scripts/dev.sh translate-check <english.srt> [out.srt]
 #                              translate a local SRT with that key; prints counts only
 #   scripts/dev.sh balance-check <english.srt> <translated.srt>
@@ -99,5 +100,10 @@ export SUBSYNC_TOKEN SUBSYNC_AIOSTREAMS_URL
 if [ -z "${SUBDL_API_KEY:-}" ] && [ -n "$(secret subdl-key)" ]; then
 	SUBDL_API_KEY="$(secret subdl-key)"
 	export SUBDL_API_KEY
+fi
+# Optional translation of the fitting English subtitle (SS-026).
+if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -n "$(secret openrouter-key)" ]; then
+	OPENROUTER_API_KEY="$(secret openrouter-key)"
+	export OPENROUTER_API_KEY
 fi
 exec cargo run

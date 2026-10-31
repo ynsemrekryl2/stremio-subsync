@@ -114,6 +114,7 @@ impl Notice {
         MenuEntry {
             lang: lang.to_owned(),
             srt: format!("1\n00:00:01,000 --> 00:00:10,000\n{message}\n\n"),
+            translated: false,
         }
     }
 
@@ -132,6 +133,10 @@ impl Notice {
 pub struct MenuEntry {
     pub lang: String,
     pub srt: String,
+    /// An automatic translation of `srt` (English) into the wanted
+    /// language (SS-026): the served file comes from the translation job.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub translated: bool,
 }
 
 impl std::fmt::Debug for MenuEntry {
@@ -139,6 +144,7 @@ impl std::fmt::Debug for MenuEntry {
         f.debug_struct("MenuEntry")
             .field("lang", &self.lang)
             .field("srt_len", &self.srt.len())
+            .field("translated", &self.translated)
             .finish()
     }
 }
@@ -193,6 +199,7 @@ pub fn accepted(
         out.push(MenuEntry {
             lang: lang.to_owned(),
             srt,
+            translated: false,
         });
         if out.len() == MAX_OFFERED {
             break;
@@ -202,7 +209,7 @@ pub fn accepted(
 }
 
 /// FNV-1a: stable across builds, enough to name files and spot copies.
-fn fnv(text: &str) -> u64 {
+pub fn fnv(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
@@ -264,10 +271,9 @@ impl MenuCache {
         entry
     }
 
-    /// SRT text of menu entry `n` (from 1) of `entry`.
-    pub fn srt(&self, entry: u64, n: usize) -> Option<&str> {
-        let kept = self.entries.get(&entry)?;
-        kept.entries.get(n.checked_sub(1)?).map(|e| e.srt.as_str())
+    /// Menu entry `n` (from 1) of `entry`.
+    pub fn get(&self, entry: u64, n: usize) -> Option<&MenuEntry> {
+        self.entries.get(&entry)?.entries.get(n.checked_sub(1)?)
     }
 }
 
@@ -330,6 +336,7 @@ mod tests {
         MenuEntry {
             lang: "tur".to_owned(),
             srt: text.to_owned(),
+            translated: false,
         }
     }
 
@@ -472,8 +479,8 @@ mod tests {
             Some(found)
         );
         assert!(cache.find("a", 1_000 + KEEP_FOUND_S).is_none());
-        assert_eq!(cache.srt(found, 1), Some("x"));
-        assert_eq!(cache.srt(found, 2), None);
+        assert_eq!(cache.get(found, 1).map(|e| e.srt.as_str()), Some("x"));
+        assert_eq!(cache.get(found, 2).map(|e| e.srt.as_str()), None);
 
         let notice = Notice::NoEnglishTrack;
         cache.insert(
@@ -494,8 +501,12 @@ mod tests {
         assert!(cache.find("down", 1_000 + KEEP_PASSING_S).is_none());
 
         let again = cache.insert("a".to_owned(), vec![entry("y")], 2_000, KEEP_FOUND_S);
-        assert_eq!(cache.srt(found, 1), None, "replaced entry is gone");
-        assert_eq!(cache.srt(again, 1), Some("y"));
+        assert_eq!(
+            cache.get(found, 1).map(|e| e.srt.as_str()),
+            None,
+            "replaced entry is gone"
+        );
+        assert_eq!(cache.get(again, 1).map(|e| e.srt.as_str()), Some("y"));
         for i in 0..CAPACITY {
             cache.insert(format!("r{i}"), vec![entry("z")], 2_000, KEEP_FOUND_S);
         }

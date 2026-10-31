@@ -7,7 +7,7 @@ set -euo pipefail
 umask 077
 
 env_file=/etc/stremio-subsync.env
-allowed=" SUBSYNC_AIOSTREAMS_URL SUBDL_API_KEY "
+allowed=" SUBSYNC_AIOSTREAMS_URL SUBDL_API_KEY OPENROUTER_API_KEY "
 [ -f "$env_file" ] || { echo "$env_file missing: run setup.sh first" >&2; exit 1; }
 
 tmp="$(mktemp "$env_file.XXXXXX")"
