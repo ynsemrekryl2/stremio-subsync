@@ -232,6 +232,19 @@ async fn main() {
                 );
                 std::process::exit(2);
             };
+            let reasoning = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
+            let Some(client) = client.with_reasoning(reasoning.as_deref()) else {
+                eprintln!(
+                    "SUBSYNC_TRANSLATE_REASONING must be one of {}",
+                    openrouter::REASONING_EFFORTS.join(", ")
+                );
+                std::process::exit(2);
+            };
+            // Another effort is another translation; unset keeps the old key.
+            let model = match &reasoning {
+                Some(effort) => format!("{model} reasoning={effort}"),
+                None => model,
+            };
             event!("start", "translation: on (model {model}, into {lang})");
             state = state.with_translations(translations::Translations::new(
                 Arc::new(client),

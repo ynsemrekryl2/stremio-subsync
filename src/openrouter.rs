@@ -33,6 +33,12 @@ pub const ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 /// picks another.
 pub const DEFAULT_MODEL: &str = "openai/gpt-6-luna";
 
+/// Reasoning efforts OpenRouter takes (`reasoning.effort`); which ones a
+/// model accepts is its own. Unset, the model's default applies (GPT-6
+/// Luna: `medium`). `SUBSYNC_TRANSLATE_REASONING` picks one (SS-046).
+pub const REASONING_EFFORTS: [&str; 7] =
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 /// Bumped by hand when the prompt text or the data sent and received change.
 pub const PROMPT_VERSION: u32 = 2;
 pub const SCHEMA_VERSION: u32 = 2;
@@ -59,6 +65,8 @@ pub struct Usage {
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
     pub output_tokens: u64,
+    /// Part of `output_tokens` the model spent thinking.
+    pub reasoning_tokens: u64,
     pub cost_usd: f64,
 }
 
@@ -66,6 +74,7 @@ pub struct Usage {
 pub struct OpenRouter {
     key: String,
     model: String,
+    reasoning: Option<&'static str>,
     endpoint: Url,
     client: reqwest::Client,
     retry_delays: [Duration; MAX_RETRIES],
@@ -85,6 +94,7 @@ impl OpenRouter {
         Some(Self {
             key,
             model: model.to_owned(),
+            reasoning: None,
             endpoint: Url::parse(endpoint).ok()?,
             client: reqwest::Client::builder()
                 .timeout(CALL_TIMEOUT)
@@ -94,6 +104,15 @@ impl OpenRouter {
             retry_delays: RETRY_DELAYS,
             usage: Mutex::new(Usage::default()),
         })
+    }
+
+    /// `None` for an effort not in [`REASONING_EFFORTS`].
+    pub fn with_reasoning(mut self, effort: Option<&str>) -> Option<Self> {
+        self.reasoning = match effort {
+            None => None,
+            Some(effort) => Some(*REASONING_EFFORTS.iter().find(|e| **e == effort)?),
+        };
+        Some(self)
     }
 
     pub fn usage(&self) -> Usage {
@@ -132,17 +151,19 @@ impl OpenRouter {
             total.input_tokens += usage.input_tokens;
             total.cached_input_tokens += usage.cached_input_tokens;
             total.output_tokens += usage.output_tokens;
+            total.reasoning_tokens += usage.reasoning_tokens;
             total.cost_usd += usage.cost_usd;
         }
         event!(
             "translate",
-            "openrouter call kind={kind} ok={} why={:?} finish={finish:?} retries={retries} ms={} in={} cached={} out={}",
+            "openrouter call kind={kind} ok={} why={:?} finish={finish:?} retries={retries} ms={} in={} cached={} out={} reasoning={}",
             outcome.is_ok(),
             outcome.as_ref().err(),
             started.elapsed().as_millis(),
             usage.input_tokens,
             usage.cached_input_tokens,
-            usage.output_tokens
+            usage.output_tokens,
+            usage.reasoning_tokens
         );
         outcome.map_err(Why::error)
     }
@@ -183,7 +204,7 @@ impl OpenRouter {
     }
 
     fn body(&self, system: String, user: String, schema_name: &str, schema: Value) -> Vec<u8> {
-        serde_json::to_vec(&json!({
+        let mut body = json!({
             "model": self.model,
             "messages": [
                 { "role": "system", "content": system },
@@ -195,8 +216,11 @@ impl OpenRouter {
             },
             "provider": { "require_parameters": true, "data_collection": "deny" },
             "usage": { "include": true },
-        }))
-        .unwrap_or_default()
+        });
+        if let Some(effort) = self.reasoning {
+            body["reasoning"] = json!({ "effort": effort });
+        }
+        serde_json::to_vec(&body).unwrap_or_default()
     }
 }
 
@@ -389,6 +413,11 @@ fn usage_of(root: &Value) -> Usage {
             .and_then(Value::as_u64)
             .unwrap_or(0),
         output_tokens: count("completion_tokens"),
+        reasoning_tokens: usage
+            .get("completion_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         cost_usd: usage.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
     }
 }
@@ -604,7 +633,8 @@ struct CuePayload {
 
 /// `stremio-subsync translate-check <english.srt> [out.srt]`: translates a
 /// local English SRT with `OPENROUTER_API_KEY` (model
-/// `SUBSYNC_TRANSLATE_MODEL`, target `SUBSYNC_LANG`) and prints counts,
+/// `SUBSYNC_TRANSLATE_MODEL`, effort `SUBSYNC_TRANSLATE_REASONING`, target
+/// `SUBSYNC_LANG`) and prints counts,
 /// tokens, cost, time and [`crate::translate::Balance`] only; the
 /// translation goes to `out` if given.
 pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Result<(), String> {
@@ -614,7 +644,11 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
         .ok_or("OPENROUTER_API_KEY is not set")?;
     let model =
         std::env::var("SUBSYNC_TRANSLATE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-    let client = OpenRouter::new(key.trim().to_owned(), &model).ok_or("bad model id")?;
+    let reasoning = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
+    let client = OpenRouter::new(key.trim().to_owned(), &model)
+        .ok_or("bad model id")?
+        .with_reasoning(reasoning.as_deref())
+        .ok_or("bad reasoning effort")?;
     let bytes = std::fs::read(srt).map_err(|err| format!("read: {:?}", err.kind()))?;
     let cues = crate::srt::parse(&crate::srt::decode(&bytes, "eng"));
     let langs = crate::translate::Langs {
@@ -623,7 +657,8 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
     };
     let blocks = crate::translate::layout(cues.len()).len();
     println!(
-        "model={model} lines={} blocks={blocks} target={}",
+        "model={model} reasoning={} lines={} blocks={blocks} target={}",
+        reasoning.as_deref().unwrap_or("default"),
         cues.len(),
         langs.target
     );
@@ -639,7 +674,7 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
     .await;
     let usage = client.usage();
     println!(
-        "result={} total_s={:.1} first_block_s={} calls={} retries={} in={} cached={} out={} cost_usd={:.4}",
+        "result={} total_s={:.1} first_block_s={} calls={} retries={} in={} cached={} out={} reasoning={} cost_usd={:.4}",
         match &result {
             Ok(_) => "ok".to_owned(),
             Err(failure) => format!("{failure:?}"),
@@ -651,6 +686,7 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
         usage.input_tokens,
         usage.cached_input_tokens,
         usage.output_tokens,
+        usage.reasoning_tokens,
         usage.cost_usd
     );
     // A failed run still writes the blocks that finished.
@@ -751,6 +787,7 @@ mod tests {
                 "prompt_tokens": 1200,
                 "completion_tokens": 300,
                 "prompt_tokens_details": { "cached_tokens": 1000 },
+                "completion_tokens_details": { "reasoning_tokens": 200 },
                 "cost": 0.0021,
             },
         })
@@ -814,6 +851,7 @@ mod tests {
         assert_eq!(sent["provider"]["require_parameters"], true);
         assert_eq!(sent["provider"]["data_collection"], "deny");
         assert_eq!(sent["usage"]["include"], true);
+        assert!(sent.get("reasoning").is_none(), "the model's own default");
         let format = &sent["response_format"];
         assert_eq!(format["type"], "json_schema");
         assert_eq!(format["json_schema"]["name"], TRANSLATION_SCHEMA);
@@ -888,7 +926,30 @@ mod tests {
             ),
             (2400, 2000, 600)
         );
+        assert_eq!(usage.reasoning_tokens, 400);
         assert!((usage.cost_usd - 0.0042).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn a_chosen_reasoning_effort_goes_with_every_call() {
+        let (client, script) = serve(vec![ok(translations())]).await;
+        let client = client.with_reasoning(Some("low")).unwrap();
+        client.translate(&block_request()).await.unwrap();
+        let sent = &script.seen.lock().unwrap()[0].1;
+        assert_eq!(sent["reasoning"], json!({ "effort": "low" }));
+        assert_eq!(sent["provider"]["require_parameters"], true);
+    }
+
+    #[test]
+    fn reasoning_efforts_are_checked() {
+        let client = || OpenRouter::new(KEY.to_owned(), DEFAULT_MODEL).unwrap();
+        for effort in REASONING_EFFORTS {
+            assert!(client().with_reasoning(Some(effort)).is_some(), "{effort}");
+        }
+        assert!(client().with_reasoning(None).unwrap().reasoning.is_none());
+        for bad in ["", "LOW", "fast", "low "] {
+            assert!(client().with_reasoning(Some(bad)).is_none(), "{bad:?}");
+        }
     }
 
     #[tokio::test]
