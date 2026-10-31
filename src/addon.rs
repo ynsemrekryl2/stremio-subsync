@@ -165,12 +165,14 @@ pub fn router(state: AppState) -> Router {
         .route("/{token}/sub/{entry}/{file}", get(menu_srt))
         .route("/{token}/dashboard", get(dashboard))
         .route(EVENTS_ROUTE, get(events_json))
+        .route(TRANSLATIONS_ROUTE, get(translations_json))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
 const EVENTS_ROUTE: &str = "/{token}/events.json";
+const TRANSLATIONS_ROUTE: &str = "/{token}/translations.json";
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 
 /// Live view of recent log lines (SS-029), behind the same token.
@@ -208,6 +210,19 @@ async fn events_json(
         .into_response()
 }
 
+/// Translation jobs for the dashboard (SS-047): progress and the played
+/// file's name, never the text. `null` when translation is off.
+async fn translations_json(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let status = state.translations.as_ref().map(|t| t.status());
+    ([(header::CACHE_CONTROL, "no-store")], Json(status)).into_response()
+}
+
 /// One line per request with the route template, never the path itself:
 /// the path carries the token, the IMDb id and the filename.
 fn access_line(method: &str, route: Option<&str>, token_ok: bool, status: StatusCode) -> String {
@@ -232,7 +247,7 @@ async fn log_access(
     let response = next.run(request).await;
     let route = matched.as_ref().map(MatchedPath::as_str);
     // The dashboard polls every few seconds; logging that would bury the rest.
-    if route == Some(EVENTS_ROUTE) && response.status().is_success() {
+    if matches!(route, Some(EVENTS_ROUTE | TRANSLATIONS_ROUTE)) && response.status().is_success() {
         return response;
     }
     event!(
@@ -318,8 +333,11 @@ async fn respond(
         hints.filename.as_deref().unwrap_or_default(),
         hints.video_size.unwrap_or_default()
     );
+    // Names a translation job on the dashboard (SS-047).
+    let label = hints.filename.clone();
+    let label = label.as_deref();
     let now = menu::now_s();
-    if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+    if let Some((list, offered)) = menu_list(&state, headers, token, &request, label, now) {
         event!("served", "subtitles served from=memory offered={offered}");
         return list;
     }
@@ -333,7 +351,7 @@ async fn respond(
             if let Ok(mut menus) = state.menus.lock() {
                 menus.insert(request.clone(), entries, created, keep_s);
             }
-            if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+            if let Some((list, offered)) = menu_list(&state, headers, token, &request, label, now) {
                 event!("served", "subtitles served from=disk offered={offered}");
                 return list;
             }
@@ -360,7 +378,7 @@ async fn respond(
                 menus.insert(request.clone(), vec![notice.entry()], now, notice.keep_s());
             }
         }
-        if let Some((list, offered)) = menu_list(&state, headers, token, &request, now) {
+        if let Some((list, offered)) = menu_list(&state, headers, token, &request, label, now) {
             event!("served", "subtitles served from=probes offered={offered}");
             return list;
         }
@@ -376,11 +394,14 @@ async fn respond(
 const MENU_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// The menu of `request` as a Stremio subtitle list, and its length.
+/// `label`, the played file's name, names a translation job on the
+/// dashboard.
 fn menu_list(
     state: &AppState,
     headers: &HeaderMap,
     token: &str,
     request: &str,
+    label: Option<&str>,
     now: u64,
 ) -> Option<(Response, usize)> {
     let menus = state.menus.lock().ok()?;
@@ -413,7 +434,7 @@ fn menu_list(
     drop(menus);
     if let Some(translations) = &state.translations {
         for english in &english {
-            translations.ensure(english);
+            translations.ensure(english, label);
         }
     }
     Some((
@@ -441,7 +462,7 @@ async fn menu_srt(
     // translator any more, as the English it starts from.
     let srt = picked.map(|picked| match &state.translations {
         Some(translations) if picked.translated => {
-            translations.ensure(&picked.srt);
+            translations.ensure(&picked.srt, None);
             translations.current(&picked.srt).unwrap_or(picked.srt)
         }
         _ => picked.srt,
@@ -1585,6 +1606,64 @@ mod tests {
         .unwrap();
         assert_eq!(again, done);
         assert_eq!(*fresh.analyzed.lock().unwrap(), 0, "not translated again");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[tokio::test]
+    async fn translation_progress_reaches_the_dashboard_without_text() {
+        let (head, fits, _) = film();
+        let cache = std::env::temp_dir().join(format!(
+            "subsync-translation-status-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let translator = Arc::new(GatedTranslator {
+            go: tokio::sync::Semaphore::new(0),
+            analyzed: Mutex::new(0),
+        });
+        let app = translated_app(&head, &fits, translator.clone(), &cache);
+        let status = |app: Router| async move {
+            let (status, body) = call(&app, format!("/{TOKEN}/translations.json")).await;
+            assert_eq!(status, StatusCode::OK);
+            body
+        };
+        let empty: Value = serde_json::from_str(&status(app.clone()).await).unwrap();
+        assert_eq!(empty["jobs"], json!([]));
+        assert_eq!(empty["lang"], "tur");
+
+        menu_of(&app).await;
+        let body = status(app.clone()).await;
+        let english = srt::parse(&fits);
+        assert!(!body.contains(&english[0].text), "no subtitle text");
+        let job = &serde_json::from_str::<Value>(&body).unwrap()["jobs"][0];
+        assert_eq!(job["label"], "A.mkv");
+        assert!(["queued", "running"].contains(&job["phase"].as_str().unwrap()));
+        assert_eq!(job["lines"], english.len());
+        assert_eq!(job["lines_done"], 0);
+
+        translator.go.add_permits(1_000);
+        let done = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let body: Value = serde_json::from_str(&status(app.clone()).await).unwrap();
+                if body["jobs"][0]["phase"] == "done" {
+                    break body["jobs"][0].clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(done["lines_done"], english.len());
+        assert!(done["started_ms"].as_u64().unwrap() <= done["finished_ms"].as_u64().unwrap());
+        assert_eq!(done["from_disk"], false);
+
+        let (status, _) = call(&app, "/wrong-token-123/translations.json".to_owned()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (_, off) = get(&format!("/{TOKEN}/translations.json")).await;
+        assert_eq!(off, Some(Value::Null), "translation off");
         let _ = std::fs::remove_dir_all(&cache);
     }
 

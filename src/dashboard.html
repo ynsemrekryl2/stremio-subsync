@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>SubSync Olaylar</title>
+<title>SubSync Panel</title>
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6a7282; --line: #e3e6eb;
@@ -57,17 +57,41 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .row .line.cut { max-height: 3em; overflow: hidden; }
 .area { color: var(--accent); }
 .empty { color: var(--muted); padding: 8px 0; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
+.sec-head h2 { margin: 0; }
+.jobs { display: grid; gap: 8px; }
+.job { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
+.job.live { border-color: var(--accent); }
+.job .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.job .file { font-weight: 600; overflow-wrap: anywhere; flex: 1 1 240px; }
+.job .meta { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); white-space: nowrap; }
+.badge.running { color: var(--accent); } .badge.done { color: var(--ok); }
+.badge.queued { color: var(--warn); } .badge.failed { color: var(--bad); }
+.bar { height: 8px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: inherit;
+  transition: width .6s ease; }
+.bar.done > i { background: var(--ok); } .bar.failed > i { background: var(--bad); }
+.job .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+.req .bar { height: 6px; }
 @media (max-width: 600px) { .row { grid-template-columns: 56px 1fr; } .row .area { display: none; } }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>SubSync olaylar</h1>
+    <h1>SubSync</h1>
     <span id="conn" class="pill">bağlanıyor…</span>
     <span id="uptime" class="muted"></span>
+    <span id="translator" class="muted"></span>
     <span id="missed" class="muted"></span>
   </header>
+
+  <section>
+    <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
+    <div id="jobs" class="jobs"><div class="empty">Henüz çeviri yok.</div></div>
+  </section>
 
   <div class="cards">
     <div class="card"><b id="c-requests">0</b><span>altyazı isteği</span></div>
@@ -77,6 +101,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
     <div class="card"><b id="c-ruler">0</b><span>metin cetveli bulundu</span></div>
     <div class="card"><b id="c-accepted">0</b><span>kabul edilen aday</span></div>
     <div class="card"><b id="c-notice">0</b><span>sebep bildirimi</span></div>
+    <div class="card"><b id="c-translated">0</b><span>biten çeviri</span></div>
   </div>
 
   <section>
@@ -109,8 +134,14 @@ const NOTICES = {
   NotMkv: "MKV değil", Unsupported: "Biçim dışı", Failed: "Geçici hata", NotReady: "Hazırlanıyor",
 };
 const MAX_ROWS = 1000, MAX_REQUESTS = 15;
+const PHASES = { queued: "sırada", running: "çevriliyor", done: "bitti", failed: "düştü" };
+const FAILURES = { Empty: "boş altyazı", BadAnalysis: "analiz boş döndü",
+  "Translator(Transient)": "geçici sağlayıcı hatası", "Translator(Permanent)": "sağlayıcı reddetti",
+  "Translator(BadAnswer)": "yanıt okunamadı" };
+const LANG_NAMES = { tur: "Türkçe" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
-  paused: false, filter: "", counts: { requests: 0, cached: 0, match: 0, mkv: 0, ruler: 0, accepted: 0, notice: 0 } };
+  paused: false, filter: "", translations: undefined,
+  counts: { requests: 0, cached: 0, match: 0, mkv: 0, ruler: 0, accepted: 0, notice: 0 } };
 const $ = (id) => document.getElementById(id);
 
 function time(ms) {
@@ -232,9 +263,13 @@ function track(ev) {
     }
   } else if (ev.area === "menu") {
     const notice = (line.match(/notice=Some\((\w+)\)/) || [])[1];
+    const entries = Number((line.match(/entries=(\d+)/) || [])[1] || 0);
     if (notice) c.notice++;
-    add(notice ? "menü: " + (NOTICES[notice] || notice) : "menü: " + ((line.match(/entries=(\d+)/) || [])[1]) + " altyazı",
-      notice ? (notice === "NotReady" || notice === "Failed" ? "warn" : "bad") : "ok");
+    // A notice with more entries after it: the English fallback, and its
+    // translation when one is on (SS-026).
+    const spare = notice && entries > 1 ? " + " + (entries - 1) + " yedek" : "";
+    add(notice ? "menü: " + (NOTICES[notice] || notice) + spare : "menü: " + entries + " altyazı",
+      notice ? (spare || notice === "NotReady" || notice === "Failed" ? "warn" : "bad") : "ok");
   } else if (ev.area === "dump") {
     add(/pgs dump written/.test(line) ? "PGS kaydı yazıldı" : /written/.test(line) ? "zaman kaydı yazıldı" : "kayıt yazılamadı",
       /failed/.test(line) ? "bad" : "");
@@ -244,14 +279,84 @@ function track(ev) {
 function renderCounts() {
   const c = state.counts;
   for (const key of Object.keys(c)) $("c-" + key).textContent = c[key];
+  const jobs = (state.translations && state.translations.jobs) || [];
+  $("c-translated").textContent = jobs.filter((j) => j.phase === "done").length;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function seconds(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + " sn" : Math.floor(s / 60) + " dk " + (s % 60) + " sn";
+}
+function percent(job) {
+  return job.lines ? Math.floor((job.lines_done * 100) / job.lines) : 0;
+}
+function bar(job) {
+  const b = el("div", "bar " + job.phase);
+  const fill = el("i");
+  fill.style.width = (job.phase === "done" ? 100 : percent(job)) + "%";
+  b.append(fill);
+  return b;
+}
+/** Time lines for a job: when it started, how long it took or has taken,
+ *  and for a running one a guess of what is left from its pace so far. */
+function jobTimes(job, now) {
+  if (job.from_disk) return ["diskten geldi " + time(job.finished_ms)];
+  if (job.phase === "queued") return ["sırada " + seconds(now - job.queued_ms)];
+  const out = ["başladı " + time(job.started_ms || job.queued_ms)];
+  if (job.phase === "done" || job.phase === "failed") {
+    out.push(seconds(job.finished_ms - (job.started_ms || job.queued_ms)) + (job.phase === "done" ? "’de bitti" : "’de düştü"));
+    return out;
+  }
+  const spent = now - job.started_ms;
+  out.push("geçen " + seconds(spent));
+  if (!job.lines_done) out.push("ilk blok bekleniyor (önce belge analizi)");
+  else out.push("kalan ~" + seconds((spent * (job.lines - job.lines_done)) / job.lines_done));
+  return out;
+}
+
+function renderJobs() {
+  const t = state.translations;
+  const box = $("jobs");
+  if (t === null) {
+    $("jobs-note").textContent = "";
+    $("translator").textContent = "· çeviri kapalı";
+    box.replaceChildren(el("div", "empty", "Çeviri kapalı: sunucuda OpenRouter anahtarı yok."));
+    return;
+  }
+  if (!t) return;
+  $("translator").textContent = "· çeviri: " + t.model + " → " + (LANG_NAMES[t.lang] || t.lang);
+  const live = t.jobs.filter((j) => j.phase === "running" || j.phase === "queued").length;
+  $("jobs-note").textContent = live ? live + " iş sürüyor · aynı anda en çok " + t.parallel : "";
+  if (!t.jobs.length) { box.replaceChildren(el("div", "empty", "Henüz çeviri yok.")); return; }
+  const now = Date.now();
+  box.replaceChildren(...t.jobs.map((job) => {
+    const card = el("div", "job" + (job.phase === "running" ? " live" : ""));
+    const top = el("div", "top");
+    top.append(el("span", "file", job.label || "dosya adı bilinmiyor"),
+      el("span", "badge " + job.phase, job.from_disk ? "diskten" : PHASES[job.phase] || job.phase),
+      el("span", "pct", (job.phase === "done" ? 100 : percent(job)) + "%"));
+    const meta = el("div", "meta");
+    meta.append(el("span", "", job.lines_done + " / " + job.lines + " satır"),
+      el("span", "", job.blocks + " blok"),
+      ...jobTimes(job, now).map((text) => el("span", "", text)));
+    if (job.failure) meta.append(el("span", "", "neden: " + (FAILURES[job.failure] || job.failure)));
+    card.append(top, bar(job), meta);
+    return card;
+  }));
 }
 
 function renderRequests() {
   const box = $("requests");
   if (!state.requests.length) return;
   box.replaceChildren(...state.requests.map((r) => {
-    const el = document.createElement("div");
-    el.className = "req";
+    const card = document.createElement("div");
+    card.className = "req";
     const top = document.createElement("div");
     top.className = "top";
     const when = document.createElement("b");
@@ -270,7 +375,15 @@ function renderRequests() {
     steps.className = "steps";
     steps.append(...r.steps.map(([t, k]) => step(t, k)));
     if (!r.steps.length) steps.append(step("bekleniyor…", "warn"));
-    el.append(top, steps);
+    card.append(top, steps);
+    const job = r.label && state.translations && state.translations.jobs.find((j) => j.label === r.label);
+    if (job) {
+      const row = document.createElement("div");
+      row.className = "steps";
+      row.append(step("çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" +
+        (job.phase === "done" ? 100 : percent(job)), job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "pgs"));
+      card.append(row, bar(job));
+    }
     if (r.tracks) {
       const row = document.createElement("div");
       row.className = "steps tracks";
@@ -284,9 +397,9 @@ function renderRequests() {
         const kind = { ruler: "ok", pgs: "pgs", unindexed: "warn", short: "warn" }[t.use] || "";
         row.append(step(t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : ""), kind));
       }
-      el.append(row);
+      card.append(row);
     }
-    return el;
+    return card;
   }));
 }
 
@@ -335,6 +448,18 @@ function renderLog() {
   }));
 }
 
+async function pollTranslations() {
+  try {
+    const res = await fetch("translations.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    state.translations = await res.json();
+    renderJobs(); renderCounts(); renderRequests();
+  } catch (err) {
+    // The events poll shows the connection state.
+  }
+  setTimeout(pollTranslations, 1500);
+}
+
 async function poll() {
   try {
     const res = await fetch("events.json?after=" + state.after, { cache: "no-store" });
@@ -369,6 +494,7 @@ $("pause").onclick = () => {
 };
 $("search").oninput = (e) => { state.filter = e.target.value; renderLog(); };
 poll();
+pollTranslations();
 </script>
 </body>
 </html>

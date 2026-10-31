@@ -10,17 +10,19 @@
 //! [`KEEP_DONE_S`], so a later open, or a restart, serves it whole.
 //!
 //! Logs carry counts only; the English and translated text stay in memory,
-//! in served files and in the cache.
+//! in served files and in the cache. The dashboard sees each job's progress
+//! and the played file's name (SS-047), never the text.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use serde::Serialize;
 use tokio::sync::Semaphore;
 
 use crate::align::Fix;
-use crate::events::event;
+use crate::events::{event, now_ms};
 use crate::menu::{self, MenuEntry};
 use crate::srt::{self, Cue};
 use crate::translate::{self, Langs, Translator};
@@ -39,12 +41,56 @@ const SAME: Fix = Fix {
     shift_ms: 0,
 };
 
-enum State {
+/// Jobs the dashboard lists, newest first.
+const SHOWN: usize = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Waiting for one of the [`PARALLEL`] slots.
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+struct Job {
+    phase: Phase,
     /// The file to serve now: translated so far, then English.
-    Running(String),
-    Done(String),
-    /// When it failed, and the file it had got to.
-    Failed(u64, String),
+    srt: String,
+    /// The played file's name, for the dashboard only.
+    label: Option<String>,
+    lines: usize,
+    lines_done: usize,
+    blocks: usize,
+    queued_ms: u64,
+    started_ms: Option<u64>,
+    finished_ms: Option<u64>,
+    /// A finished translation found in the cache.
+    from_disk: bool,
+    failure: Option<String>,
+}
+
+/// One job as the dashboard sees it: counts and times, no text.
+#[derive(Debug, Serialize)]
+pub struct JobView {
+    pub phase: &'static str,
+    pub label: Option<String>,
+    pub lines: usize,
+    pub lines_done: usize,
+    pub blocks: usize,
+    pub queued_ms: u64,
+    pub started_ms: Option<u64>,
+    pub finished_ms: Option<u64>,
+    pub from_disk: bool,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Status {
+    pub lang: String,
+    pub model: String,
+    pub parallel: usize,
+    pub jobs: Vec<JobView>,
 }
 
 pub struct Translations {
@@ -54,7 +100,7 @@ pub struct Translations {
     /// Part of the job key: another model or prompt is another translation.
     model: String,
     cache_dir: Option<PathBuf>,
-    jobs: Mutex<HashMap<u64, State>>,
+    jobs: Mutex<HashMap<u64, Job>>,
     permits: Semaphore,
 }
 
@@ -98,21 +144,43 @@ impl Translations {
     }
 
     /// Starts the job for `english` unless it runs, is done, or failed
-    /// recently. A translation already on disk is loaded instead.
-    pub fn ensure(self: &Arc<Self>, english: &str) {
+    /// recently. A translation already on disk is loaded instead. `label`
+    /// names the played file on the dashboard; a job started without one
+    /// takes the first one given.
+    pub fn ensure(self: &Arc<Self>, english: &str, label: Option<&str>) {
         let key = self.key(english);
-        let now = menu::now_s();
+        let now = now_ms();
         {
             let Ok(mut jobs) = self.jobs.lock() else {
                 return;
             };
-            match jobs.get(&key) {
-                Some(State::Running(_) | State::Done(_)) => return,
-                Some(State::Failed(at, _)) if now.saturating_sub(*at) < RETRY_AFTER_S => return,
-                _ => {}
+            if let Some(job) = jobs.get_mut(&key) {
+                if job.label.is_none() {
+                    job.label = label.map(str::to_owned);
+                }
+                let failed_at = job.finished_ms.unwrap_or(now);
+                let wait_ms = RETRY_AFTER_S * 1_000;
+                if job.phase != Phase::Failed || now.saturating_sub(failed_at) < wait_ms {
+                    return;
+                }
             }
             let cues = srt::parse(english);
-            jobs.insert(key, State::Running(partial(&cues, &[])));
+            jobs.insert(
+                key,
+                Job {
+                    phase: Phase::Queued,
+                    srt: partial(&cues, &[]),
+                    label: label.map(str::to_owned),
+                    lines: cues.len(),
+                    lines_done: 0,
+                    blocks: translate::layout(cues.len()).len(),
+                    queued_ms: now,
+                    started_ms: None,
+                    finished_ms: None,
+                    from_disk: false,
+                    failure: None,
+                },
+            );
         }
         let this = self.clone();
         let english = english.to_owned();
@@ -123,26 +191,74 @@ impl Translations {
     /// for it exists.
     pub fn current(&self, english: &str) -> Option<String> {
         let jobs = self.jobs.lock().ok()?;
-        match jobs.get(&self.key(english))? {
-            State::Running(srt) | State::Done(srt) | State::Failed(_, srt) => Some(srt.clone()),
+        jobs.get(&self.key(english)).map(|job| job.srt.clone())
+    }
+
+    /// The latest jobs for the dashboard, newest first.
+    pub fn status(&self) -> Status {
+        let mut jobs: Vec<JobView> = self
+            .jobs
+            .lock()
+            .map(|jobs| {
+                jobs.values()
+                    .map(|job| JobView {
+                        phase: match job.phase {
+                            Phase::Queued => "queued",
+                            Phase::Running => "running",
+                            Phase::Done => "done",
+                            Phase::Failed => "failed",
+                        },
+                        label: job.label.clone(),
+                        lines: job.lines,
+                        lines_done: job.lines_done,
+                        blocks: job.blocks,
+                        queued_ms: job.queued_ms,
+                        started_ms: job.started_ms,
+                        finished_ms: job.finished_ms,
+                        from_disk: job.from_disk,
+                        failure: job.failure.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.queued_ms));
+        jobs.truncate(SHOWN);
+        Status {
+            lang: self.lang.clone(),
+            model: self.model.clone(),
+            parallel: PARALLEL,
+            jobs,
         }
     }
 
-    fn set(&self, key: u64, state: State) {
-        if let Ok(mut jobs) = self.jobs.lock() {
-            jobs.insert(key, state);
+    fn update(&self, key: u64, change: impl FnOnce(&mut Job)) {
+        if let Ok(mut jobs) = self.jobs.lock()
+            && let Some(job) = jobs.get_mut(&key)
+        {
+            change(job);
         }
     }
 
     async fn run(self: Arc<Self>, key: u64, english: String) {
         if let Some(done) = self.load(key).await {
             event!("translate", "translation served from=disk");
-            self.set(key, State::Done(done));
+            let lines = srt::parse(&done).len();
+            self.update(key, |job| {
+                job.phase = Phase::Done;
+                job.srt = done;
+                (job.lines, job.lines_done) = (lines, lines);
+                job.finished_ms = Some(now_ms());
+                job.from_disk = true;
+            });
             return;
         }
         let Ok(_permit) = self.permits.acquire().await else {
             return;
         };
+        self.update(key, |job| {
+            job.phase = Phase::Running;
+            job.started_ms = Some(now_ms());
+        });
         let cues = srt::parse(&english);
         let langs = Langs {
             source: "eng".to_owned(),
@@ -158,7 +274,10 @@ impl Translations {
         let mut reached = partial(&cues, &[]);
         let result = translate::translate(&*self.translator, &cues, &langs, |done| {
             reached = partial(&cues, done);
-            self.set(key, State::Running(reached.clone()));
+            self.update(key, |job| {
+                job.srt = reached.clone();
+                job.lines_done = done.len();
+            });
             event!(
                 "translate",
                 "translation progress lines={}/{}",
@@ -171,7 +290,12 @@ impl Translations {
         match result {
             Ok(all) => {
                 let done = srt::render(&all, SAME);
-                self.set(key, State::Done(done.clone()));
+                self.update(key, |job| {
+                    job.phase = Phase::Done;
+                    job.srt = done.clone();
+                    job.lines_done = all.len();
+                    job.finished_ms = Some(now_ms());
+                });
                 event!(
                     "translate",
                     "translation done lines={} s={elapsed_s}",
@@ -184,7 +308,12 @@ impl Translations {
                     "translate",
                     "translation failed failure={failure:?} s={elapsed_s}"
                 );
-                self.set(key, State::Failed(menu::now_s(), reached));
+                self.update(key, |job| {
+                    job.phase = Phase::Failed;
+                    job.srt = reached;
+                    job.finished_ms = Some(now_ms());
+                    job.failure = Some(format!("{failure:?}"));
+                });
             }
         }
     }
@@ -329,23 +458,28 @@ mod tests {
             None,
         ));
         let english = srt::render(&[cue(0, "en 0"), cue(1, "en 1")], SAME);
-        translations.ensure(&english);
+        translations.ensure(&english, None);
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while !matches!(
-                translations.jobs.lock().unwrap().values().next(),
-                Some(State::Failed(..))
-            ) {
+            while translations.status().jobs[0].phase != "failed" {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         })
         .await
         .unwrap();
-        translations.ensure(&english);
+        translations.ensure(&english, Some("Late.Name.mkv"));
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(*down.0.lock().unwrap(), 1, "not started again yet");
         // What it served before failing is still served: the English.
         let served = translations.current(&english).unwrap();
         assert!(served.contains("çeviri %0") && served.contains("en 1"));
+        let job = &translations.status().jobs[0];
+        assert_eq!(job.failure.as_deref(), Some("Translator(Transient)"));
+        assert_eq!(
+            job.label.as_deref(),
+            Some("Late.Name.mkv"),
+            "label filled in"
+        );
+        assert!(job.finished_ms.is_some());
     }
 
     #[test]
