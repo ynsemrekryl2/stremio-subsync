@@ -7,59 +7,73 @@
 <title>SubSync Panel</title>
 <style>
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6a7282; --line: #e3e6eb;
-  --accent: #3157d5; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0362c;
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #646c7c; --line: #e3e6eb;
+  --accent: #3157d5; --ok: #1f8a4c; --warn: #a86400; --bad: #c0362c;
+  --ok-bg: #e7f5ed; --warn-bg: #fbf1e0; --bad-bg: #fbe9e7; --info-bg: #e9eefc;
   --chip: #eef1f6; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #959cab; --line: #2a313c;
+    --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #9aa1b0; --line: #2a313c;
     --accent: #7d9bff; --ok: #4cc584; --warn: #e3a447; --bad: #ff7b6e; --chip: #232a35;
+    --ok-bg: #18301f; --warn-bg: #33281a; --bad-bg: #3a1f1d; --info-bg: #1f2840;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #959cab; --line: #2a313c;
+  --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #9aa1b0; --line: #2a313c;
   --accent: #7d9bff; --ok: #4cc584; --warn: #e3a447; --bad: #ff7b6e; --chip: #232a35;
+  --ok-bg: #18301f; --warn-bg: #33281a; --bad-bg: #3a1f1d; --info-bg: #1f2840;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1200px; margin: 0 auto; padding: 16px; }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
-h1 { font-size: 18px; margin: 0; }
-h2 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header { margin-bottom: 16px; }
+.title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0; }
+p { margin: 0; }
+.lead { color: var(--muted); margin-top: 4px; max-width: 70ch; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 6px; font-size: 13px; color: var(--muted); }
 .pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--chip); }
-.pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); }
+.pill.ok { color: var(--ok); background: var(--ok-bg); } .pill.bad { color: var(--bad); background: var(--bad-bg); }
 .muted { color: var(--muted); }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 16px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-.card b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
-.card span { color: var(--muted); font-size: 12px; }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-.requests { display: grid; gap: 8px; }
-.req { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; }
-.req .top { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
-.req .file { flex-basis: 100%; font-weight: 600; overflow-wrap: anywhere; }
-.steps { display: flex; flex-wrap: wrap; gap: 6px; }
-.step { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); }
-.step.ok { color: var(--ok); } .step.warn { color: var(--warn); } .step.bad { color: var(--bad); }
-.step.pgs { color: var(--accent); }
-.tracks { align-items: baseline; }
-.legend { font-size: 12px; margin: -4px 0 8px; }
-.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
-.tools button, .tools input { font: inherit; font-size: 12px; color: var(--text); background: var(--chip);
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
-.tools input { cursor: text; border-radius: 6px; min-width: 0; flex: 1 1 160px; }
-.tools button[data-area][aria-pressed="false"] { opacity: .45; }
-#log { font-family: var(--mono); font-size: 12px; max-height: 60vh; overflow: auto; }
-.row { display: grid; grid-template-columns: 64px 64px 1fr; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
-.row .line { white-space: pre-wrap; word-break: break-word; cursor: pointer; }
-.row .line.cut { max-height: 3em; overflow: hidden; }
-.area { color: var(--accent); }
-.empty { color: var(--muted); padding: 8px 0; }
-.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
-.sec-head h2 { margin: 0; }
-.jobs { display: grid; gap: 8px; }
+section, details.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-bottom: 4px; }
+.sec-note { font-size: 13px; color: var(--muted); margin-bottom: 10px; max-width: 75ch; }
+.cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 980px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.card .name { font-weight: 600; font-size: 13px; }
+.card .desc { color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: 2px; }
+.card.ok b { color: var(--ok); } .card.warn b { color: var(--warn); } .card.bad b { color: var(--bad); }
+.funnel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 10px; font-size: 13px; }
+.funnel .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+.funnel .arrow { color: var(--muted); }
+.requests, .jobs { display: grid; gap: 10px; }
+.req { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
+.req.ok { border-left-color: var(--ok); } .req.warn { border-left-color: var(--warn); }
+.req.bad { border-left-color: var(--bad); } .req.wait { border-left-color: var(--accent); }
+.req .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.req .headline { font-weight: 600; font-size: 15px; flex: 1 1 260px; }
+.req.ok .headline { color: var(--ok); } .req.warn .headline { color: var(--warn); }
+.req.bad .headline { color: var(--bad); }
+.req .when { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.req .file { overflow-wrap: anywhere; font-size: 13px; }
+.req .why { font-size: 13px; color: var(--muted); }
+.req .why b { color: var(--text); font-weight: 600; }
+dl.steps { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 2px 0 0; font-size: 13px; }
+dl.steps dt { color: var(--muted); }
+dl.steps dd { margin: 0; overflow-wrap: anywhere; }
+dl.steps dd::before { content: "●"; font-size: 9px; vertical-align: 2px; margin-right: 6px; color: var(--line); }
+dl.steps dd.ok::before { color: var(--ok); } dl.steps dd.warn::before { color: var(--warn); }
+dl.steps dd.bad::before { color: var(--bad); } dl.steps dd.info::before { color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); white-space: nowrap; }
+.chip.ok { color: var(--ok); background: var(--ok-bg); } .chip.warn { color: var(--warn); background: var(--warn-bg); }
+.chip.bad { color: var(--bad); background: var(--bad-bg); } .chip.info { color: var(--accent); background: var(--info-bg); }
 .job { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
 .job.live { border-color: var(--accent); }
 .job .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -67,141 +81,265 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .job .meta { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--muted);
   font-variant-numeric: tabular-nums; }
 .badge { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: var(--chip); white-space: nowrap; }
-.badge.running { color: var(--accent); } .badge.done { color: var(--ok); }
-.badge.queued { color: var(--warn); } .badge.failed { color: var(--bad); }
+.badge.running { color: var(--accent); background: var(--info-bg); } .badge.done { color: var(--ok); background: var(--ok-bg); }
+.badge.queued { color: var(--warn); background: var(--warn-bg); } .badge.failed { color: var(--bad); background: var(--bad-bg); }
 .bar { height: 8px; border-radius: 999px; background: var(--chip); overflow: hidden; }
 .bar > i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: inherit;
   transition: width .6s ease; }
 .bar.done > i { background: var(--ok); } .bar.failed > i { background: var(--bad); }
 .job .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
 .req .bar { height: 6px; }
-.form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
-.form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
-.form label.grow { flex: 1 1 260px; }
+.empty { color: var(--muted); padding: 6px 0; }
+.form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+.form label { display: grid; gap: 3px; align-content: start; }
+.form label > span { font-weight: 600; font-size: 13px; }
+.form label > small { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .form input, .form select, .form button { font: inherit; color: var(--text); background: var(--chip);
-  border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; min-width: 0; }
-.form button { cursor: pointer; }
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; min-width: 0; width: 100%; }
+.form .actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.form .actions button { width: auto; cursor: pointer; }
 .form button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
 .form button:disabled { opacity: .45; cursor: default; }
-.hint { font-size: 12px; margin: 6px 0 0; overflow-wrap: anywhere; }
+.hint { font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+.hint:empty { display: none; }
 .hint.bad { color: var(--bad); } .hint.ok { color: var(--ok); }
-@media (max-width: 600px) { .row { grid-template-columns: 56px 1fr; } .row .area { display: none; } }
+details.box > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+details.box > summary small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+details.box[open] > summary { margin-bottom: 10px; }
+dl.terms { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 13px; }
+dl.terms dt { font-weight: 600; }
+dl.terms dd { margin: 0; color: var(--muted); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.tools button, .tools input { font: inherit; font-size: 12px; color: var(--text); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.tools input { cursor: text; border-radius: 6px; min-width: 0; flex: 1 1 160px; }
+.tools button[data-area][aria-pressed="false"] { opacity: .45; }
+#log { font-family: var(--mono); font-size: 12px; max-height: 60vh; overflow: auto; }
+.row { display: grid; grid-template-columns: 64px 84px 1fr; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
+.row .line { white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+.row .line.cut { max-height: 3em; overflow: hidden; }
+.area { color: var(--accent); }
+@media (max-width: 640px) {
+  .form { grid-template-columns: 1fr; }
+  dl.steps { grid-template-columns: 76px 1fr; gap: 3px 8px; }
+  dl.terms { grid-template-columns: 1fr; gap: 0; }
+  dl.terms dd { margin-bottom: 8px; }
+  .row { grid-template-columns: 56px 1fr; } .row .area { display: none; }
+}
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>SubSync</h1>
-    <span id="conn" class="pill">bağlanıyor…</span>
-    <span id="uptime" class="muted"></span>
-    <span id="translator" class="muted"></span>
-    <span id="missed" class="muted"></span>
+    <div class="title">
+      <h1>SubSync paneli</h1>
+      <span id="conn" class="pill">bağlanıyor…</span>
+    </div>
+    <p class="lead">Stremio'nun altyazı isteklerini, her isteğin nasıl sonuçlandığını ve süren çevirileri canlı gösterir.
+      Veriler yalnız sunucunun belleğinde durur; sunucu yeniden başlayınca sıfırlanır.</p>
+    <div class="meta-line">
+      <span id="uptime"></span>
+      <span id="translator"></span>
+      <span id="missed"></span>
+    </div>
   </header>
 
+  <section>
+    <div class="sec-head"><h2>Özet</h2><span class="muted" id="summary-note">sunucu açıldığından beri</span></div>
+    <div class="cards">
+      <div class="card"><b id="c-requests">0</b><div class="name">Altyazı isteği</div>
+        <div class="desc">Stremio her oynatmada altyazı listesini bir kez ister.</div></div>
+      <div class="card ok"><b id="c-found">0</b><div class="name">Altyazı sunuldu</div>
+        <div class="desc">Menüde hedef dilde, bu dosyaya oturtulmuş altyazı vardı.</div></div>
+      <div class="card warn"><b id="c-fallback">0</b><div class="name">Yedekle sunuldu</div>
+        <div class="desc">Hedef dilde uyan yoktu; İngilizce yedek (ve çevirisi) kondu.</div></div>
+      <div class="card bad"><b id="c-missing">0</b><div class="name">Sunulamadı</div>
+        <div class="desc">Menüde yalnız nedenini söyleyen bir girdi vardı.</div></div>
+      <div class="card"><b id="c-cached">0</b><div class="name">Cache'ten</div>
+        <div class="desc">Önceki cevap verildi; dosya ve kaynaklar yeniden okunmadı.</div></div>
+      <div class="card"><b id="c-translated">0</b><div class="name">Biten çeviri</div>
+        <div class="desc">Sonuna kadar çevrilen İngilizce yedek.</div></div>
+    </div>
+    <div class="funnel" id="funnel" title="Yeni işlenen isteklerde her adımı geçen sayısı"></div>
+  </section>
+
+  <section id="jobs-section">
+    <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
+    <p class="sec-note">Hedef dilde uyan altyazı bulunamadığında, dosyaya oturan İngilizce altyazı çevrilir.
+      Çeviri sürerken menüdeki çeviri girdisi o ana kadar çevrilen kısmı verir; yeniden seçmek daha uzununu getirir.</p>
+    <div id="jobs" class="jobs"><div class="empty">Henüz çeviri yok.</div></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Son istekler</h2><span class="muted">en yeni üstte, son 15</span></div>
+    <p class="sec-note">Her kart bir oynatmayı anlatır: önce sonuç, altında adım adım ne olduğu.
+      Terimlerin anlamı sayfanın altındaki sözlükte.</p>
+    <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok. Stremio'da bir video açınca burada görünür.</div></div>
+  </section>
+
   <section id="settings" hidden>
-    <div class="sec-head"><h2>Çeviri ayarı</h2><span class="muted">yeni çevirilerde geçerli; süren iş eski modelle biter</span></div>
+    <div class="sec-head"><h2>Çeviri ayarı</h2></div>
+    <p class="sec-note">Yeni başlayan çevirilerde geçerli olur; süren bir çeviri başladığı modelle biter.
+      Seçim sunucuda dosyaya yazılır, yeniden başlatma ve deploy sonrası da kalır.</p>
     <form class="form" id="settings-form">
-      <label class="grow">Model (OpenRouter)
+      <label>
+        <span>Model</span>
         <input id="model" list="models" autocomplete="off" spellcheck="false" required>
         <datalist id="models"></datalist>
+        <small>OpenRouter model kimliği (<code>firma/ad</code>). Listede yalnız yapılandırılmış çıktı
+          destekleyen modeller var; çeviri buna ihtiyaç duyar.</small>
       </label>
-      <label>Düşünme düzeyi
+      <label>
+        <span>Düşünme düzeyi</span>
         <select id="reasoning"></select>
+        <small>Yükseldikçe çeviri yavaşlar ve pahalanır. Ölçümde «düşük» ile daha yüksek düzeyler arasında fark görülmedi.</small>
       </label>
-      <button type="submit" class="primary" id="save" disabled>Kaydet</button>
-      <button type="button" id="reset">Varsayılanı doldur</button>
+      <div class="actions">
+        <button type="submit" class="primary" id="save" disabled>Kaydet</button>
+        <button type="button" id="reset">Varsayılanı doldur</button>
+      </div>
     </form>
     <p class="hint muted" id="model-info"></p>
     <p class="hint" id="settings-note"></p>
   </section>
 
-  <section>
-    <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
-    <div id="jobs" class="jobs"><div class="empty">Henüz çeviri yok.</div></div>
-  </section>
+  <details class="box" id="glossary">
+    <summary>Terimler <small>panelde geçen kelimeler ne demek</small></summary>
+    <dl class="terms">
+      <dt>Cetvel</dt>
+      <dd>Videonun içindeki İngilizce altyazının zaman çizelgesi. Metni okunmaz, yalnız her satırın ne zaman
+        başlayıp bittiği alınır. Dışarıdan bulunan altyazılar bu zamanlara oturtulur.</dd>
+      <dt>Dizin (Cues)</dt>
+      <dd>MKV dosyasının içindeki atlama tablosu. Altyazı satırlarının zamanları buradan okunur, böylece
+        dosyanın tamamı indirilmez. İz dizinde yoksa okunamaz.</dd>
+      <dt>Metin / PGS altyazı</dt>
+      <dd>Metin altyazı (SRT, ASS) doğrudan cetvel olur. PGS resim biçimindedir; metin altyazı yoksa
+        onun zamanları cetvel olarak kullanılır.</dd>
+      <dt>Aday</dt>
+      <dd>OpenSubtitles ya da SubDL'de bulunan, hedef dildeki altyazı. Dosya adına en çok benzeyen 3'ü indirilir;
+        hiçbiri uymazsa sıradaki 3'ü de denenir.</dd>
+      <dt>Hizalama, kabul</dt>
+      <dd>Adayın satırları cetvele kaydırılarak (gerekirse 25↔24 fps düzeltmesiyle) oturtulur. Başta, ortada
+        ve sonda aynı kaydırma tutarsa aday kabul edilir ve menüye konur.</dd>
+      <dt>İsabet</dt>
+      <dd>Cetvel satırlarının yüzde kaçının bir aday satırıyla aynı anda başladığı. Yüksek isabet iyi oturma demektir.</dd>
+      <dt>Yerel kabul</dt>
+      <dd>Kayma film boyunca adım adım değişiyorsa satırlar bölge bölge kaydırılır; her bölge tutarsa
+        aday yine kabul edilir.</dd>
+      <dt>İngilizce yedek</dt>
+      <dd>Hedef dilde uyan altyazı yoksa, dosyaya oturan İngilizce aday menüye konur ve hedef dile çevrilir.</dd>
+      <dt>Cache</dt>
+      <dd>Sonuçlar saklanır: bulunan altyazı 30 gün, "uygun yok" cevabı 1 gün, geçici hatalar 60 saniye.
+        Bu sürede aynı dosya yeniden okunmaz.</dd>
+    </dl>
+  </details>
 
-  <div class="cards">
-    <div class="card"><b id="c-requests">0</b><span>altyazı isteği</span></div>
-    <div class="card"><b id="c-cached">0</b><span>cache'ten cevap</span></div>
-    <div class="card"><b id="c-match">0</b><span>dosya eşleşti (ad / boyut)</span></div>
-    <div class="card"><b id="c-mkv">0</b><span>Dosya okundu</span></div>
-    <div class="card"><b id="c-ruler">0</b><span>metin cetveli bulundu</span></div>
-    <div class="card"><b id="c-accepted">0</b><span>kabul edilen aday</span></div>
-    <div class="card"><b id="c-notice">0</b><span>sebep bildirimi</span></div>
-    <div class="card"><b id="c-translated">0</b><span>biten çeviri</span></div>
-  </div>
-
-  <section>
-    <h2>Son istekler</h2>
-    <p class="legend muted">Gömülü altyazılar: <span class="step ok">cetvel ✓</span> İngilizce metin, senkron için kullanılır ·
-      <span class="step pgs">PGS ölçülür</span> İngilizce resim altyazı, şimdilik yalnız kaydedilir ·
-      <span class="step warn">dizinsiz</span> dosyanın dizininde yok, okunamaz</p>
-    <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok.</div></div>
-  </section>
-
-  <section>
-    <h2>Tüm olaylar</h2>
+  <details class="box" id="log-box">
+    <summary>Ham olay akışı <small>sunucunun log satırları, sorun ararken</small></summary>
     <div class="tools" id="tools">
       <button id="pause" aria-pressed="false">Duraklat</button>
       <input id="search" type="search" placeholder="Süz…" aria-label="Olayları süz">
     </div>
     <div id="log"><div class="empty">Olay bekleniyor…</div></div>
-  </section>
+  </details>
 </main>
 <script>
 "use strict";
 const AREAS = {
   start: "açılış", http: "http", request: "istek", served: "cevap", k2: "dosya",
-  m3: "aday", m4: "hizalama", m5: "PGS cetveli", menu: "menü", dump: "kayıt", cache: "cache", m6: "blok",
+  m3: "aday", m4: "hizalama", m5: "cetvel/yedek", menu: "menü", dump: "kayıt", cache: "cache", m6: "blok",
   fetch: "altyazı çekme", translate: "çeviri",
 };
+/** What each notice in the menu means, and what can be done about it. */
 const NOTICES = {
-  NoEnglishTrack: "İng. iz yok", ImageOnly: "İng. resim (PGS)", NotIndexed: "İz okunmuyor",
-  NoStreamMatch: "Dosya yok", NoCandidates: "Aday yok", NoneAccepted: "Uyan yok",
-  NotMkv: "MKV değil", Unsupported: "Biçim dışı", Failed: "Geçici hata", NotReady: "Hazırlanıyor",
+  NoEnglishTrack: ["Dosyada İngilizce altyazı yok", "Senkron için videonun kendi İngilizce altyazısı gerekiyor.",
+    "Başka bir sürüm dene; WEB-DL sürümlerinde genelde metin altyazı olur.", "day"],
+  ImageOnly: ["İngilizce altyazı resim biçiminde ve okunamadı", "PGS izinin zamanları dizinde yok ya da cetvel için çok az.",
+    "WEB-DL ya da BluRay rip bir sürüm dene.", "day"],
+  NotIndexed: ["İngilizce altyazı dizinde yok", "İz var ama dosyanın dizini onu göstermiyor; okumak için dosyanın tamamı gerekirdi.",
+    "Başka bir sürüm dene.", "day"],
+  NoStreamMatch: ["Oynatılan dosya listede bulunamadı", "AIOStreams listesindeki hiçbir dosyanın adı ya da boyutu tutmadı.",
+    "", "day"],
+  NoCandidates: ["Hedef dilde altyazı bulunamadı", "Kaynaklarda bu yapım için aranan dilde altyazı yok.", "", "day"],
+  NoneAccepted: ["Bulunan altyazıların hiçbiri uymadı", "Adaylar indirildi ama hiçbiri bu dosyaya baştan sona oturmadı.",
+    "", "day"],
+  NotMkv: ["Dosya MKV değil ya da henüz hazır değil", "Gömülü altyazı okunamadı; debrid servisi dosyayı hazırlıyor olabilir.",
+    "Hazırsa videoyu biraz sonra yeniden aç.", "minute"],
+  Unsupported: ["Bu dosya biçimi desteklenmiyor", "AVI, TS ya da parçalı MP4'te altyazı zamanları ucuza okunamıyor.",
+    "MKV sürümü dene.", "day"],
+  Failed: ["Geçici hata", "Bir kaynağa ya da dosyaya bu sefer ulaşılamadı.", "Videoyu biraz sonra yeniden aç.", "minute"],
+  NotReady: ["Hazırlanıyor", "15 saniyede bitmedi; iş arka planda sürüyor.", "Videoyu birkaç saniye sonra yeniden aç.", "minute"],
 };
+const RETRY = { day: "Bu cevap 1 gün saklanır; o süre içinde aynı dosya yeniden denenmez.",
+  minute: "Bu cevap yalnız 60 saniye saklanır, sonraki açılışta yeniden denenir." };
 const MAX_ROWS = 1000, MAX_REQUESTS = 15;
 const PHASES = { queued: "sırada", running: "çevriliyor", done: "bitti", failed: "düştü" };
 const FAILURES = { Empty: "boş altyazı", BadAnalysis: "analiz boş döndü",
   "Translator(Transient)": "geçici sağlayıcı hatası", "Translator(Permanent)": "sağlayıcı reddetti",
   "Translator(BadAnswer)": "yanıt okunamadı" };
-const LANG_NAMES = { tur: "Türkçe" };
+const LANG_NAMES = { tur: "Türkçe", eng: "İngilizce" };
 const EFFORTS = { default: "modelin varsayılanı", none: "yok", minimal: "en az", low: "düşük", medium: "orta",
   high: "yüksek", xhigh: "çok yüksek", max: "en yüksek" };
 const REFUSED = { model: "model adı «firma/ad» biçiminde olmalı", reasoning: "düşünme düzeyi geçersiz",
   unbuilt: "bu modelle istemci kurulamadı", body: "istek okunamadı", save: "ayar sunucuda dosyaya yazılamadı",
   off: "çeviri kapalı" };
+const SOURCES = { OpenSubtitles: "OpenSubtitles", SubDl: "SubDL" };
+const SOURCE_ERRORS = { Timeout: "zaman aşımı", Connect: "bağlanamadı", Decode: "cevap okunamadı",
+  TooLarge: "dosya çok büyük", NoSubtitle: "arşivde uygun SRT yok", Other: "hata" };
+const WINDOWS = ["başta", "ortada", "sonda"];
+/** The stage a probe line comes after, for lines that do not open a stage. */
+const AFTER = { m5: "k2", m4: "m3", dump: "k2", m3more: "m3", m3fb: "m3", m5fb: "m3fb" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
   paused: false, filter: "", translations: undefined, settings: null, models: new Map(),
-  counts: { requests: 0, cached: 0, match: 0, mkv: 0, ruler: 0, accepted: 0, notice: 0 } };
+  counts: { requests: 0, cached: 0, found: 0, fallback: 0, missing: 0 },
+  funnel: { probed: 0, matched: 0, read: 0, ruler: 0, candidates: 0, accepted: 0 } };
 const $ = (id) => document.getElementById(id);
 
 function time(ms) {
   return new Date(ms).toLocaleTimeString("tr-TR", { hour12: false });
 }
-function step(text, kind) {
-  const el = document.createElement("span");
-  el.className = "step " + (kind || "");
-  el.textContent = text;
-  return el;
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
+function seconds(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + " sn" : Math.floor(s / 60) + " dk " + (s % 60) + " sn";
+}
+/** A model label as people read it: "a/b reasoning=low" → "a/b, düşünme: düşük". */
+function model(label) {
+  return String(label).replace(/ reasoning=(\w+)/, (_, e) => ", düşünme: " + (EFFORTS[e] || e));
+}
+/** A signed shift for people: "+2,5 sn", "−134 sn", "0,1 sn". */
+function shift(ms) {
+  const s = ms / 1000, abs = Math.abs(s);
+  const text = (abs < 10 ? abs.toFixed(1) : Math.round(abs).toString()).replace(".", ",");
+  return (s > 0.05 ? "+" : s < -0.05 ? "−" : "") + text + " sn";
+}
+const pct = (rate) => "%" + Math.round(rate * 100);
+const lang = () => LANG_NAMES[state.translations && state.translations.lang] || "";
+const num = (n) => Number(n).toLocaleString("tr-TR");
 
 const LANGS = { eng: "İng.", en: "İng.", tur: "Tür.", tr: "Tür." };
 const CODECS = { Srt: "SRT", Ass: "ASS", WebVtt: "VTT", OtherText: "metin", Pgs: "PGS", VobSub: "VobSub", Other: "?" };
 const TEXT = new Set(["Srt", "Ass", "WebVtt", "OtherText"]);
 
-/** Whether the matched file could be read, and as which container. */
+/** The container of the matched file and whether it could be read:
+ *  [text, kind, readable]. */
 function fileState(line) {
-  if (/range: None/.test(line)) return ["dosya açılmadı", "warn"];
-  if (/range: Some\(Err/.test(line)) return ["dosya okunamadı", "bad"];
-  if (/mp4: Some\(Ok/.test(line)) return [/fragmented: true/.test(line) ? "MP4 (parçalı)" : "MP4 ✓", "ok"];
-  if (/mp4: Some\(Err/.test(line)) return ["MP4 okunamadı", "bad"];
-  if (/container: Avi/.test(line)) return ["AVI", "bad"];
-  if (/container: MpegTs/.test(line)) return ["TS", "bad"];
-  if (/ebml_magic: false/.test(line)) return ["MKV değil", "bad"];
-  if (/mkv: Some\(Ok/.test(line)) return ["MKV ✓", "ok"];
-  if (/mkv: Some\(Err/.test(line)) return ["MKV okunamadı", "bad"];
-  return ["MKV ?", "warn"];
+  if (/range: None/.test(line)) return ["dosya açılmadı", "warn", false];
+  if (/range: Some\(Err/.test(line)) return ["dosya okunamadı (debrid bağlantısı)", "bad", false];
+  if (/mp4: Some\(Ok/.test(line)) return /fragmented: true/.test(line)
+    ? ["MP4, parçalı: desteklenmiyor", "bad", false] : ["MP4, okundu", "ok", true];
+  if (/mp4: Some\(Err/.test(line)) return ["MP4, okunamadı", "bad", false];
+  if (/container: Avi/.test(line)) return ["AVI: desteklenmiyor", "bad", false];
+  if (/container: MpegTs/.test(line)) return ["MPEG-TS: desteklenmiyor", "bad", false];
+  if (/ebml_magic: false/.test(line)) return ["MKV değil ya da henüz hazır değil", "bad", false];
+  if (/mkv: Some\(Ok/.test(line)) return ["MKV, okundu", "ok", true];
+  if (/mkv: Some\(Err/.test(line)) return ["MKV, okunamadı", "bad", false];
+  return ["bilinmiyor", "warn", false];
 }
 
 /** Embedded subtitle tracks: language, format, and whether Cues index them.
@@ -215,7 +353,7 @@ function tracksOf(line) {
     else if (en && codec === "Pgs") use = indexed ? "pgs" : "unindexed";
     return {
       label: (LANGS[lang.toLowerCase()] || lang.toUpperCase() || "?") + " " + (CODECS[codec] || codec),
-      forced: forced === "true", indexed, use,
+      forced: forced === "true", use,
     };
   });
 }
@@ -231,85 +369,191 @@ function mp4TracksOf(line) {
       const enough = Number(lines || 0) >= 50;
       return {
         label: (LANGS[lang.toLowerCase()] || (lang === "mac0" ? "İng." : lang.toUpperCase()) || "?") + " " + codec,
-        forced: false, indexed: true,
+        forced: false,
         use: english === "true" && text ? (enough ? "ruler" : "short") : "",
       };
     });
 }
 
-/** Folds one event into the request it belongs to; lines carry no request id,
- *  so each one goes to the latest request still waiting for that stage. */
+/** `[(track, lines), ...]` pairs of a ruler list. */
+function rulerPairs(text) {
+  return [...(text || "").matchAll(/\((\d+), (\d+)\)/g)].map(([, t, n]) => [Number(t), Number(n)]);
+}
+
+/** Source searches and downloads of an `m3` line, as one sentence. */
+function candidates(line) {
+  const searches = [...line.matchAll(/\((OpenSubtitles|SubDl), (?:Ok\((\d+)\)|Err\((\w+)(?:\((\d+)\))?\))\)/g)];
+  const found = searches.reduce((s, m) => s + Number(m[2] || 0), 0);
+  const read = (line.match(/Ok\(SrtStats/g) || []).length;
+  const parts = searches.map(([, src, n, err, code]) => SOURCES[src] + " " +
+    (n !== undefined ? n : (err === "Status" ? "HTTP " + code : SOURCE_ERRORS[err] || err)));
+  const failed = searches.length && searches.every((m) => m[2] === undefined);
+  return { found, read, failed, text: (failed ? "kaynaklara ulaşılamadı" : found + " bulundu") +
+    (parts.length ? " (" + parts.join(" · ") + ")" : "") + (read ? ", " + read + " indirildi" : "") };
+}
+
+/** One `m4` trial: candidate index, accepted, fix and why not. */
+function trial(line) {
+  const g = (re) => (line.match(re) || [])[1];
+  const window = (reason) => {
+    const m = (reason || "").match(/(\w+)\((\d+)\)/);
+    if (!m) return reason === "NoOverlap" ? "hiç örtüşmedi" : reason || "";
+    const where = WINDOWS[Number(m[2])] || "bir bölümde";
+    return { Disagree: where + " kayma farklı", LowHits: where + " isabet düşük", Sparse: where + " aday satırı az",
+      ThinWindow: where + " cetvel satırı az" }[m[1]] || reason;
+  };
+  const num = Number(g(/num: (\d+)/)), den = Number(g(/den: (\d+)/));
+  return {
+    candidate: Number(g(/candidate: (\d+)/)),
+    ok: /accepted: true/.test(line),
+    local: /accepted: true/.test(line) && /reject: Some/.test(line),
+    // The first ones are the verdict's own, before the windows'.
+    hit: Number(g(/hit_rate: ([\d.]+)/) || 0),
+    shift: g(/shift_ms: (-?\d+)/) !== undefined ? Number(g(/shift_ms: (-?\d+)/)) : null,
+    fps: num && den && num !== den ? (num > den ? "25→24 fps" : "24→25 fps") : "",
+    reject: window(g(/reject: Some\(([\w()]+)\)/)),
+  };
+}
+
+/** Sums up the trials of one round: how many candidates fitted, with the
+ *  best one's numbers. */
+function alignment(round) {
+  const byCandidate = new Map();
+  for (const t of round) {
+    const best = byCandidate.get(t.candidate);
+    if (!best || (t.ok && !best.ok) || (t.ok === best.ok && t.hit > best.hit)) byCandidate.set(t.candidate, t);
+  }
+  const all = [...byCandidate.values()];
+  const fitted = all.filter((t) => t.ok);
+  const best = (fitted.length ? fitted : all).reduce((a, b) => (b.hit > a.hit ? b : a), all[0]);
+  if (!best) return ["", ""];
+  if (fitted.length) {
+    const extra = [best.shift !== null ? "kaydırma " + shift(best.shift) : "", best.fps,
+      "isabet " + pct(best.hit), fitted.some((t) => t.local) ? "yerel kabul" : ""].filter(Boolean);
+    return [all.length + " adaydan " + fitted.length + " tanesi uydu · " + extra.join(" · "), "ok"];
+  }
+  return [all.length + " adaydan hiçbiri uymadı · en iyisinde isabet " + pct(best.hit) +
+    (best.reject ? ", " + best.reject : ""), "bad"];
+}
+
+/** Folds one event into the request it belongs to. Lines carry no request
+ *  id, so each one goes to the latest request still waiting for that stage. */
 function track(ev) {
-  const line = ev.line;
-  const c = state.counts;
+  const line = ev.line, c = state.counts, f = state.funnel;
   if (ev.area === "request") {
     c.requests++;
     const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
-    const name = /has_filename: true/.test(line), size = /has_video_size: true/.test(line);
-    state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "", hints: (name ? "ad" : "ad yok") + " · " + (size ? "boyut" : "boyut yok"), steps: [] });
+    state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "",
+      hints: { name: /has_filename: true/.test(line), size: /has_video_size: true/.test(line) },
+      steps: {}, seen: new Set(), main: [], spare: [] });
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
     return;
   }
-  // Alignment and dump lines can repeat; they belong to the latest request
-  // whose menu is not ready yet.
-  const repeats = ev.area === "m4" || ev.area === "dump";
-  const req = state.requests.find((r) => (repeats ? !r.menu : !r[ev.area]));
-  const add = (text, kind) => { if (req) { req[ev.area] = true; req.steps.push([text, kind]); } };
-  if (ev.area === "served") {
+  // The stage this line fills. A later stage goes to the latest request
+  // past the stage before it whose menu is not ready yet; alignment and
+  // dump lines repeat.
+  const stage = ev.area === "m3" ? (/m3 fallback/.test(line) ? "m3fb" : /m3 more/.test(line) ? "m3more" : "m3")
+    : ev.area === "m5" ? (/fallback accepted/.test(line) ? "m5fb" : "m5") : ev.area;
+  const after = AFTER[stage];
+  const repeats = stage === "m4" || stage === "dump";
+  const req = state.requests.find((r) => (!after || (r.seen.has(after) && !r.seen.has("menu"))) &&
+    (repeats || !r.seen.has(stage)));
+  if (req && !repeats) req.seen.add(stage);
+  const set = (key, text, kind) => { if (req) req.steps[key] = [text, kind]; };
+
+  if (stage === "served") {
     const from = (line.match(/from=(\w+)/) || [])[1];
-    const offered = (line.match(/offered=(\d+)/) || [])[1];
+    const offered = Number((line.match(/offered=(\d+)/) || [])[1] || 0);
     if (from === "memory" || from === "disk") c.cached++;
-    const label = { memory: "bellekten, dosya yeniden okunmadı", disk: "diskten, dosya yeniden okunmadı",
-      probes: "yeni", joined: "süren işe katıldı, dosya yeniden okunmadı", none: "boş" }[from] || from;
-    add("cevap: " + label + ", " + offered + " girdi", offered > 0 ? "ok" : "warn");
-  } else if (ev.area === "k2") {
-    if (/NoHints/.test(line)) return add("dosya: ipucu yok", "bad");
-    if (/Failed/.test(line) && !/Matched/.test(line)) return add("dosya: liste okunamadı", "bad");
+    if (!req) return;
+    req.served = { from, offered, early: from === "probes" && !req.menu };
+    // Answered without probes: no later probe line is this request's.
+    if (from !== "probes") for (const done of ["k2", "m3", "menu"]) req.seen.add(done);
+  } else if (stage === "k2") {
+    f.probed++;
+    if (/NoHints/.test(line)) return set("file", "Stremio dosya adı ve boyutu göndermedi", "bad");
+    if (/Failed/.test(line) && !/Matched/.test(line)) return set("file", "AIOStreams listesi okunamadı", "bad");
     const by = (line.match(/matched_by: Some\((\w+)\)/) || [])[1];
-    if (by) c.match++;
-    add(by ? "dosya: eşleşti (" + (by === "Both" ? "ad + boyut" : "yalnız boyut") + ")" : "dosya: eşleşmedi", by ? "ok" : "bad");
-    if (!by || !req) return;
+    const streams = (line.match(/streams: (\d+)/) || [])[1];
+    if (!by) return set("file", Number(streams) ? "listedeki " + streams + " dosyanın hiçbirinde ad ya da boyut tutmadı"
+      : "AIOStreams listesi boş geldi", "bad");
+    f.matched++;
+    set("file", "bulundu, " + (by === "Both" ? "ad ve boyut tuttu" : "boyut tuttu, ad farklı") +
+      (streams ? " (" + streams + " dosya arasında)" : ""), "ok");
     const file = fileState(line);
-    if (file[1] === "ok") c.mkv++;
-    req.steps.push(file);
-    if (file[1] !== "ok") return;
+    set("container", file[0], file[1]);
+    if (!file[2] || !req) return;
+    f.read++;
     req.tracks = tracksOf(line).concat(mp4TracksOf(line));
-    if (/mkv: Some/.test(line) && !/cues: Read/.test(line)) req.steps.push(["altyazı dizini okunamadı", "warn"]);
-    if (/rulers: \[\(/.test(line)) c.ruler++;
-  } else if (ev.area === "m5") {
-    const tracks = (line.match(/\((\d+), \d+\)/g) || []).length;
-    if (tracks) c.ruler++;
-    add("cetvel: PGS'ten (" + tracks + " iz)", "ok");
-  } else if (ev.area === "m3" && /m3 more /.test(line)) {
+    const rulers = rulerPairs((line.match(/rulers: \[([^\]]*)\]/) || [])[1]);
+    if (rulers.length) {
+      f.ruler++;
+      set("ruler", "İngilizce metin altyazıdan, " + num(rulers[0][1]) + " satır" +
+        (rulers.length > 1 ? " (+" + (rulers.length - 1) + " iz daha)" : ""), "ok");
+    } else if (/mkv: Some/.test(line) && !/cues: Read/.test(line)) set("ruler", "dosyanın dizini okunamadı", "bad");
+  } else if (stage === "m5") {
+    const rulers = rulerPairs(line);
+    if (rulers.length) f.ruler++;
+    set("ruler", rulers.length ? "İngilizce PGS (resim) altyazıdan, " + num(rulers[0][1]) + " satır" : "PGS'ten çıkmadı",
+      rulers.length ? "ok" : "bad");
+  } else if (stage === "m3") {
+    const found = candidates(line);
+    if (found.found) f.candidates++;
+    set("candidates", found.text, found.found ? "ok" : "bad");
+  } else if (stage === "m3more") {
     // None of the first downloads fitted; the next ranked ones (SS-040).
     const read = (line.match(/Ok\(SrtStats/g) || []).length;
-    add("aday: " + read + " tane daha indirildi", read ? "" : "warn");
-  } else if (ev.area === "m3") {
-    const found = [...line.matchAll(/Ok\((\d+)\)/g)].reduce((s, m) => s + Number(m[1]), 0);
-    add("aday: " + found + " bulundu", found ? "ok" : "warn");
-  } else if (ev.area === "m4") {
-    const ok = /accepted: true/.test(line);
-    if (ok) c.accepted++;
-    if (req) {
-      req.m4 = req.m4 || { ok: 0, all: 0, step: null };
-      req.m4.all++; req.m4.ok += ok ? 1 : 0;
-      const text = "hizalama: " + req.m4.ok + "/" + req.m4.all + " kabul";
-      if (req.m4.step) { req.m4.step[0] = text; req.m4.step[1] = req.m4.ok ? "ok" : "warn"; }
-      else { req.m4.step = [text, ok ? "ok" : "warn"]; req.steps.push(req.m4.step); }
-    }
-  } else if (ev.area === "menu") {
+    if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi";
+  } else if (stage === "m3fb") {
+    if (req) req.inSpare = true;
+    const found = candidates(line);
+    set("spare", "İngilizce aday: " + found.text, found.found ? "info" : "bad");
+  } else if (stage === "m5fb") {
+    const n = Number((line.match(/accepted=(\d+)/) || [])[1] || 0);
+    if (req) req.spareOk = n > 0;
+  } else if (stage === "m4") {
+    if (!req) return;
+    (req.inSpare ? req.spare : req.main).push(trial(line));
+  } else if (stage === "menu") {
     const notice = (line.match(/notice=Some\((\w+)\)/) || [])[1];
     const entries = Number((line.match(/entries=(\d+)/) || [])[1] || 0);
-    if (notice) c.notice++;
+    if (!req) return;
+    req.menu = { notice, entries };
     // A notice with more entries after it: the English fallback, and its
     // translation when one is on (SS-026).
-    const spare = notice && entries > 1 ? " + " + (entries - 1) + " yedek" : "";
-    add(notice ? "menü: " + (NOTICES[notice] || notice) + spare : "menü: " + entries + " altyazı",
-      notice ? (spare || notice === "NotReady" || notice === "Failed" ? "warn" : "bad") : "ok");
-  } else if (ev.area === "dump") {
-    add(/pgs dump written/.test(line) ? "PGS kaydı yazıldı" : /written/.test(line) ? "zaman kaydı yazıldı" : "kayıt yazılamadı",
-      /failed/.test(line) ? "bad" : "");
+    if (!notice) { c.found++; } else if (entries > 1) { c.fallback++; } else { c.missing++; }
+    if (!notice) f.accepted++;
   }
+}
+
+/** The one-line result of a request, its kind and an explanation. */
+function outcome(r) {
+  const m = r.menu, s = r.served;
+  const late = s && s.early && m ? " İlk cevapta Stremio'ya «hazırlanıyor» gitti; sonuç videoyu yeniden açınca görünür." : "";
+  const o = outcomeOf(r, m, s);
+  o.why = (o.why + late).trim();
+  return o;
+}
+function outcomeOf(r, m, s) {
+  if (m && !m.notice) return { kind: "ok", head: m.entries + " " + (lang() ? lang() + " " : "") + "altyazı sunuldu",
+    why: r.main.some((t) => t.local) ? "Kayma film boyunca değiştiği için bölge bölge kaydırılarak oturtuldu." : "" };
+  if (m && m.notice) {
+    const [head, why, todo, keep] = NOTICES[m.notice] || [m.notice, "", "", ""];
+    const spare = m.entries > 1;
+    if (spare) return { kind: "warn", head: "İngilizce yedek sunuldu",
+      why: head + ". " + why + " Yerine dosyaya oturan İngilizce altyazı" +
+        (m.entries > 2 ? " ve hedef dile çevirisi" : "") + " menüye kondu." };
+    return { kind: m.notice === "NotReady" || keep === "minute" ? "warn" : "bad", head,
+      why: why + (todo ? " " + todo : "") + (keep ? " " + RETRY[keep] : "") };
+  }
+  if (s && (s.from === "memory" || s.from === "disk")) return { kind: "ok", head: "Önceki cevap verildi",
+    why: (s.from === "memory" ? "Bellekten" : "Diskteki cache'ten") + ", menüde " + s.offered + " girdi. Dosya yeniden okunmadı." };
+  if (s && s.from === "joined") return { kind: "ok", head: "Aynı oynatmanın süren işine katıldı",
+    why: "Stremio bu oynatma için ikinci kez istedi; ilk isteğin sonucu bekleniyor, ayrıca işlenmedi." };
+  if (s && s.from === "none") return { kind: "bad", head: "Boş cevap", why: "Sunucuda dosya ve altyazı kaynakları kapalı." };
+  if (s && s.from === "probes") return { kind: "wait", head: "Hazırlanıyor",
+    why: "15 saniyede bitmedi; Stremio'ya «hazırlanıyor» gitti, iş arka planda sürüyor. Videoyu biraz sonra yeniden açınca hazır olur." };
+  return { kind: "wait", head: "İşleniyor…", why: "" };
 }
 
 function renderCounts() {
@@ -317,18 +561,18 @@ function renderCounts() {
   for (const key of Object.keys(c)) $("c-" + key).textContent = c[key];
   const jobs = (state.translations && state.translations.jobs) || [];
   $("c-translated").textContent = jobs.filter((j) => j.phase === "done").length;
+  const f = state.funnel;
+  const box = $("funnel");
+  if (!f.probed) { box.replaceChildren(el("span", "muted", "Yeni işlenen istek olunca adım adım kaçının geçtiği burada görünür.")); return; }
+  const stages = [[f.probed, "dosya arandı"], [f.matched, "bulundu"], [f.read, "okundu"], [f.ruler, "cetvel çıktı"],
+    [f.candidates, "aday bulundu"], [f.accepted, "altyazı sunuldu"]];
+  box.replaceChildren(el("span", "muted", "Yeni işlenenlerde:"), ...stages.flatMap(([n, name], i) => {
+    const item = el("span", "");
+    item.append(el("span", "n", n), " " + name);
+    return i ? [el("span", "arrow", "→"), item] : [item];
+  }));
 }
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-function seconds(ms) {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 60 ? s + " sn" : Math.floor(s / 60) + " dk " + (s % 60) + " sn";
-}
 function percent(job) {
   return job.lines ? Math.floor((job.lines_done * 100) / job.lines) : 0;
 }
@@ -342,16 +586,16 @@ function bar(job) {
 /** Time lines for a job: when it started, how long it took or has taken,
  *  and for a running one a guess of what is left from its pace so far. */
 function jobTimes(job, now) {
-  if (job.from_disk) return ["diskten geldi " + time(job.finished_ms)];
-  if (job.phase === "queued") return ["sırada " + seconds(now - job.queued_ms)];
+  if (job.from_disk) return ["daha önce çevrilmişti, diskten geldi (" + time(job.finished_ms) + ")"];
+  if (job.phase === "queued") return ["sırada bekliyor: " + seconds(now - job.queued_ms)];
   const out = ["başladı " + time(job.started_ms || job.queued_ms)];
   if (job.phase === "done" || job.phase === "failed") {
-    out.push(seconds(job.finished_ms - (job.started_ms || job.queued_ms)) + (job.phase === "done" ? "’de bitti" : "’de düştü"));
+    out.push(seconds(job.finished_ms - (job.started_ms || job.queued_ms)) + (job.phase === "done" ? " sürdü" : " sonra düştü"));
     return out;
   }
   const spent = now - job.started_ms;
   out.push("geçen " + seconds(spent));
-  if (!job.lines_done) out.push("ilk blok bekleniyor (önce belge analizi)");
+  if (!job.lines_done) out.push("ilk blok bekleniyor (önce bütün altyazı bir kez okunup analiz edilir)");
   else out.push("kalan ~" + seconds((spent * (job.lines - job.lines_done)) / job.lines_done));
   return out;
 }
@@ -361,80 +605,112 @@ function renderJobs() {
   const box = $("jobs");
   if (t === null) {
     $("jobs-note").textContent = "";
-    $("translator").textContent = "· çeviri kapalı";
-    box.replaceChildren(el("div", "empty", "Çeviri kapalı: sunucuda OpenRouter anahtarı yok."));
+    $("translator").textContent = "Çeviri kapalı (sunucuda OpenRouter anahtarı yok)";
+    $("jobs-section").hidden = true;
     return;
   }
   if (!t) return;
-  $("translator").textContent = "· çeviri: " + t.model + " → " + (LANG_NAMES[t.lang] || t.lang);
+  $("jobs-section").hidden = false;
+  $("translator").textContent = "Çeviri: " + (LANG_NAMES[t.lang] || t.lang) + ", " + model(t.model);
   const live = t.jobs.filter((j) => j.phase === "running" || j.phase === "queued").length;
   $("jobs-note").textContent = live ? live + " iş sürüyor · aynı anda en çok " + t.parallel : "";
-  if (!t.jobs.length) { box.replaceChildren(el("div", "empty", "Henüz çeviri yok.")); return; }
+  if (!t.jobs.length) {
+    box.replaceChildren(el("div", "empty", "Henüz çeviri yok. Bir istek İngilizce yedeğe düşünce ilerlemesi burada görünür."));
+    return;
+  }
   const now = Date.now();
   box.replaceChildren(...t.jobs.map((job) => {
     const card = el("div", "job" + (job.phase === "running" ? " live" : ""));
     const top = el("div", "top");
     top.append(el("span", "file", job.label || "dosya adı bilinmiyor"),
       el("span", "badge " + job.phase, job.from_disk ? "diskten" : PHASES[job.phase] || job.phase),
-      el("span", "pct", (job.phase === "done" ? 100 : percent(job)) + "%"));
+      el("span", "pct", "%" + (job.phase === "done" ? 100 : percent(job))));
     const meta = el("div", "meta");
-    meta.append(el("span", "", job.lines_done + " / " + job.lines + " satır"),
-      el("span", "", job.blocks + " blok"),
+    meta.append(el("span", "", num(job.lines_done) + " / " + num(job.lines) + " satır"),
+      el("span", "", job.blocks + " blokta"),
       ...jobTimes(job, now).map((text) => el("span", "", text)));
-    if (job.model !== t.model) meta.append(el("span", "", "model: " + job.model));
+    if (job.model !== t.model) meta.append(el("span", "", "model: " + model(job.model)));
     if (job.failure) meta.append(el("span", "", "neden: " + (FAILURES[job.failure] || job.failure)));
     card.append(top, bar(job), meta);
     return card;
   }));
 }
 
+/** The steps of a request in a fixed order, so cards read alike. */
+function stepsOf(r) {
+  const s = r.steps;
+  const rows = [];
+  const add = (name, value) => { if (value && value[0]) rows.push([name, value[0], value[1]]); };
+  const hints = !r.hints.name || !r.hints.size
+    ? [(r.hints.name ? "" : "dosya adı yok") + (!r.hints.name && !r.hints.size ? ", " : "") + (r.hints.size ? "" : "boyut yok"), "warn"]
+    : null;
+  add("Stremio", hints);
+  add("Dosya", s.file);
+  add("Biçim", s.container);
+  let ruler = s.ruler;
+  const notice = r.menu && r.menu.notice;
+  if (!ruler && ["NoEnglishTrack", "ImageOnly", "NotIndexed"].includes(notice)) {
+    ruler = [{ NoEnglishTrack: "İngilizce altyazı izi yok", ImageOnly: "İngilizce iz resim biçiminde, zamanları okunamadı",
+      NotIndexed: "İngilizce iz dizinde yok" }[notice], "bad"];
+  }
+  add("Cetvel", ruler);
+  add("Adaylar", s.candidates);
+  add("Hizalama", alignment(r.main));
+  if (s.spare) {
+    const fit = r.spare.length ? alignment(r.spare) : null;
+    const text = s.spare[0] + (fit && fit[0] ? " · " + fit[0] : "") +
+      (r.spareOk === true ? " · menüye kondu" : r.spareOk === false ? " · yedek de yok" : "");
+    add("İng. yedek", [text, r.spareOk ? "ok" : r.spareOk === false ? "bad" : "info"]);
+  }
+  const served = r.served;
+  if (served) {
+    if (served.early) add("Cevap", ["15 sn doldu, «hazırlanıyor» girdisi gönderildi", "warn"]);
+    else {
+      const from = { memory: "bellekteki cache'ten", disk: "diskteki cache'ten", probes: "yeni hazırlandı",
+        joined: "ilk isteğin sonucuyla", none: "boş" }[served.from] || served.from;
+      const onlyNotice = r.menu && r.menu.notice && r.menu.entries === 1;
+      add("Cevap", [from + ", menüde " + (onlyNotice ? "yalnız nedeni söyleyen girdi" : served.offered + " girdi"),
+        served.offered && !onlyNotice ? "ok" : "warn"]);
+    }
+  }
+  return rows;
+}
+
 function renderRequests() {
   const box = $("requests");
   if (!state.requests.length) return;
   box.replaceChildren(...state.requests.map((r) => {
-    const card = document.createElement("div");
-    card.className = "req";
-    const top = document.createElement("div");
-    top.className = "top";
-    const when = document.createElement("b");
-    when.textContent = time(r.at);
-    const what = document.createElement("span");
-    what.className = "muted";
-    what.textContent = (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind) + " · " + r.hints;
-    top.append(when, what);
-    if (r.label) {
-      const file = document.createElement("div");
-      file.className = "file";
-      file.textContent = r.label;
-      top.append(file);
-    }
-    const steps = document.createElement("div");
-    steps.className = "steps";
-    steps.append(...r.steps.map(([t, k]) => step(t, k)));
-    if (!r.steps.length) steps.append(step("bekleniyor…", "warn"));
-    card.append(top, steps);
-    const job = r.label && state.translations && state.translations.jobs.find((j) => j.label === r.label);
-    if (job) {
-      const row = document.createElement("div");
-      row.className = "steps";
-      row.append(step("çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" +
-        (job.phase === "done" ? 100 : percent(job)), job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "pgs"));
-      card.append(row, bar(job));
+    const o = outcome(r);
+    const card = el("article", "req " + o.kind);
+    const top = el("div", "top");
+    top.append(el("span", "headline", o.head),
+      el("span", "when", time(r.at) + " · " + (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind)));
+    card.append(top);
+    if (r.label) card.append(el("div", "file", r.label));
+    if (o.why) card.append(el("p", "why", o.why));
+    const rows = stepsOf(r);
+    if (rows.length) {
+      const dl = el("dl", "steps");
+      for (const [name, text, kind] of rows) dl.append(el("dt", "", name), el("dd", kind || "", text));
+      card.append(dl);
     }
     if (r.tracks) {
-      const row = document.createElement("div");
-      row.className = "steps tracks";
-      const title = document.createElement("span");
-      title.className = "muted";
-      title.textContent = "Gömülü altyazılar:";
-      row.append(title);
-      if (!r.tracks.length) row.append(step("yok", "bad"));
+      const chips = el("div", "chips");
+      chips.append(el("span", "muted", "Gömülü altyazılar:"));
+      if (!r.tracks.length) chips.append(el("span", "chip bad", "yok"));
       for (const t of r.tracks) {
-        const note = { ruler: "cetvel ✓", pgs: "PGS ölçülür", unindexed: "dizinsiz", short: "çok kısa" }[t.use];
-        const kind = { ruler: "ok", pgs: "pgs", unindexed: "warn", short: "warn" }[t.use] || "";
-        row.append(step(t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : ""), kind));
+        const note = { ruler: "cetvel", pgs: "resim, gerekirse cetvel", unindexed: "dizinde yok", short: "çok kısa" }[t.use];
+        const kind = { ruler: "ok", pgs: "info", unindexed: "warn", short: "warn" }[t.use] || "";
+        chips.append(el("span", "chip " + kind, t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : "")));
       }
-      card.append(row);
+      card.append(chips);
+    }
+    const job = r.label && state.translations && state.translations.jobs.find((j) => j.label === r.label);
+    if (job) {
+      const chips = el("div", "chips");
+      chips.append(el("span", "chip " + (job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "info"),
+        "çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" + (job.phase === "done" ? 100 : percent(job))));
+      card.append(chips, bar(job));
     }
     return card;
   }));
@@ -445,9 +721,8 @@ function renderTools() {
   const seen = new Set(state.events.map((e) => e.area));
   for (const area of seen) {
     if (tools.querySelector('[data-area="' + area + '"]')) continue;
-    const b = document.createElement("button");
+    const b = el("button", "", AREAS[area] || area);
     b.dataset.area = area;
-    b.textContent = AREAS[area] || area;
     b.setAttribute("aria-pressed", String(!state.hidden.has(area)));
     b.onclick = () => {
       state.hidden.has(area) ? state.hidden.delete(area) : state.hidden.add(area);
@@ -459,28 +734,20 @@ function renderTools() {
 }
 
 function renderLog() {
+  if (!$("log-box").open) return;
   const log = $("log");
   const needle = state.filter.toLowerCase();
   const rows = state.events
     .filter((e) => !state.hidden.has(e.area) && (!needle || e.line.toLowerCase().includes(needle)))
     .slice(-400)
     .reverse();
-  if (!rows.length) { log.replaceChildren(Object.assign(document.createElement("div"), { className: "empty", textContent: "Gösterilecek olay yok." })); return; }
+  if (!rows.length) { log.replaceChildren(el("div", "empty", "Gösterilecek olay yok.")); return; }
   log.replaceChildren(...rows.map((e) => {
-    const row = document.createElement("div");
-    row.className = "row";
-    const t = document.createElement("span");
-    t.className = "muted";
-    t.textContent = time(e.at_ms);
-    const a = document.createElement("span");
-    a.className = "area";
-    a.textContent = AREAS[e.area] || e.area;
-    const l = document.createElement("span");
-    l.className = "line" + (e.line.length > 220 ? " cut" : "");
-    l.textContent = e.line;
+    const row = el("div", "row");
+    const l = el("span", "line" + (e.line.length > 220 ? " cut" : ""), e.line);
     l.title = e.line.length > 220 ? "Tamamını görmek için tıkla" : "";
     l.onclick = () => l.classList.toggle("cut");
-    row.append(t, a, l);
+    row.append(el("span", "muted", time(e.at_ms)), el("span", "area", AREAS[e.area] || e.area), l);
     return row;
   }));
 }
@@ -509,7 +776,7 @@ async function poll() {
     state.started = page.started_ms;
     state.after = page.next;
     $("conn").textContent = "bağlı"; $("conn").className = "pill ok";
-    $("missed").textContent = page.missed ? "· eski olayların bir kısmı tampondan düştü" : "";
+    $("missed").textContent = page.missed ? "Eski olayların bir kısmı tampondan düştü; sayılar eksik olabilir." : "";
     for (const ev of page.events) { state.events.push(ev); track(ev); }
     if (state.events.length > MAX_ROWS) state.events.splice(0, state.events.length - MAX_ROWS);
     if (page.events.length) { renderCounts(); renderRequests(); renderTools(); if (!state.paused) renderLog(); }
@@ -518,7 +785,8 @@ async function poll() {
   }
   if (state.started) {
     const s = Math.floor((Date.now() - state.started) / 1000);
-    $("uptime").textContent = "· açık " + Math.floor(s / 3600) + " sa " + Math.floor((s % 3600) / 60) + " dk";
+    $("uptime").textContent = "Sunucu " + time(state.started) + "'den beri açık (" +
+      (s >= 3600 ? Math.floor(s / 3600) + " sa " : "") + Math.floor((s % 3600) / 60) + " dk)";
   }
   setTimeout(poll, 2000);
 }
@@ -574,21 +842,21 @@ function perMillion(price) {
   return Number.isFinite(n) ? "$" + n.toFixed(2) : "?";
 }
 function prices(m) {
-  return "giriş " + perMillion(m.pricing && m.pricing.prompt) + " / çıkış " + perMillion(m.pricing && m.pricing.completion) + " (milyon token)";
+  return "milyon token başına giriş " + perMillion(m.pricing && m.pricing.prompt) + ", çıkış " + perMillion(m.pricing && m.pricing.completion);
 }
 function modelInfo() {
   const info = $("model-info"), c = chosen(), m = state.models.get(c.model);
   info.className = "hint muted";
   if (!m) {
     if (state.models.size && c.model) {
-      info.textContent = "OpenRouter listesinde yapılandırılmış çıktı destekleyen böyle bir model yok; çeviri reddedilebilir.";
+      info.textContent = "Bu model OpenRouter listesinde yapılandırılmış çıktı destekleyenler arasında yok; çeviri reddedilebilir.";
       info.className = "hint bad";
     } else info.textContent = "";
     return;
   }
   const thinks = (m.supported_parameters || []).includes("reasoning");
-  info.textContent = m.name + " · " + prices(m) +
-    (thinks ? "" : " · düşünme ayarı almıyor, «modelin varsayılanı» seç");
+  info.textContent = m.name + ": " + prices(m) + "." +
+    (thinks ? "" : " Bu model düşünme ayarı almıyor; «modelin varsayılanı»nı seç.");
   if (!thinks && c.reasoning !== "default") info.className = "hint bad";
 }
 $("model").oninput = settingsChanged;
@@ -606,7 +874,7 @@ $("settings-form").onsubmit = async (e) => {
     state.settings = answer;
     fillSettings(answer.current);
     note.className = "hint ok";
-    note.textContent = "Kaydedildi " + time(Date.now()) + ": yeni çeviriler bu ayarla yapılacak.";
+    note.textContent = "Kaydedildi (" + time(Date.now()) + "). Bundan sonraki çeviriler bu ayarla yapılacak.";
   } catch (err) {
     note.className = "hint bad";
     note.textContent = "Kaydedilmedi: " + err.message;
@@ -621,6 +889,16 @@ $("pause").onclick = () => {
   if (!state.paused) renderLog();
 };
 $("search").oninput = (e) => { state.filter = e.target.value; renderLog(); };
+// Remember which boxes were open, for this browser only.
+for (const id of ["glossary", "log-box"]) {
+  const box = $(id);
+  try { box.open = localStorage.getItem("subsync." + id) === "open"; } catch (err) { /* private window */ }
+  box.addEventListener("toggle", () => {
+    try { localStorage.setItem("subsync." + id, box.open ? "open" : ""); } catch (err) { /* private window */ }
+    if (id === "log-box") renderLog();
+  });
+}
+renderCounts();
 poll();
 pollTranslations();
 loadSettings();
