@@ -207,6 +207,15 @@ struct After {
     after: Option<u64>,
 }
 
+/// One page of events, with the subtitle sources that are on: the start
+/// line naming them may have fallen out of the buffer (SS-056).
+#[derive(Serialize)]
+struct EventsView {
+    #[serde(flatten)]
+    page: events::Page,
+    sources: Vec<sources::SourceKind>,
+}
+
 async fn events_json(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -215,11 +224,11 @@ async fn events_json(
     if !state.authorized(&token) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(events::since(query.after.unwrap_or(0))),
-    )
-        .into_response()
+    let view = EventsView {
+        page: events::since(query.after.unwrap_or(0)),
+        sources: state.subtitle_sources.iter().map(|s| s.kind()).collect(),
+    };
+    ([(header::CACHE_CONTROL, "no-store")], Json(view)).into_response()
 }
 
 /// Translation jobs for the dashboard (SS-047): progress and the played
@@ -1116,6 +1125,7 @@ mod tests {
         let body = body.unwrap();
         assert!(body["next"].as_u64().unwrap() >= 1);
         assert!(body["started_ms"].as_u64().unwrap() > 0);
+        assert_eq!(body["sources"], json!([]), "no source is on");
         let next = body["next"].as_u64().unwrap();
         let (_, newer) = get(&format!("/{TOKEN}/events.json?after={next}")).await;
         assert!(
@@ -1527,6 +1537,54 @@ mod tests {
                 .replacen("\n\n", &format!(" r{i}\n\n"), 1)
                 .into_bytes();
             Box::pin(async { Ok(bytes) })
+        }
+    }
+
+    #[tokio::test]
+    async fn events_name_the_sources_that_are_on() {
+        let source = |kind| -> Arc<dyn SubtitleSource> { Arc::new(KindSubtitles(kind)) };
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_subtitle_sources(
+                    vec![
+                        source(sources::SourceKind::OpenSubtitles),
+                        source(sources::SourceKind::SubSource),
+                        source(sources::SourceKind::Wyzie),
+                    ],
+                    "tur".to_owned(),
+                ),
+        );
+        let (status, body) = call(&app, format!("/{TOKEN}/events.json?after=0")).await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            body["sources"],
+            json!(["OpenSubtitles", "SubSource", "Wyzie"])
+        );
+        assert!(body["events"].is_array());
+        let (status, _) = call(&app, "/wrong-token-123/events.json?after=0".to_owned()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A source of one kind that finds nothing.
+    struct KindSubtitles(sources::SourceKind);
+
+    impl SubtitleSource for KindSubtitles {
+        fn kind(&self) -> sources::SourceKind {
+            self.0
+        }
+
+        fn search<'a>(&'a self, _query: &'a Query) -> sources::SearchFuture<'a> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn download<'a>(
+            &'a self,
+            _query: &'a Query,
+            _candidate: &'a sources::Candidate,
+        ) -> sources::DownloadFuture<'a> {
+            Box::pin(async { Err(sources::SourceError::Other) })
         }
     }
 

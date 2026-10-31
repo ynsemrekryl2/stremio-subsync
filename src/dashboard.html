@@ -52,6 +52,16 @@ section, details.box { background: var(--panel); border: 1px solid var(--line); 
 .funnel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 10px; font-size: 13px; }
 .funnel .n { font-weight: 600; font-variant-numeric: tabular-nums; }
 .funnel .arrow { color: var(--muted); }
+.sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.src { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; align-content: start; }
+.src .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.src .name { font-weight: 600; }
+.src .nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.src .nums b { display: block; font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.src .nums small { color: var(--muted); font-size: 11px; }
+.src .nums .spare { color: var(--muted); font-size: 12px; font-weight: 400; }
+.src .note { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.src .note.bad { color: var(--bad); }
 .requests, .jobs { display: grid; gap: 10px; }
 .req { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
 .req.ok { border-left-color: var(--ok); } .req.warn { border-left-color: var(--warn); }
@@ -139,6 +149,7 @@ dl.terms dd { margin: 0; color: var(--muted); }
       Veriler yalnız sunucunun belleğinde durur; sunucu yeniden başlayınca sıfırlanır.</p>
     <div class="meta-line">
       <span id="uptime"></span>
+      <span id="sources-on"></span>
       <span id="translator"></span>
       <span id="missed"></span>
     </div>
@@ -161,6 +172,14 @@ dl.terms dd { margin: 0; color: var(--muted); }
         <div class="desc">Sonuna kadar çevrilen İngilizce yedek.</div></div>
     </div>
     <div class="funnel" id="funnel" title="Yeni işlenen isteklerde her adımı geçen sayısı"></div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Kaynaklar</h2><span class="muted">sunucu açıldığından beri</span></div>
+    <p class="sec-note">Her altyazı kaynağında kaç arama yapıldı, kaç aday bulundu, kaçı indirildi ve kaçı dosyaya uydu.
+      İngilizce yedek aramaları da sayılır; onlardan uyanlar ayrıca «+İng.» diye yazar. Anahtarlı kaynaklarda
+      «anahtar reddedildi» ya da «kota doldu» görürseniz anahtarı ya da günlük kotayı kontrol edin.</p>
+    <div id="sources" class="sources"><div class="empty">Bağlanıyor…</div></div>
   </section>
 
   <section id="jobs-section">
@@ -292,6 +311,7 @@ const WINDOWS = ["başta", "ortada", "sonda"];
 const AFTER = { m5: "k2", m4: "m3", dump: "k2", m3more: "m3", m3fb: "m3", m5fb: "m3fb" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
   paused: false, filter: "", translations: undefined, settings: null, models: new Map(),
+  sourcesOn: null, bySource: new Map(),
   counts: { requests: 0, cached: 0, found: 0, fallback: 0, missing: 0 },
   funnel: { probed: 0, matched: 0, read: 0, ruler: 0, candidates: 0, accepted: 0 } };
 const $ = (id) => document.getElementById(id);
@@ -381,14 +401,57 @@ function rulerPairs(text) {
   return [...(text || "").matchAll(/\((\d+), (\d+)\)/g)].map(([, t, n]) => [Number(t), Number(n)]);
 }
 
+const SEARCH_RE = new RegExp("\\((" + Object.keys(SOURCES).join("|") +
+  "), (?:Ok\\((\\d+)\\)|Err\\((\\w+)(?:\\((\\d+)\\))?\\))\\)", "g");
+
+/** Searches of a probe line: source and found count, or why it failed. */
+function searchesOf(line) {
+  return [...line.matchAll(SEARCH_RE)].map(([, src, n, err, code]) =>
+    ({ src, n: n === undefined ? null : Number(n), err, code }));
+}
+
+/** A source error in words; keyed sources say a refused key or a full
+ *  quota with these statuses. */
+function sourceError(err, code) {
+  if (err !== "Status") return SOURCE_ERRORS[err] || err;
+  const why = { 401: "anahtar reddedildi", 403: "anahtar reddedildi", 429: "kota doldu" }[code];
+  return why ? why + " (HTTP " + code + ")" : "HTTP " + code;
+}
+
+/** Sources of the downloads in a probe line, in order; null where one
+ *  failed (a failure does not name its source). */
+function downloadSources(line) {
+  const list = (line.match(/downloads(?:: |=)\[([^\]]*)\]/) || [])[1] || "";
+  return [...list.matchAll(/Ok\(SrtStats \{ source: (\w+)|Err\(/g)].map((m) => m[1] || null);
+}
+
+function sourceStats(src) {
+  if (!state.bySource.has(src)) state.bySource.set(src,
+    { searches: 0, failed: 0, found: 0, downloaded: 0, ok: 0, okSpare: 0, lastFailed: false, error: null });
+  return state.bySource.get(src);
+}
+
+/** Counts a probe line's searches and downloads per source; the sources of
+ *  its downloads, in order. */
+function countSources(line, at) {
+  for (const s of searchesOf(line)) {
+    const st = sourceStats(s.src);
+    st.searches++;
+    st.lastFailed = s.n === null;
+    if (s.n === null) { st.failed++; st.error = { at, text: sourceError(s.err, s.code) }; } else st.found += s.n;
+  }
+  const sources = downloadSources(line);
+  for (const src of sources) if (src) sourceStats(src).downloaded++;
+  return sources;
+}
+
 /** Source searches and downloads of an `m3` line, as one sentence. */
 function candidates(line) {
-  const searches = [...line.matchAll(/\((OpenSubtitles|SubDl|AltyaziDb|SubSource|Wyzie), (?:Ok\((\d+)\)|Err\((\w+)(?:\((\d+)\))?\))\)/g)];
-  const found = searches.reduce((s, m) => s + Number(m[2] || 0), 0);
+  const searches = searchesOf(line);
+  const found = searches.reduce((s, m) => s + (m.n || 0), 0);
   const read = (line.match(/Ok\(SrtStats/g) || []).length;
-  const parts = searches.map(([, src, n, err, code]) => SOURCES[src] + " " +
-    (n !== undefined ? n : (err === "Status" ? "HTTP " + code : SOURCE_ERRORS[err] || err)));
-  const failed = searches.length && searches.every((m) => m[2] === undefined);
+  const parts = searches.map((m) => SOURCES[m.src] + " " + (m.n !== null ? m.n : sourceError(m.err, m.code)));
+  const failed = searches.length && searches.every((m) => m.n === null);
   const copies = Number((line.match(/duplicates: (\d+)/) || [])[1] || 0);
   return { found, read, failed, text: (failed ? "kaynaklara ulaşılamadı" : found + " bulundu") +
     (parts.length ? " (" + parts.join(" · ") + ")" : "") + (read ? ", " + read + " indirildi" : "") +
@@ -418,9 +481,9 @@ function trial(line) {
   };
 }
 
-/** Sums up the trials of one round: how many candidates fitted, with the
- *  best one's numbers. */
-function alignment(round) {
+/** Sums up the trials of one round: how many candidates fitted and from
+ *  which source (`sources` by candidate index), with the best one's numbers. */
+function alignment(round, sources) {
   const byCandidate = new Map();
   for (const t of round) {
     const best = byCandidate.get(t.candidate);
@@ -430,12 +493,16 @@ function alignment(round) {
   const fitted = all.filter((t) => t.ok);
   const best = (fitted.length ? fitted : all).reduce((a, b) => (b.hit > a.hit ? b : a), all[0]);
   if (!best) return ["", ""];
+  const from = (list) => {
+    const names = [...new Set(list.map((t) => SOURCES[(sources || [])[t.candidate]]).filter(Boolean))];
+    return names.length ? " (" + names.join(", ") + ")" : "";
+  };
   if (fitted.length) {
     const extra = [best.shift !== null ? "kaydırma " + shift(best.shift) : "", best.fps,
       "isabet " + pct(best.hit), fitted.some((t) => t.local) ? "yerel kabul" : ""].filter(Boolean);
-    return [all.length + " adaydan " + fitted.length + " tanesi uydu · " + extra.join(" · "), "ok"];
+    return [all.length + " adaydan " + fitted.length + " tanesi uydu" + from(fitted) + " · " + extra.join(" · "), "ok"];
   }
-  return [all.length + " adaydan hiçbiri uymadı · en iyisinde isabet " + pct(best.hit) +
+  return [all.length + " adaydan hiçbiri uymadı · en iyisinde" + from([best]) + " isabet " + pct(best.hit) +
     (best.reject ? ", " + best.reject : ""), "bad"];
 }
 
@@ -448,7 +515,7 @@ function track(ev) {
     const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
     state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "",
       hints: { name: /has_filename: true/.test(line), size: /has_video_size: true/.test(line) },
-      steps: {}, seen: new Set(), main: [], spare: [] });
+      steps: {}, seen: new Set(), main: [], spare: [], dl: [], dlSpare: [], fitted: new Set() });
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
     return;
   }
@@ -500,17 +567,22 @@ function track(ev) {
     set("ruler", rulers.length ? "İngilizce PGS (resim) altyazıdan, " + num(rulers[0][1]) + " satır" : "PGS'ten çıkmadı",
       rulers.length ? "ok" : "bad");
   } else if (stage === "m3") {
+    const sources = countSources(line, ev.at_ms);
+    if (req) req.dl = sources;
     const found = candidates(line);
     if (found.found) f.candidates++;
     set("candidates", found.text, found.found ? "ok" : "bad");
   } else if (stage === "m3more") {
     // None of the first downloads fitted; the next ranked ones (SS-040).
+    const sources = countSources(line, ev.at_ms);
+    if (req) req.dl = req.dl.concat(sources);
     const read = (line.match(/Ok\(SrtStats/g) || []).length;
     const copies = Number((line.match(/duplicates=(\d+)/) || [])[1] || 0);
     if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi" +
       (copies ? " (" + copies + " kopya atlandı)" : "");
   } else if (stage === "m3fb") {
-    if (req) req.inSpare = true;
+    const sources = countSources(line, ev.at_ms);
+    if (req) { req.inSpare = true; req.dlSpare = sources; }
     const found = candidates(line);
     set("spare", "İngilizce aday: " + found.text, found.found ? "info" : "bad");
   } else if (stage === "m5fb") {
@@ -518,7 +590,15 @@ function track(ev) {
     if (req) req.spareOk = n > 0;
   } else if (stage === "m4") {
     if (!req) return;
-    (req.inSpare ? req.spare : req.main).push(trial(line));
+    const t = trial(line);
+    (req.inSpare ? req.spare : req.main).push(t);
+    // A candidate is tried against each ruler; count it once.
+    const key = (req.inSpare ? "s" : "m") + t.candidate;
+    const src = (req.inSpare ? req.dlSpare : req.dl)[t.candidate];
+    if (t.ok && src && !req.fitted.has(key)) {
+      req.fitted.add(key);
+      sourceStats(src)[req.inSpare ? "okSpare" : "ok"]++;
+    }
   } else if (stage === "menu") {
     const notice = (line.match(/notice=Some\((\w+)\)/) || [])[1];
     const entries = Number((line.match(/entries=(\d+)/) || [])[1] || 0);
@@ -575,6 +655,38 @@ function renderCounts() {
     const item = el("span", "");
     item.append(el("span", "n", n), " " + name);
     return i ? [el("span", "arrow", "→"), item] : [item];
+  }));
+}
+
+function renderSources() {
+  const on = state.sourcesOn;
+  if (on === null) return;
+  $("sources-on").textContent = on.length ? "Kaynaklar: " + on.map((k) => SOURCES[k] || k).join(", ")
+    : "Altyazı kaynağı kapalı";
+  const kinds = [...new Set([...on, ...state.bySource.keys()])];
+  const box = $("sources");
+  if (!kinds.length) { box.replaceChildren(el("div", "empty", "Sunucuda açık altyazı kaynağı yok.")); return; }
+  box.replaceChildren(...kinds.map((kind) => {
+    const st = state.bySource.get(kind) || { searches: 0, failed: 0, found: 0, downloaded: 0, ok: 0, okSpare: 0 };
+    const card = el("div", "src");
+    const top = el("div", "top");
+    const isOn = on.includes(kind);
+    top.append(el("span", "name", SOURCES[kind] || kind),
+      el("span", "chip " + (!isOn ? "" : st.lastFailed ? "bad" : "ok"), !isOn ? "kapalı" : st.lastFailed ? "son arama hatalı" : "açık"));
+    const nums = el("div", "nums");
+    const cell = (n, name, extra) => {
+      const c = el("div", "");
+      const b = el("b", "", String(n));
+      if (extra) b.append(" ", el("span", "spare", extra));
+      c.append(b, el("small", "", name));
+      return c;
+    };
+    nums.append(cell(st.searches, "arama"), cell(st.found, "aday"), cell(st.downloaded, "indirme"),
+      cell(st.ok, "uydu", st.okSpare ? "+" + st.okSpare + " İng." : ""));
+    card.append(top, nums);
+    if (st.failed) card.append(el("p", "note bad", st.failed + " aramada hata · son: " + st.error.text + ", " + time(st.error.at)));
+    else if (!st.searches) card.append(el("p", "note", "Henüz aranmadı."));
+    return card;
   }));
 }
 
@@ -660,9 +772,9 @@ function stepsOf(r) {
   }
   add("Cetvel", ruler);
   add("Adaylar", s.candidates);
-  add("Hizalama", alignment(r.main));
+  add("Hizalama", alignment(r.main, r.dl));
   if (s.spare) {
-    const fit = r.spare.length ? alignment(r.spare) : null;
+    const fit = r.spare.length ? alignment(r.spare, r.dlSpare) : null;
     const text = s.spare[0] + (fit && fit[0] ? " · " + fit[0] : "") +
       (r.spareOk === true ? " · menüye kondu" : r.spareOk === false ? " · yedek de yok" : "");
     add("İng. yedek", [text, r.spareOk ? "ok" : r.spareOk === false ? "bad" : "info"]);
@@ -784,6 +896,10 @@ async function poll() {
     $("missed").textContent = page.missed ? "Eski olayların bir kısmı tampondan düştü; sayılar eksik olabilir." : "";
     for (const ev of page.events) { state.events.push(ev); track(ev); }
     if (state.events.length > MAX_ROWS) state.events.splice(0, state.events.length - MAX_ROWS);
+    const on = page.sources || [];
+    const sourcesChanged = !state.sourcesOn || on.join() !== state.sourcesOn.join();
+    state.sourcesOn = on;
+    if (page.events.length || sourcesChanged) renderSources();
     if (page.events.length) { renderCounts(); renderRequests(); renderTools(); if (!state.paused) renderLog(); }
   } catch (err) {
     $("conn").textContent = "bağlantı yok"; $("conn").className = "pill bad";
