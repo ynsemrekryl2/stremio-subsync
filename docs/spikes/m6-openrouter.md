@@ -37,6 +37,29 @@ metin olarak diyalogla aynı işi görüyor.
 - Çıkış token'ının girişe yakın olması modelin düşünme token'larından;
   bu fiyatta maliyete etkisi küçük.
 
+## Paralel bloklar (SS-045, 2026-10-31)
+
+Aynı film, aynı model; analizden sonra en çok 6 blok aynı anda
+(`translate::PARALLEL_BLOCKS`), sonuçlar blok sırasıyla birleşiyor.
+
+| Deneme | Sonuç | Toplam | İlk blok | Çağrı | Tekrar | Giriş / önbellek / çıkış token | Maliyet |
+|---|---|---|---|---|---|---|---|
+| Sıralı (yukarıdaki 2. deneme) | ok | 802 sn | 36,2 sn | 61 | 0 | 220 667 / 41 370 / 75 582 | 0,0606 $ |
+| 6 paralel | ok | **153 sn** | 30,5 sn | 61 | 0 | 201 827 / 0 / 78 000 | 0,0642 $ |
+
+- **~5,2 kat hızlı.** Analiz 22,8 sn, ardından 60 blok ~130 sn'de bitti.
+- **Blok süresi değişmedi:** en kısa 5,6 sn, ortanca 11,4 sn, p90 14,5 sn,
+  en uzun 17,7 sn (sıralıda ortanca 11,1 sn). 6 eşzamanlı istekte
+  sağlayıcı yavaşlatmadı; 429 ve yeniden deneme 0, onarım 0.
+- **İlk satırlar yine analizden sonra hazır** (30,5 sn); fark, sonrasının
+  ~8 kat değil ~40 kat oynatmadan hızlı ilerlemesi: film saniyede ~13
+  satır çevriliyor. ~1 dk'da ilk ~600 satır (filmin ~1/3'ü), 2,5 dk'da
+  tamamı hazır.
+- Maliyet aynı düzeyde; bu denemede önbellek hiç kullanılmadı (0,004 $ fark).
+- Çıktı: 2 034 / 2 034 satır, zamanların hepsi kaynakla birebir aynı.
+- Sonuç: 6 kalır. Darboğaz artık analiz (toplamın ~%15'i) ve blok
+  dalgaları; 6'yı artırmak en çok ~1 dk kazandırır.
+
 ## Gemini 3.8 Flash ile karşılaştırma (yarıda bırakıldı)
 
 Aynı film `google/gemini-3.8-flash` ile (milyon token 0,825 $ giriş /
