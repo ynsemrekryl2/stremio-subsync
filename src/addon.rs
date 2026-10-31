@@ -9,8 +9,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use futures_util::FutureExt;
+use futures_util::future::{BoxFuture, Shared};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
@@ -54,6 +57,10 @@ pub struct AppState {
     /// Translates the fitting English subtitle when nothing in `lang` fits
     /// (SS-026).
     translations: Option<Arc<Translations>>,
+    /// Probes running now, by request key. Stremio asks twice for one
+    /// playback (without, then with the video hash); the second request
+    /// waits for the first one's probes instead of starting its own (SS-041).
+    probing: Mutex<HashMap<String, Shared<BoxFuture<'static, ()>>>>,
 }
 
 impl AppState {
@@ -72,6 +79,7 @@ impl AppState {
             label_mode: false,
             cache_dir: None,
             translations: None,
+            probing: Mutex::new(HashMap::new()),
         })
     }
 
@@ -358,13 +366,7 @@ async fn respond(
         }
     }
     if state.streams.is_some() || !state.subtitle_sources.is_empty() {
-        let work = tokio::spawn(run_probes(
-            state.clone(),
-            kind.to_owned(),
-            id.to_owned(),
-            hints,
-            request.clone(),
-        ));
+        let (work, joined) = probes_for(&state, kind, id, hints, &request);
         // Stremio waits for the menu; give the probes time to fill it. If
         // they take longer they still finish, and the next open is served
         // from the cache.
@@ -379,7 +381,8 @@ async fn respond(
             }
         }
         if let Some((list, offered)) = menu_list(&state, headers, token, &request, label, now) {
-            event!("served", "subtitles served from=probes offered={offered}");
+            let from = if joined { "joined" } else { "probes" };
+            event!("served", "subtitles served from={from} offered={offered}");
             return list;
         }
     }
@@ -388,6 +391,50 @@ async fn respond(
         subtitles: Vec::new(),
     })
     .into_response()
+}
+
+/// The probes of `request`: the ones already running for it, or new ones.
+/// The flag says whether they were already running.
+fn probes_for(
+    state: &Arc<AppState>,
+    kind: &str,
+    id: &str,
+    hints: PlaybackHints,
+    request: &str,
+) -> (Shared<BoxFuture<'static, ()>>, bool) {
+    let Ok(mut probing) = state.probing.lock() else {
+        // Not shared, but still answered.
+        let work = run_probes(
+            state.clone(),
+            kind.to_owned(),
+            id.to_owned(),
+            hints,
+            request.to_owned(),
+        );
+        return (tokio::spawn(work).map(|_| ()).boxed().shared(), false);
+    };
+    if let Some(work) = probing.get(request) {
+        return (work.clone(), true);
+    }
+    let (owner, key) = (state.clone(), request.to_owned());
+    let work = run_probes(
+        state.clone(),
+        kind.to_owned(),
+        id.to_owned(),
+        hints,
+        request.to_owned(),
+    );
+    // The task forgets itself when done, waited for or not; its menu is in
+    // memory by then, so a later request finds that instead.
+    let task = tokio::spawn(async move {
+        work.await;
+        if let Ok(mut probing) = owner.probing.lock() {
+            probing.remove(&key);
+        }
+    });
+    let work = task.map(|_| ()).boxed().shared();
+    probing.insert(request.to_owned(), work.clone());
+    (work, false)
 }
 
 /// How long a request waits for the probes before answering without them.
@@ -1362,6 +1409,85 @@ mod tests {
             .map(|e| (e.start_ms, e.end_ms - e.start_ms))
             .collect();
         (mkv_head(false, &cues), srt_of(&fits), srt_of(&other))
+    }
+
+    /// `ProbeStream`'s list, once `go` lets each fetch through; counts them.
+    struct GatedStream {
+        go: tokio::sync::Semaphore,
+        fetched: Mutex<usize>,
+    }
+
+    impl StreamSource for GatedStream {
+        fn fetch<'a>(&'a self, kind: &'a str, id: &'a str) -> streams::FetchFuture<'a> {
+            *self.fetched.lock().unwrap() += 1;
+            Box::pin(async move {
+                self.go.acquire().await.unwrap().forget();
+                ProbeStream.fetch(kind, id).await
+            })
+        }
+
+        fn host(&self) -> &str {
+            "aio.test"
+        }
+    }
+
+    #[tokio::test]
+    async fn second_request_for_a_playback_waits_for_the_first_ones_probes() {
+        let (head, fits, _) = film();
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-joined-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let stream = Arc::new(GatedStream {
+            go: tokio::sync::Semaphore::new(0),
+            fetched: Mutex::new(0),
+        });
+        let mut srt = std::collections::HashMap::new();
+        srt.insert("tur", fits);
+        let source = Arc::new(LangSubtitles {
+            srt,
+            searched: Mutex::new(Vec::new()),
+        });
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(stream.clone())
+                .with_range_reader(Arc::new(ProbeRange(
+                    Arc::new(tokio::sync::Notify::new()),
+                    head,
+                )))
+                .with_subtitle_sources(vec![source.clone()], "tur".to_owned())
+                .with_dump_dir(dir.clone()),
+        );
+        // As Stremio asks: first without the video hash, then with it.
+        let ask = |uri: String| {
+            let app = app.clone();
+            tokio::spawn(async move { call(&app, uri).await })
+        };
+        let first = ask(format!(
+            "/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json"
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let second = ask(format!(
+            "/{TOKEN}/subtitles/movie/tt1/videoHash=abc&filename=A.mkv&videoSize=5.json"
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(*stream.fetched.lock().unwrap(), 1, "one probe running");
+        stream.go.add_permits(10);
+        let (first, second) = (first.await.unwrap(), second.await.unwrap());
+        assert_eq!(first.0, StatusCode::OK);
+        assert_eq!(first, second, "same menu");
+        let list: Value = serde_json::from_str(&first.1).unwrap();
+        assert_eq!(list["subtitles"][0]["lang"], "tur");
+        assert_eq!(*stream.fetched.lock().unwrap(), 1, "one stream lookup");
+        assert_eq!(*source.searched.lock().unwrap(), vec!["tur"], "one search");
+        let dumps = std::fs::read_dir(&dir).unwrap().count();
+        assert_eq!(dumps, 1, "one dump");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

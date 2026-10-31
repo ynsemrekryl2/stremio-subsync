@@ -1,6 +1,6 @@
 # İşler
 
-Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla)
+Durum: `[ ]` sırada · `[~]` sürüyor · `[x]` bitti (kanıtıyla) · `[-]` iptal (nedeniyle)
 
 Güncel kod ve iş listesi `main` üzerindedir. Her SS numarası tek bir işi
 tanımlar; yeni numara bu dosyadan ayrılır. Eski dal numaralarının eşlemesi:
@@ -94,8 +94,8 @@ kapsamında sürer.
 
 ## Bakım
 
-- [ ] **SS-043** Sıradaki bölümü önceden çevir: dizide bir bölüm çeviri yedeğine düştüğünde (SS-026) sıradaki bölümün dosyası bilinmediği için doğrudan hazırlanamaz; sıradaki bölümün altyazı listesi istendiğinde değil, oynayan bölüm bitmeye yakın bir ön hazırlık yolu ölçülmeli (Stremio'nun sıradaki bölüm için erken istek atıp atmadığı). Amaç: dizide yeniden seçim hiç gerekmesin — kanıt: ölçüm notu + gerçek bir dizide ikinci bölümün çevirisinin açılışta tam gelmesi
-- [ ] **SS-041** Aynı oynatma için eşzamanlı istekleri tek probe'da birleştir: Stremio bir oynatmada iki altyazı isteği gönderiyor (önce `videoHash` yok, sonra var); ikisi de K2/M3/hizalamayı baştan yapıyor ve dump'ı iki kez yazıyor (2026-10-30, iki ayrı oynatmada görüldü). İstek anahtarı aynıysa (`kind/id/filename/size`; hash anahtarda yok) ikinci istek süren işi bekler — kanıt: test (aynı anda iki istek → tek arama, tek dump, iki yanıt da aynı menü) + gerçek oynatmada logda tek `m3 probe`
+- [-] **SS-043** Sıradaki bölümü önceden çevir: dizide bir bölüm çeviri yedeğine düştüğünde (SS-026) sıradaki bölümün dosyası bilinmediği için doğrudan hazırlanamaz; sıradaki bölümün altyazı listesi istendiğinde değil, oynayan bölüm bitmeye yakın bir ön hazırlık yolu ölçülmeli (Stremio'nun sıradaki bölüm için erken istek atıp atmadığı). Amaç: dizide yeniden seçim hiç gerekmesin — kanıt: ölçüm notu + gerçek bir dizide ikinci bölümün çevirisinin açılışta tam gelmesi → **İptal (2026-10-31):** kullanıcı gerek görmedi; bölüm çevirisi ~1 dk sürüyor (SS-045/046) ve ilerleme panelde görünüyor (SS-047)
+- [~] **SS-041** Aynı oynatma için eşzamanlı istekleri tek probe'da birleştir: Stremio bir oynatmada iki altyazı isteği gönderiyor (önce `videoHash` yok, sonra var); ikisi de K2/M3/hizalamayı baştan yapıyor ve dump'ı iki kez yazıyor (2026-10-30, iki ayrı oynatmada görüldü). İstek anahtarı aynıysa (`kind/id/filename/size`; hash anahtarda yok) ikinci istek süren işi bekler — kanıt: test (aynı anda iki istek → tek arama, tek dump, iki yanıt da aynı menü) + gerçek oynatmada logda tek `m3 probe`
 
 - [x] **SS-035** Varsayılan port 7000 macOS AirPlay Alıcısı (ControlCenter, `*:7000`) ile çakışıyor: 2026-10-30'da `scripts/dev.sh` "Address already in use" ile kapandı; aynı gün sonraki denemede 7000'e bağlanabildi, yani çakışma aralıklı. Varsayılan `127.0.0.1:7001`'e taşındı (`main.rs`, `dev.sh`, README, Caddyfile, deploy notu); port doluysa sunucu `SUBSYNC_BIND` ile başka port seçmeyi söyler. Yerel `127.0.0.1:7000` kurulum linki Stremio'da yeniden kurulmalı (`scripts/dev.sh link`); Funnel linki etkilenmez — kanıt: 126 test + AirPlay Alıcısı açıkken `scripts/dev.sh` ilk denemede 7001'de açıldı; 7001 doluyken ikinci kopya yeni mesajla `exit=1` verdi
 

@@ -228,7 +228,7 @@ function track(ev) {
     const offered = (line.match(/offered=(\d+)/) || [])[1];
     if (from === "memory" || from === "disk") c.cached++;
     const label = { memory: "bellekten, dosya yeniden okunmadı", disk: "diskten, dosya yeniden okunmadı",
-      probes: "yeni", none: "boş" }[from] || from;
+      probes: "yeni", joined: "süren işe katıldı, dosya yeniden okunmadı", none: "boş" }[from] || from;
     add("cevap: " + label + ", " + offered + " girdi", offered > 0 ? "ok" : "warn");
   } else if (ev.area === "k2") {
     if (/NoHints/.test(line)) return add("dosya: ipucu yok", "bad");
