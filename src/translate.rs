@@ -19,12 +19,18 @@ use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
 
+use futures_util::stream::{self, StreamExt};
+
 use crate::srt::Cue;
 
 /// Lines per block, and lines a block shares with each neighbour as context
 /// only (Nen's ADR-0015 defaults).
 pub const BLOCK_SIZE: usize = 40;
 pub const OVERLAP: usize = 6;
+
+/// Blocks asked at once after the analysis (SS-045). One block takes ~11 s
+/// (median, SS-038), so a 60-block film drops from ~13 min to ~2–3 min.
+pub const PARALLEL_BLOCKS: usize = 6;
 
 /// At most this many repeated, capitalized terms go to the analysis.
 pub const TERM_LIMIT: usize = 32;
@@ -229,9 +235,11 @@ pub async fn translate(
     if !analysis.is_valid() {
         return Err(Failure::BadAnalysis);
     }
-    let mut done: Vec<Cue> = Vec::with_capacity(cues.len());
-    for block in &layout {
-        let request = BlockRequest {
+    // Collected first: a lazy iterator here keeps a borrowing closure in
+    // the stream's type, and the spawned run is then not `Send`.
+    let requests: Vec<BlockRequest> = layout
+        .iter()
+        .map(|block| BlockRequest {
             langs: langs.clone(),
             context: lines[block.context.clone()].to_vec(),
             output_ids: lines[block.output.clone()].iter().map(|l| l.id).collect(),
@@ -239,8 +247,20 @@ pub async fn translate(
             block: block.index + 1,
             blocks: layout.len(),
             mode: Mode::Initial,
+        })
+        .collect();
+    // Blocks only see source lines, so they can be asked at once; answers
+    // still arrive in block order. Returning early drops the stream and
+    // with it every request still in flight.
+    let mut answers = stream::iter(requests)
+        .map(|request| async move { translate_block(translator, &request).await })
+        .buffered(PARALLEL_BLOCKS);
+    let mut done: Vec<Cue> = Vec::with_capacity(cues.len());
+    for block in &layout {
+        let Some(texts) = answers.next().await else {
+            unreachable!("one answer per block");
         };
-        let texts = translate_block(translator, &request).await?;
+        let texts = texts?;
         done.extend(
             cues[block.output.clone()]
                 .iter()
@@ -1077,6 +1097,103 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(served, layout(80)[0].output.end);
+    }
+
+    /// Takes longer the earlier the block, so answers finish out of order;
+    /// fails `failing` for good, soon. Tracks how many calls are in flight.
+    #[derive(Default)]
+    struct Slow {
+        failing: Option<usize>,
+        in_flight: Mutex<usize>,
+        most_in_flight: Mutex<usize>,
+        started: Mutex<Vec<usize>>,
+        finished: Mutex<Vec<usize>>,
+    }
+
+    impl Translator for Slow {
+        fn analyze<'a>(&'a self, _: &'a AnalysisRequest) -> AnalyzeFuture<'a> {
+            Box::pin(async { Ok(analysis()) })
+        }
+
+        fn translate<'a>(&'a self, request: &'a BlockRequest) -> TranslateFuture<'a> {
+            Box::pin(async move {
+                self.started.lock().unwrap().push(request.block);
+                {
+                    let mut now = self.in_flight.lock().unwrap();
+                    *now += 1;
+                    let mut most = self.most_in_flight.lock().unwrap();
+                    *most = (*most).max(*now);
+                }
+                let fails = self.failing == Some(request.block);
+                let turns = if fails {
+                    2
+                } else {
+                    (request.blocks - request.block + 1) * 4
+                };
+                for _ in 0..turns {
+                    tokio::task::yield_now().await;
+                }
+                *self.in_flight.lock().unwrap() -= 1;
+                self.finished.lock().unwrap().push(request.block);
+                if fails {
+                    return Err(TranslateError::Permanent);
+                }
+                Ok(request
+                    .context
+                    .iter()
+                    .filter(|l| request.output_ids.contains(&l.id))
+                    .map(|l| line(l.id, &format!("tr {}", l.text)))
+                    .collect())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn blocks_are_asked_at_once_and_served_in_order() {
+        let source = cues(1_000);
+        let blocks = layout(source.len());
+        assert!(blocks.len() > 2 * PARALLEL_BLOCKS);
+        let slow = Slow::default();
+        let mut prefixes = Vec::new();
+        let out = translate(&slow, &source, &langs(), |done| prefixes.push(done.len()))
+            .await
+            .unwrap();
+
+        assert_eq!(*slow.most_in_flight.lock().unwrap(), PARALLEL_BLOCKS);
+        let finished = slow.finished.lock().unwrap().clone();
+        assert_eq!(finished.len(), blocks.len());
+        assert!(
+            finished.windows(2).any(|pair| pair[1] < pair[0]),
+            "later blocks finished first"
+        );
+        let ends: Vec<usize> = blocks.iter().map(|b| b.output.end).collect();
+        assert_eq!(prefixes, ends, "the served prefix still grows in order");
+        for (got, want) in out.iter().zip(&source) {
+            assert_eq!((got.start_ms, got.end_ms), (want.start_ms, want.end_ms));
+            assert_eq!(got.text, format!("tr {}", want.text));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_block_drops_the_requests_in_flight() {
+        let source = cues(1_000);
+        let slow = Slow {
+            failing: Some(1),
+            ..Slow::default()
+        };
+        let mut served = None;
+        let err = translate(&slow, &source, &langs(), |done| served = Some(done.len()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err, Failure::Translator(TranslateError::Permanent));
+        assert_eq!(served, None);
+        assert_eq!(slow.started.lock().unwrap().len(), PARALLEL_BLOCKS);
+        assert_eq!(
+            *slow.finished.lock().unwrap(),
+            vec![1],
+            "the rest were dropped"
+        );
     }
 
     #[test]
