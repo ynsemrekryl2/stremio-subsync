@@ -610,13 +610,17 @@ async fn run_probes(
     let now = menu::now_s();
     let (entries, keep_s, notice) = match build_menu(&state, kind, id, hints).await {
         Ok(Built::Found(entries)) => (entries, menu::KEEP_FOUND_S, None),
-        // The reason stays first; a subtitle in the wanted language may
-        // appear later, so the answer lasts only as long as the reason.
+        // A subtitle in the wanted language may appear later, so the answer
+        // lasts only as long as the reason. The reason is listed first,
+        // unless a translation is offered: that is no error (SS-050).
         Ok(Built::Missing(notice, fallback)) => {
-            let mut entries = vec![notice.entry()];
+            let mut entries = Vec::new();
             // The best English that fits is what gets translated (SS-026).
-            if let (Some(translations), Some(english)) = (&state.translations, fallback.first()) {
-                entries.push(translations.entry(&english.srt));
+            match (&state.translations, fallback.first()) {
+                (Some(translations), Some(english)) => {
+                    entries.push(translations.entry(&english.srt));
+                }
+                _ => entries.push(notice.entry()),
             }
             entries.extend(fallback);
             (entries, notice.keep_s(), Some(notice))
@@ -1937,8 +1941,9 @@ mod tests {
         let app = translated_app(&head, &fits, translator.clone(), &cache);
         let menu = menu_of(&app).await;
         let langs: Vec<&str> = menu.iter().map(|(l, _)| l.as_str()).collect();
-        assert_eq!(langs, vec![menu::NOTICE_LANG, "Türkçe çeviri", "eng"]);
-        let (english, translation) = (&menu[2].1, &menu[1].1);
+        // A translation on offer is no error: no notice beside it.
+        assert_eq!(langs, vec!["Türkçe çeviri", "eng"]);
+        let (english, translation) = (&menu[1].1, &menu[0].1);
         let english = srt::parse(&call(&app, english.clone()).await.1);
 
         // Nothing translated yet: the English, with a note on the first line.
@@ -1974,10 +1979,10 @@ mod tests {
         });
         let app = translated_app(&head, &fits, fresh.clone(), &cache);
         let menu = menu_of(&app).await;
-        assert_eq!(menu[1].0, "Türkçe çeviri");
+        assert_eq!(menu[0].0, "Türkçe çeviri");
         let again = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                let body = call(&app, menu[1].1.clone()).await.1;
+                let body = call(&app, menu[0].1.clone()).await.1;
                 if !body.contains("SubSync") {
                     break srt::parse(&body);
                 }
