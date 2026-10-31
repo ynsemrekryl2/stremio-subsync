@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use futures_util::FutureExt;
 use futures_util::future::{BoxFuture, Shared};
@@ -63,7 +63,15 @@ pub struct AppState {
     /// playback (without, then with the video hash); the second request
     /// waits for the first one's probes instead of starting its own (SS-041).
     probing: Mutex<HashMap<String, Shared<BoxFuture<'static, ()>>>>,
+    /// Starts the server again, for the dashboard's button (SS-059).
+    restart: Option<Restart>,
 }
+
+/// Starts the whole server again; it does not return when it works.
+pub type Restart = Arc<dyn Fn() + Send + Sync>;
+
+/// The answer to the dashboard goes out before the restart.
+const RESTART_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
 impl AppState {
     /// `token` is the secret path segment; it must be non-empty.
@@ -82,6 +90,7 @@ impl AppState {
             cache_dir: None,
             translations: None,
             probing: Mutex::new(HashMap::new()),
+            restart: None,
         })
     }
 
@@ -146,6 +155,12 @@ impl AppState {
         self
     }
 
+    /// Lets the dashboard restart the server with `restart`.
+    pub fn with_restart(mut self, restart: Restart) -> Self {
+        self.restart = Some(restart);
+        self
+    }
+
     fn authorized(&self, candidate: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
@@ -177,6 +192,8 @@ pub fn router(state: AppState) -> Router {
         .route(EVENTS_ROUTE, get(events_json))
         .route(TRANSLATIONS_ROUTE, get(translations_json))
         .route(SETTINGS_ROUTE, get(settings_json).post(change_settings))
+        .route("/{token}/cache/clear", post(clear_cache))
+        .route("/{token}/restart", post(restart))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -302,6 +319,91 @@ async fn change_settings(
         }
     };
     (status, Json(json!({ "refused": refused }))).into_response()
+}
+
+/// What the dashboard's cache button also clears.
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ClearChoice {
+    /// Finished translations too, which cost money to make again.
+    translations: bool,
+}
+
+/// Forgets answered menus in memory and on disk (SS-058), so the next open
+/// of any file probes again; finished translations only when asked. Counts
+/// only in the log.
+async fn clear_cache(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let choice = if body.is_empty() {
+        ClearChoice::default()
+    } else {
+        match serde_json::from_slice::<ClearChoice>(&body) {
+            Ok(choice) => choice,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "refused": "body" })))
+                    .into_response();
+            }
+        }
+    };
+    let menus = state.menus.lock().map_or(0, |mut menus| menus.clear());
+    let files = match state.cache_dir.clone() {
+        Some(dir) => tokio::task::spawn_blocking(move || menu::clear(&dir))
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|cleared| cleared),
+        None => Ok(0),
+    };
+    let translations = match &state.translations {
+        Some(translations) if choice.translations => Some(translations.clear().await),
+        _ => None,
+    };
+    let failed = files
+        .as_ref()
+        .err()
+        .or(translations.as_ref().and_then(|t| t.as_ref().err()))
+        .map(std::io::Error::kind);
+    let files = files.unwrap_or(0);
+    let (jobs, translation_files) = translations.and_then(Result::ok).unwrap_or_default();
+    event!(
+        "cache",
+        "cache cleared menus={menus} files={files} translations={translation_files} jobs={jobs} error={failed:?}"
+    );
+    let status = if failed.is_some() {
+        StatusCode::INTERNAL_SERVER_ERROR
+    } else {
+        StatusCode::OK
+    };
+    let answer = json!({
+        "menus": menus,
+        "files": files,
+        "translations": translation_files,
+        "jobs": jobs,
+        "failed": failed.is_some(),
+    });
+    (status, Json(answer)).into_response()
+}
+
+/// Restarts the server shortly after answering (SS-059). Everything in
+/// memory goes: events, running translations, menus not on disk.
+async fn restart(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(restart) = state.restart.clone() else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    event!("start", "restart asked from the dashboard");
+    tokio::spawn(async move {
+        tokio::time::sleep(RESTART_DELAY).await;
+        restart();
+    });
+    (StatusCode::ACCEPTED, Json(json!({ "restarting": true }))).into_response()
 }
 
 /// One line per request with the route template, never the path itself:
@@ -2355,6 +2457,91 @@ mod tests {
         .await;
         assert_eq!(body, r#"{"subtitles":[]}"#);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn dashboard_clears_answered_menus_but_keeps_translations() {
+        let (head, fits, _) = film();
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-addon-clear-{}-{}",
+            std::process::id(),
+            crate::events::now_ms()
+        ));
+        let request = "movie/tt3/D.mkv/0";
+        menu::save(&dir, request, &offered(), menu::now_s(), menu::KEEP_FOUND_S).unwrap();
+        menu::save(
+            &dir.join("translations"),
+            "t",
+            &offered(),
+            0,
+            menu::KEEP_FOUND_S,
+        )
+        .unwrap();
+        std::fs::write(dir.join("settings.json"), "{}").unwrap();
+        let translator = Arc::new(GatedTranslator {
+            go: tokio::sync::Semaphore::new(0),
+            analyzed: Mutex::new(0),
+        });
+        let app = translated_app(&head, &fits, translator, &dir);
+        let list = format!("/{TOKEN}/subtitles/movie/tt3/filename=D.mkv.json");
+        let (_, body) = call(&app, list.clone()).await;
+        assert!(body.contains("/sub/"), "served from disk: {body}");
+        let uri = format!("/{TOKEN}/cache/clear");
+
+        assert_eq!(
+            post(&app, "/wrong-token-123/cache/clear".to_owned(), "")
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            post(&app, uri.clone(), "nope").await.0,
+            StatusCode::BAD_REQUEST
+        );
+        let before = crate::events::since(0).next;
+        let (status, answer) = post(&app, uri.clone(), "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["menus"], 1);
+        assert_eq!(answer["files"], 1);
+        assert!(dir.join("settings.json").exists(), "settings kept");
+        assert!(menu::load(&dir, request, menu::now_s()).is_none());
+        assert!(
+            menu::load(&dir.join("translations"), "t", 1).is_some(),
+            "kept"
+        );
+        assert!(crate::events::since(before).events.iter().any(|e| {
+            e.line
+                .starts_with("cache cleared menus=1 files=1 translations=0")
+        }));
+
+        let (status, answer) = post(&app, uri, r#"{"translations":true}"#).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["translations"], 1);
+        assert!(menu::load(&dir.join("translations"), "t", 1).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dashboard_restarts_the_server_after_answering() {
+        let restarts = Arc::new(Mutex::new(0));
+        let counted = restarts.clone();
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_restart(Arc::new(move || *counted.lock().unwrap() += 1)),
+        );
+        let wrong = "/wrong-token-123/restart".to_owned();
+        assert_eq!(post(&app, wrong, "").await.0, StatusCode::NOT_FOUND);
+        let (status, answer) = post(&app, format!("/{TOKEN}/restart"), "").await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(answer["restarting"], true);
+        assert_eq!(*restarts.lock().unwrap(), 0, "answered first");
+        tokio::time::sleep(RESTART_DELAY * 3).await;
+        assert_eq!(*restarts.lock().unwrap(), 1);
+
+        let (status, answer) = post(&self::app(), format!("/{TOKEN}/restart"), "").await;
+        assert_eq!(status, StatusCode::CONFLICT, "no way to restart");
+        assert_eq!(answer["refused"], "off");
     }
 
     #[test]

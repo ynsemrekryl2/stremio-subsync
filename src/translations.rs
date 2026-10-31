@@ -15,7 +15,8 @@
 //! model and its reasoning effort (SS-048); jobs started before keep theirs.
 //! With cleanup on (SS-057, also a dashboard choice), the English loses
 //! adverts and marks for the hard of hearing before it is translated, and
-//! the job shows how many were taken out.
+//! the job shows how many were taken out. Each job gets its own translator,
+//! so the money it spent is its own (SS-060).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -40,6 +41,10 @@ pub const KEEP_DONE_S: u64 = menu::KEEP_FOUND_S;
 const PARALLEL: usize = 2;
 /// A failed job is not started again sooner than this.
 const RETRY_AFTER_S: u64 = 10 * 60;
+/// Finished translations live in this folder of the cache, apart from the
+/// menus, so clearing those keeps them (SS-058). Older ones sit beside the
+/// menus and are still read from there.
+const DIR: &str = "translations";
 
 const SAME: Fix = Fix {
     num: 1,
@@ -78,6 +83,8 @@ struct Job {
     failure: Option<String>,
     /// What cleanup took out; `None` when it was off.
     cleaned: Option<Cleaned>,
+    /// US dollars spent so far, when the translator knows; `None` from disk.
+    cost_usd: Option<f64>,
 }
 
 /// One job as the dashboard sees it: counts and times, no text.
@@ -95,6 +102,7 @@ pub struct JobView {
     pub from_disk: bool,
     pub failure: Option<String>,
     pub cleaned: Option<Cleaned>,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,12 +118,6 @@ pub struct Status {
 /// Builds the translator for a choice; `None` when it cannot.
 pub type Build = Box<dyn Fn(&TranslateSettings) -> Option<Arc<dyn Translator>> + Send + Sync>;
 
-/// The translator new jobs get, and the choice it was built from.
-struct Engine {
-    translator: Arc<dyn Translator>,
-    settings: TranslateSettings,
-}
-
 /// Why a new choice was not taken; the old one stays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refused {
@@ -127,8 +129,10 @@ pub enum Refused {
 }
 
 pub struct Translations {
+    /// Makes each job its own translator.
     build: Build,
-    engine: RwLock<Engine>,
+    /// The choice new jobs use.
+    chosen: RwLock<TranslateSettings>,
     /// ISO 639-2 target language.
     lang: String,
     cache_dir: Option<PathBuf>,
@@ -146,13 +150,10 @@ impl Translations {
         lang: String,
         cache_dir: Option<PathBuf>,
     ) -> Option<Self> {
-        let translator = build(&settings)?;
+        build(&settings)?;
         Some(Self {
             build,
-            engine: RwLock::new(Engine {
-                translator,
-                settings,
-            }),
+            chosen: RwLock::new(settings),
             lang,
             cache_dir,
             settings_file: None,
@@ -169,10 +170,9 @@ impl Translations {
 
     /// The choice new jobs use.
     pub fn settings(&self) -> TranslateSettings {
-        self.engine
+        self.chosen
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .settings
             .clone()
     }
 
@@ -180,7 +180,7 @@ impl Translations {
     /// keeps it. Running jobs finish with the translator they started with.
     pub async fn change(&self, settings: TranslateSettings) -> Result<(), Refused> {
         settings.check().map_err(Refused::Invalid)?;
-        let translator = (self.build)(&settings).ok_or(Refused::Unbuilt)?;
+        (self.build)(&settings).ok_or(Refused::Unbuilt)?;
         if let Some(path) = self.settings_file.clone() {
             let saved = settings.clone();
             tokio::task::spawn_blocking(move || settings::save(&path, &saved))
@@ -193,29 +193,11 @@ impl Translations {
             "translation settings changed model={}",
             settings.key_label()
         );
-        let mut engine = self
-            .engine
+        *self
+            .chosen
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *engine = Engine {
-            translator,
-            settings,
-        };
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = settings;
         Ok(())
-    }
-
-    /// The translator new jobs get, the model label in their key and
-    /// whether they clean the English first.
-    fn engine(&self) -> (Arc<dyn Translator>, String, bool) {
-        let engine = self
-            .engine
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (
-            engine.translator.clone(),
-            engine.settings.key_label(),
-            engine.settings.clean,
-        )
     }
 
     /// The menu entry offering the translation of `english` (an SRT).
@@ -245,10 +227,11 @@ impl Translations {
     /// names the played file on the dashboard; a job started without one
     /// takes the first one given.
     pub fn ensure(self: &Arc<Self>, english: &str, label: Option<&str>) {
-        let (translator, model, cleanup) = self.engine();
+        let chosen = self.settings();
+        let (model, cleanup) = (chosen.key_label(), chosen.clean);
         let key = self.key(english, &model);
         let now = now_ms();
-        let cues = {
+        let (cues, translator) = {
             let Ok(mut jobs) = self.jobs.lock() else {
                 return;
             };
@@ -262,6 +245,11 @@ impl Translations {
                     return;
                 }
             }
+            // Checked when chosen, so this fails only if the build does.
+            let Some(translator) = (self.build)(&chosen) else {
+                event!("translate", "translation not started: translator unbuilt");
+                return;
+            };
             let (cues, cleaned) = source(english, cleanup);
             jobs.insert(
                 key,
@@ -279,6 +267,7 @@ impl Translations {
                     from_disk: false,
                     failure: None,
                     cleaned,
+                    cost_usd: None,
                 },
             );
             if let Some(c) = cleaned {
@@ -291,7 +280,7 @@ impl Translations {
                     c.emptied
                 );
             }
-            cues
+            (cues, translator)
         };
         let this = self.clone();
         tokio::spawn(async move { this.run(key, cues, translator).await });
@@ -300,7 +289,7 @@ impl Translations {
     /// The file to serve for the translation of `english` now, if a job
     /// for it exists.
     pub fn current(&self, english: &str) -> Option<String> {
-        let key = self.key(english, &self.engine().1);
+        let key = self.key(english, &self.settings().key_label());
         let jobs = self.jobs.lock().ok()?;
         jobs.get(&key).map(|job| job.srt.clone())
     }
@@ -330,6 +319,7 @@ impl Translations {
                         from_disk: job.from_disk,
                         failure: job.failure.clone(),
                         cleaned: job.cleaned,
+                        cost_usd: job.cost_usd,
                     })
                     .collect()
             })
@@ -388,9 +378,11 @@ impl Translations {
         let mut reached = partial(&cues, &[]);
         let result = translate::translate(&*translator, &cues, &langs, |done| {
             reached = partial(&cues, done);
+            let spent = translator.cost_usd();
             self.update(key, |job| {
                 job.srt = reached.clone();
                 job.lines_done = done.len();
+                job.cost_usd = spent;
             });
             event!(
                 "translate",
@@ -401,6 +393,8 @@ impl Translations {
         })
         .await;
         let elapsed_s = started.elapsed().as_secs();
+        let spent = translator.cost_usd();
+        let cost = spent.map_or("-".to_owned(), |usd| format!("{usd:.4}"));
         match result {
             Ok(all) => {
                 let done = srt::render(&all, SAME);
@@ -409,10 +403,11 @@ impl Translations {
                     job.srt = done.clone();
                     job.lines_done = all.len();
                     job.finished_ms = Some(now_ms());
+                    job.cost_usd = spent;
                 });
                 event!(
                     "translate",
-                    "translation done lines={} s={elapsed_s}",
+                    "translation done lines={} s={elapsed_s} cost_usd={cost}",
                     all.len()
                 );
                 self.save(key, done).await;
@@ -420,22 +415,24 @@ impl Translations {
             Err(failure) => {
                 event!(
                     "translate",
-                    "translation failed failure={failure:?} s={elapsed_s}"
+                    "translation failed failure={failure:?} s={elapsed_s} cost_usd={cost}"
                 );
                 self.update(key, |job| {
                     job.phase = Phase::Failed;
                     job.srt = reached;
                     job.finished_ms = Some(now_ms());
                     job.failure = Some(format!("{failure:?}"));
+                    job.cost_usd = spent;
                 });
             }
         }
     }
 
     async fn load(&self, key: u64) -> Option<String> {
-        let dir = self.cache_dir.clone()?;
+        let root = self.cache_dir.clone()?;
         let found = tokio::task::spawn_blocking(move || {
-            menu::load(&dir, &Self::cache_key(key), menu::now_s())
+            let (request, now) = (Self::cache_key(key), menu::now_s());
+            menu::load(&root.join(DIR), &request, now).or_else(|| menu::load(&root, &request, now))
         })
         .await
         .ok()??;
@@ -443,7 +440,7 @@ impl Translations {
     }
 
     async fn save(&self, key: u64, srt: String) {
-        let Some(dir) = self.cache_dir.clone() else {
+        let Some(dir) = self.cache_dir.as_ref().map(|root| root.join(DIR)) else {
             return;
         };
         let entry = MenuEntry {
@@ -468,6 +465,24 @@ impl Translations {
                 err.kind()
             );
         }
+    }
+
+    /// Forgets finished and failed jobs and deletes the finished
+    /// translations on disk (SS-058); running and queued jobs go on. How
+    /// many jobs and files went.
+    pub async fn clear(&self) -> std::io::Result<(usize, usize)> {
+        let jobs = self.jobs.lock().map_or(0, |mut jobs| {
+            let before = jobs.len();
+            jobs.retain(|_, job| matches!(job.phase, Phase::Queued | Phase::Running));
+            before - jobs.len()
+        });
+        let Some(dir) = self.cache_dir.as_ref().map(|root| root.join(DIR)) else {
+            return Ok((jobs, 0));
+        };
+        let files = tokio::task::spawn_blocking(move || menu::clear(&dir))
+            .await
+            .map_err(std::io::Error::other)??;
+        Ok((jobs, files))
     }
 }
 
@@ -807,6 +822,106 @@ mod tests {
             jobs.iter()
                 .any(|job| job.model == "m/x" && job.cleaned.is_none())
         );
+    }
+
+    /// [`Named`] that charges 0.001 $ an analysis and 0.01 $ a block.
+    struct Priced(Named, Mutex<f64>);
+
+    impl Translator for Priced {
+        fn analyze<'a>(
+            &'a self,
+            request: &'a translate::AnalysisRequest,
+        ) -> translate::AnalyzeFuture<'a> {
+            *self.1.lock().unwrap() += 0.001;
+            self.0.analyze(request)
+        }
+
+        fn translate<'a>(
+            &'a self,
+            request: &'a translate::BlockRequest,
+        ) -> translate::TranslateFuture<'a> {
+            *self.1.lock().unwrap() += 0.01;
+            self.0.translate(request)
+        }
+
+        fn cost_usd(&self) -> Option<f64> {
+            Some(*self.1.lock().unwrap())
+        }
+    }
+
+    fn priced(cache_dir: Option<PathBuf>) -> Arc<Translations> {
+        Arc::new(
+            Translations::new(
+                Box::new(|s: &TranslateSettings| {
+                    Some(Arc::new(Priced(Named(s.model.clone()), Mutex::new(0.0)))
+                        as Arc<dyn Translator>)
+                }),
+                test_settings("m/x"),
+                "tur".to_owned(),
+                cache_dir,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn each_job_costs_what_it_spent_and_a_kept_one_nothing() {
+        let root = std::env::temp_dir().join(format!(
+            "subsync-translations-cost-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let translations = priced(Some(root.clone()));
+        let a = srt::render(&[cue(0, "a 0"), cue(1, "a 1")], SAME);
+        let b = srt::render(&[cue(0, "b 0"), cue(1, "b 1")], SAME);
+        // Side by side: a shared translator would bill one for both.
+        translations.ensure(&a, Some("A.mkv"));
+        translations.ensure(&b, Some("B.mkv"));
+        finished(&translations, &a).await;
+        finished(&translations, &b).await;
+        // Saved just after it is served whole.
+        let saved = || std::fs::read_dir(root.join(DIR)).map_or(0, Iterator::count);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while saved() < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for job in translations.status().jobs {
+            let spent = job.cost_usd.expect("known");
+            assert!((spent - 0.011).abs() < 1e-9, "{:?} {spent}", job.label);
+        }
+        assert_eq!(menu::clear(&root).unwrap(), 0, "not beside the menus");
+
+        // A restart serves them from disk, for nothing; one saved before
+        // the folder existed is found too.
+        let old = translations.key(&b, &test_settings("m/x").key_label());
+        std::fs::remove_dir_all(root.join(DIR)).unwrap();
+        menu::save(
+            &root,
+            &Translations::cache_key(old),
+            &[MenuEntry {
+                lang: "tur".to_owned(),
+                srt: srt::render(&[cue(0, "old 0"), cue(1, "old 1")], SAME),
+                translated: false,
+            }],
+            menu::now_s(),
+            KEEP_DONE_S,
+        )
+        .unwrap();
+        let restarted = priced(Some(root.clone()));
+        restarted.ensure(&b, Some("B.mkv"));
+        assert!(finished(&restarted, &b).await.contains("old 1"));
+        let job = &restarted.status().jobs[0];
+        assert!(job.from_disk && job.cost_usd.is_none());
+
+        // Clearing forgets finished jobs and their files.
+        translations.save(old, "x".to_owned()).await;
+        assert_eq!(translations.clear().await.unwrap(), (2, 1));
+        assert!(translations.status().jobs.is_empty());
+        assert!(translations.current(&a).is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

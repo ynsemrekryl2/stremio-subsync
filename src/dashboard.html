@@ -98,6 +98,7 @@ dl.steps dd.bad::before { color: var(--bad); } dl.steps dd.info::before { color:
   transition: width .6s ease; }
 .bar.done > i { background: var(--ok); } .bar.failed > i { background: var(--bad); }
 .job .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+.job .meta .cost { color: var(--text); font-weight: 600; }
 .req .bar { height: 6px; }
 .empty { color: var(--muted); padding: 6px 0; }
 .form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
@@ -116,6 +117,18 @@ dl.steps dd.bad::before { color: var(--bad); } dl.steps dd.info::before { color:
 .hint { font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
 .hint:empty { display: none; }
 .hint.bad { color: var(--bad); } .hint.ok { color: var(--ok); }
+.actions-list { display: grid; gap: 10px; }
+.action { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px;
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.action > div { flex: 1 1 320px; display: grid; gap: 4px; min-width: 0; }
+.action small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.action label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.action label input { margin: 0; }
+.action label[hidden] { display: none; }
+.action button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.action button.danger { color: var(--bad); border-color: var(--bad); }
+.action button:disabled { opacity: .45; cursor: default; }
 details.box > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 details.box > summary small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
 details.box[open] > summary { margin-bottom: 10px; }
@@ -232,6 +245,34 @@ dl.terms dd { margin: 0; color: var(--muted); }
     <p class="hint" id="settings-note"></p>
   </section>
 
+  <section id="maintenance">
+    <div class="sec-head"><h2>Bakım</h2></div>
+    <div class="actions-list">
+      <div class="action">
+        <div>
+          <b>Cache'i temizle</b>
+          <small>Sorgulanmış filmlerin ve indirilmiş altyazıların saklanan cevaplarını siler: bulunan altyazılar,
+            «uygun yok» ve hata cevapları. Her dosya bir sonraki açılışta baştan işlenir (dosya okunur, kaynaklarda
+            yeniden aranır). Şu an oynayan videoda altyazıyı yeniden seçmek için videoyu kapatıp açın.
+            Ayarlara dokunulmaz.</small>
+          <label id="clear-translations-row" hidden><input type="checkbox" id="clear-translations">
+            Biten çevirileri de sil <small>(aynı İngilizceyi yeniden çevirmek yeniden para tutar)</small></label>
+        </div>
+        <button type="button" id="clear-cache">Cache'i temizle</button>
+      </div>
+      <div class="action">
+        <div>
+          <b>Eklentiyi yeniden başlat</b>
+          <small>Sunucu kendini yeniden çalıştırır; birkaç saniye sürer. Bellekteki her şey sıfırlanır: bu paneldeki
+            olaylar ve süren çeviriler (yarıda kalan çeviri, altyazı yeniden istenince baştan başlar). Diskteki cache
+            ve ayarlar kalır. Panel, sunucu dönünce kendini yeniler.</small>
+        </div>
+        <button type="button" id="restart" class="danger">Yeniden başlat</button>
+      </div>
+    </div>
+    <p class="hint" id="maint-note"></p>
+  </section>
+
   <details class="box" id="glossary">
     <summary>Terimler <small>panelde geçen kelimeler ne demek</small></summary>
     <dl class="terms">
@@ -260,7 +301,10 @@ dl.terms dd { margin: 0; color: var(--muted); }
       <dd>Hedef dilde uyan altyazı yoksa, dosyaya oturan İngilizce aday menüye konur ve hedef dile çevrilir.</dd>
       <dt>Cache</dt>
       <dd>Sonuçlar saklanır: bulunan altyazı 30 gün, "uygun yok" cevabı 1 gün, geçici hatalar 60 saniye.
-        Bu sürede aynı dosya yeniden okunmaz.</dd>
+        Bu sürede aynı dosya yeniden okunmaz. «Bakım» bölümündeki tuşla hepsi silinebilir.</dd>
+      <dt>Maliyet</dt>
+      <dd>Bir çevirinin OpenRouter'a ödediği tutar, sağlayıcının kendi bildirdiği değer (ABD doları).
+        Diskten gelen çeviri yeniden ödenmez.</dd>
     </dl>
   </details>
 
@@ -734,6 +778,18 @@ function jobTimes(job, now) {
   return out;
 }
 
+/** US dollars, four decimals in Turkish style: a translation costs cents. */
+function usd(n) {
+  return n.toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 }) + " $";
+}
+/** What a job cost (SS-060): so far while it runs, in all once it ends. */
+function cost(job) {
+  if (job.from_disk) return "maliyet: yok (diskten)";
+  if (job.cost_usd == null) return "";
+  const head = { done: "maliyet: ", failed: "düşene kadar harcanan: " }[job.phase] || "şu ana kadar: ";
+  return head + usd(job.cost_usd);
+}
+
 function renderJobs() {
   const t = state.translations;
   const box = $("jobs");
@@ -747,7 +803,11 @@ function renderJobs() {
   $("jobs-section").hidden = false;
   $("translator").textContent = "Çeviri: " + (LANG_NAMES[t.lang] || t.lang) + ", " + model(t.model);
   const live = t.jobs.filter((j) => j.phase === "running" || j.phase === "queued").length;
-  $("jobs-note").textContent = live ? live + " iş sürüyor · aynı anda en çok " + t.parallel : "";
+  const paid = t.jobs.filter((j) => !j.from_disk && j.cost_usd != null);
+  const total = paid.reduce((sum, j) => sum + j.cost_usd, 0);
+  $("jobs-note").textContent = [live ? live + " iş sürüyor · aynı anda en çok " + t.parallel : "",
+    paid.length ? "listedekilerin toplamı " + usd(total) : ""].filter(Boolean).join(" · ");
+  $("clear-translations-row").hidden = false;
   if (!t.jobs.length) {
     box.replaceChildren(el("div", "empty", "Henüz çeviri yok. Bir istek İngilizce yedeğe düşünce ilerlemesi burada görünür."));
     return;
@@ -765,6 +825,8 @@ function renderJobs() {
       ...jobTimes(job, now).map((text) => el("span", "", text)));
     if (job.model !== t.model) meta.append(el("span", "", "model: " + model(job.model)));
     if (job.cleaned) meta.append(el("span", "", cleaned(job.cleaned)));
+    const spent = cost(job);
+    if (spent) meta.append(el("span", job.phase === "done" ? "cost" : "", spent));
     if (job.failure) meta.append(el("span", "", "neden: " + (FAILURES[job.failure] || job.failure)));
     card.append(top, bar(job), meta);
     return card;
@@ -844,7 +906,8 @@ function renderRequests() {
     if (job) {
       const chips = el("div", "chips");
       chips.append(el("span", "chip " + (job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "info"),
-        "çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" + (job.phase === "done" ? 100 : percent(job))));
+        "çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" + (job.phase === "done" ? 100 : percent(job)) +
+        (job.phase === "done" && !job.from_disk && job.cost_usd != null ? " · " + usd(job.cost_usd) : "")));
       card.append(chips, bar(job));
     }
     return card;
@@ -1023,6 +1086,60 @@ $("settings-form").onsubmit = async (e) => {
     settingsChanged();
   }
 };
+
+/** Clears answered menus, and finished translations if ticked (SS-058). */
+$("clear-cache").onclick = async () => {
+  const translations = $("clear-translations").checked;
+  if (!confirm("Saklanan altyazı cevapları silinsin mi?" + (translations ? " Biten çeviriler de silinecek." : ""))) return;
+  const note = $("maint-note");
+  $("clear-cache").disabled = true;
+  try {
+    const res = await fetch("cache/clear", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ translations }) });
+    const a = await res.json().catch(() => null);
+    if (!res.ok || !a) throw new Error(a && a.failed ? "diskte bir dosya silinemedi" : "sunucu " + res.status);
+    note.className = "hint ok";
+    note.textContent = "Temizlendi (" + time(Date.now()) + "): bellekte " + a.menus + " cevap, diskte " + a.files + " dosya" +
+      (translations ? ", " + a.translations + " çeviri dosyası" : "") + " silindi.";
+  } catch (err) {
+    note.className = "hint bad";
+    note.textContent = "Temizlenemedi: " + err.message;
+  } finally {
+    $("clear-cache").disabled = false;
+  }
+};
+/** Restarts the server, then reloads once a new start answers (SS-059). */
+$("restart").onclick = async () => {
+  if (!confirm("Eklenti yeniden başlatılsın mı? Süren çeviriler yarıda kalır.")) return;
+  const note = $("maint-note");
+  $("restart").disabled = true;
+  try {
+    const res = await fetch("restart", { method: "POST" });
+    if (res.status !== 202) throw new Error("sunucu " + res.status);
+    note.className = "hint muted";
+    note.textContent = "Yeniden başlatılıyor…";
+    waitForRestart(state.started, Date.now());
+  } catch (err) {
+    note.className = "hint bad";
+    note.textContent = "Yeniden başlatılamadı: " + err.message;
+    $("restart").disabled = false;
+  }
+};
+async function waitForRestart(before, since) {
+  try {
+    const res = await fetch("events.json?after=" + Number.MAX_SAFE_INTEGER, { cache: "no-store" });
+    if (res.ok && (await res.json()).started_ms !== before) { location.reload(); return; }
+  } catch (err) {
+    // Down while it restarts.
+  }
+  if (Date.now() - since > 60000) {
+    $("maint-note").className = "hint bad";
+    $("maint-note").textContent = "Sunucu bir dakikada geri dönmedi; sunucunun log'una bakın.";
+    $("restart").disabled = false;
+    return;
+  }
+  setTimeout(() => waitForRestart(before, since), 1000);
+}
 
 $("pause").onclick = () => {
   state.paused = !state.paused;

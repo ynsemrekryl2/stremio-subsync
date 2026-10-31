@@ -302,6 +302,10 @@ impl Translator for OpenRouter {
                 .collect())
         })
     }
+
+    fn cost_usd(&self) -> Option<f64> {
+        Some(self.usage().cost_usd)
+    }
 }
 
 pub fn valid_model(model: &str) -> bool {
@@ -944,6 +948,8 @@ mod tests {
         );
         assert_eq!(usage.reasoning_tokens, 400);
         assert!((usage.cost_usd - 0.0042).abs() < 1e-9);
+        let spent = Translator::cost_usd(&client).unwrap();
+        assert!((spent - 0.0042).abs() < 1e-9, "a job reads its cost here");
     }
 
     #[tokio::test]

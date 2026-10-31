@@ -300,6 +300,7 @@ async fn main() {
         }
         None => event!("start", "translation: off"),
     }
+    state = state.with_restart(Arc::new(restart));
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .unwrap_or_else(|err| {
@@ -320,4 +321,20 @@ async fn main() {
         })
         .await
         .expect("server error");
+}
+
+/// Runs this program again in this process, with the same arguments and
+/// environment (SS-059): under systemd it stays the same service, under
+/// `cargo run` the same terminal. Sockets close on exec, so the port is
+/// free for the new start. If exec fails, exits with an error; systemd
+/// then starts it again (`Restart=on-failure`).
+fn restart() {
+    use std::os::unix::process::CommandExt;
+    let mut args = std::env::args_os();
+    let err = match args.next() {
+        Some(program) => std::process::Command::new(program).args(args).exec(),
+        None => std::io::Error::from(std::io::ErrorKind::NotFound),
+    };
+    event!("start", "restart failed error={:?}", err.kind());
+    std::process::exit(1);
 }

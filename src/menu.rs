@@ -289,6 +289,16 @@ impl MenuCache {
     pub fn get(&self, entry: u64, n: usize) -> Option<&MenuEntry> {
         self.entries.get(&entry)?.entries.get(n.checked_sub(1)?)
     }
+
+    /// Forgets every menu (SS-058); how many went. Entry numbers go on
+    /// from where they were, so an old link never names a new menu.
+    pub fn clear(&mut self) -> usize {
+        let cleared = self.entries.len();
+        self.by_request.clear();
+        self.entries.clear();
+        self.order.clear();
+        cleared
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -333,6 +343,33 @@ pub fn save(
     let temp = path.with_extension("tmp");
     std::fs::write(&temp, body)?;
     std::fs::rename(temp, path)
+}
+
+/// Deletes the saved menus right under `dir` (SS-058): only files named
+/// like [`save`] names them, so nothing else there is touched, nor any
+/// folder. How many went; a missing `dir` has none.
+pub fn clear(dir: &Path) -> std::io::Result<usize> {
+    let listing = match std::fs::read_dir(dir) {
+        Ok(listing) => listing,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err),
+    };
+    let mut cleared = 0;
+    for item in listing {
+        let item = item?;
+        let name = item.file_name();
+        let saved = name
+            .to_str()
+            .and_then(|n| n.strip_suffix(".json"))
+            .is_some_and(|stem| {
+                stem.len() == 16 && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            });
+        if saved && item.file_type()?.is_file() {
+            std::fs::remove_file(item.path())?;
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
 }
 
 pub fn now_s() -> u64 {
@@ -557,6 +594,44 @@ mod tests {
         save(&dir, request, &none, 6_000, KEEP_NONE_S).unwrap();
         assert_eq!(load(&dir, request, 6_001), Some((6_000, KEEP_NONE_S, none)));
         assert_eq!(load(&dir, request, 6_000 + KEEP_NONE_S), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clearing_forgets_menus_but_not_their_numbers_or_other_files() {
+        let mut cache = MenuCache::default();
+        let first = cache.insert("a".to_owned(), vec![entry("x")], 0, KEEP_FOUND_S);
+        cache.insert("b".to_owned(), vec![entry("y")], 0, KEEP_FOUND_S);
+        assert_eq!(cache.clear(), 2);
+        assert!(cache.find("a", 1).is_none() && cache.get(first, 1).is_none());
+        let next = cache.insert("a".to_owned(), vec![entry("z")], 0, KEEP_FOUND_S);
+        assert!(next > first + 1, "an old link never names a new menu");
+
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-menu-clear-{}-{}",
+            std::process::id(),
+            now_s()
+        ));
+        assert_eq!(clear(&dir).unwrap(), 0, "no folder yet");
+        save(&dir, "a", &[entry("x")], 0, KEEP_FOUND_S).unwrap();
+        save(&dir, "b", &[entry("y")], 0, KEEP_FOUND_S).unwrap();
+        save(
+            &dir.join("translations"),
+            "c",
+            &[entry("z")],
+            0,
+            KEEP_FOUND_S,
+        )
+        .unwrap();
+        std::fs::write(dir.join("settings.json"), "{}").unwrap();
+        std::fs::write(dir.join("0123456789abcdef.txt"), "").unwrap();
+        assert_eq!(clear(&dir).unwrap(), 2);
+        assert_eq!(load(&dir, "a", 1), None);
+        assert!(
+            load(&dir.join("translations"), "c", 1).is_some(),
+            "folder kept"
+        );
+        assert!(dir.join("settings.json").exists() && dir.join("0123456789abcdef.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

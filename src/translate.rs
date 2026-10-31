@@ -190,6 +190,11 @@ pub trait Translator: Send + Sync {
     fn analyze<'a>(&'a self, request: &'a AnalysisRequest) -> AnalyzeFuture<'a>;
     /// Translated lines for `request.output_ids`, by id.
     fn translate<'a>(&'a self, request: &'a BlockRequest) -> TranslateFuture<'a>;
+    /// US dollars spent through this translator so far, when it knows
+    /// (SS-060).
+    fn cost_usd(&self) -> Option<f64> {
+        None
+    }
 }
 
 /// Why a document was not translated. Carries no text.
