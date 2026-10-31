@@ -110,6 +110,9 @@ dl.steps dd.bad::before { color: var(--bad); } dl.steps dd.info::before { color:
 .form .actions button { width: auto; cursor: pointer; }
 .form button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
 .form button:disabled { opacity: .45; cursor: default; }
+.form label.check { grid-column: 1 / -1; }
+.form label.check > span { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.form label.check input { width: auto; margin: 0; }
 .hint { font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
 .hint:empty { display: none; }
 .hint.bad { color: var(--bad); } .hint.ok { color: var(--ok); }
@@ -212,6 +215,13 @@ dl.terms dd { margin: 0; color: var(--muted); }
         <span>Düşünme düzeyi</span>
         <select id="reasoning"></select>
         <small>Yükseldikçe çeviri yavaşlar ve pahalanır. Ölçümde «düşük» ile daha yüksek düzeyler arasında fark görülmedi.</small>
+      </label>
+      <label class="check">
+        <span><input type="checkbox" id="clean"> İngilizceyi çeviriden önce temizle</span>
+        <small>Reklam ve imza satırları (altyazı sitesi adı ya da adresi, «Subtitles by…») atılır; işitme engelliler
+          işaretleri (<code>[door creaks]</code>, <code>(sighs)</code>, <code>JOHN:</code>, yalnız ♪ olan satırlar) ve
+          <code>&lt;font&gt;</code> gibi biçim etiketleri kırpılır, <code>&lt;i&gt;</code> kalır. Açık ve kapalı ayrı
+          çeviri sayılır; diskteki eski çeviri silinmez.</small>
       </label>
       <div class="actions">
         <button type="submit" class="primary" id="save" disabled>Kaydet</button>
@@ -329,9 +339,16 @@ function seconds(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? s + " sn" : Math.floor(s / 60) + " dk " + (s % 60) + " sn";
 }
-/** A model label as people read it: "a/b reasoning=low" → "a/b, düşünme: düşük". */
+/** A model label as people read it: "a/b reasoning=low clean=1" → "a/b, düşünme: düşük, temizlikli". */
 function model(label) {
-  return String(label).replace(/ reasoning=(\w+)/, (_, e) => ", düşünme: " + (EFFORTS[e] || e));
+  return String(label).replace(/ reasoning=(\w+)/, (_, e) => ", düşünme: " + (EFFORTS[e] || e))
+    .replace(/ clean=\d+/, ", temizlikli");
+}
+/** What cleanup took out of a job's English, nonzero counts only. */
+function cleaned(c) {
+  const parts = [[c.ads, "reklam"], [c.marks, "işaret"], [c.tags, "etiket"], [c.emptied, "boşalan satır"]]
+    .filter(([n]) => n).map(([n, what]) => num(n) + " " + what);
+  return "temizlik: " + (parts.length ? parts.join(", ") : "bir şey çıkmadı");
 }
 /** A signed shift for people: "+2,5 sn", "−134 sn", "0,1 sn". */
 function shift(ms) {
@@ -747,6 +764,7 @@ function renderJobs() {
       el("span", "", job.blocks + " blokta"),
       ...jobTimes(job, now).map((text) => el("span", "", text)));
     if (job.model !== t.model) meta.append(el("span", "", "model: " + model(job.model)));
+    if (job.cleaned) meta.append(el("span", "", cleaned(job.cleaned)));
     if (job.failure) meta.append(el("span", "", "neden: " + (FAILURES[job.failure] || job.failure)));
     card.append(top, bar(job), meta);
     return card;
@@ -932,14 +950,16 @@ async function loadSettings() {
 function fillSettings(choice) {
   $("model").value = choice.model;
   $("reasoning").value = choice.reasoning;
+  $("clean").checked = choice.clean !== false;
   settingsChanged();
 }
 function chosen() {
-  return { model: $("model").value.trim(), reasoning: $("reasoning").value };
+  return { model: $("model").value.trim(), reasoning: $("reasoning").value, clean: $("clean").checked };
 }
 function settingsChanged() {
   const now = state.settings && state.settings.current, c = chosen();
-  $("save").disabled = !now || !c.model || (c.model === now.model && c.reasoning === now.reasoning);
+  $("save").disabled = !now || !c.model ||
+    (c.model === now.model && c.reasoning === now.reasoning && c.clean === now.clean);
   modelInfo();
 }
 /** OpenRouter's public model list, straight from the browser (no key): the
@@ -982,6 +1002,7 @@ function modelInfo() {
 }
 $("model").oninput = settingsChanged;
 $("reasoning").onchange = settingsChanged;
+$("clean").onchange = settingsChanged;
 $("reset").onclick = () => { if (state.settings) fillSettings(state.settings.defaults); };
 $("settings-form").onsubmit = async (e) => {
   e.preventDefault();

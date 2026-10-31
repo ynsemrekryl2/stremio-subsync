@@ -608,7 +608,7 @@ pub fn balance(source: &[Cue], target: &[Cue]) -> Option<Balance> {
 }
 
 /// Text without `<...>` and `{...}` markup.
-fn visible(text: &str) -> String {
+pub(crate) fn visible(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut closing = None;
     for ch in text.chars() {

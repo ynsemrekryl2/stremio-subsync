@@ -1,6 +1,7 @@
 mod addon;
 mod align;
 mod blocks;
+mod clean;
 mod dump;
 mod events;
 mod extra;

@@ -1934,6 +1934,7 @@ mod tests {
                         TranslateSettings {
                             model: "test/model".to_owned(),
                             reasoning: settings::MODEL_DEFAULT.to_owned(),
+                            clean: false,
                         },
                         "tur".to_owned(),
                         Some(cache.to_owned()),
@@ -2154,7 +2155,7 @@ mod tests {
         let view: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(
             view["current"],
-            json!({ "model": "test/model", "reasoning": "default" })
+            json!({ "model": "test/model", "reasoning": "default", "clean": false })
         );
         assert_eq!(view["defaults"]["model"], crate::openrouter::DEFAULT_MODEL);
         assert!(view["efforts"].as_array().unwrap().contains(&json!("low")));
@@ -2181,7 +2182,14 @@ mod tests {
         assert_eq!(answer["current"]["model"], "vendor/other");
         let (_, body) = call(&app, format!("/{TOKEN}/translations.json")).await;
         let status_now: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(status_now["model"], "vendor/other reasoning=high");
+        assert_eq!(
+            status_now["model"],
+            format!(
+                "vendor/other reasoning=high clean={}",
+                crate::clean::VERSION
+            ),
+            "cleanup on when the dashboard does not say"
+        );
         let saved = std::fs::read_to_string(cache.join("settings.json")).unwrap();
         assert!(saved.contains("vendor/other"), "kept for a restart");
 

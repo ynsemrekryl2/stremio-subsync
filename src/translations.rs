@@ -13,6 +13,9 @@
 //! in served files and in the cache. The dashboard sees each job's progress
 //! and the played file's name (SS-047), never the text. It can change the
 //! model and its reasoning effort (SS-048); jobs started before keep theirs.
+//! With cleanup on (SS-057, also a dashboard choice), the English loses
+//! adverts and marks for the hard of hearing before it is translated, and
+//! the job shows how many were taken out.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,6 +26,7 @@ use serde::Serialize;
 use tokio::sync::Semaphore;
 
 use crate::align::Fix;
+use crate::clean::{self, Cleaned};
 use crate::events::{event, now_ms};
 use crate::menu::{self, MenuEntry};
 use crate::settings::{self, Invalid, TranslateSettings};
@@ -72,6 +76,8 @@ struct Job {
     /// A finished translation found in the cache.
     from_disk: bool,
     failure: Option<String>,
+    /// What cleanup took out; `None` when it was off.
+    cleaned: Option<Cleaned>,
 }
 
 /// One job as the dashboard sees it: counts and times, no text.
@@ -88,6 +94,7 @@ pub struct JobView {
     pub finished_ms: Option<u64>,
     pub from_disk: bool,
     pub failure: Option<String>,
+    pub cleaned: Option<Cleaned>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,13 +204,18 @@ impl Translations {
         Ok(())
     }
 
-    /// The translator new jobs get and the model label in their key.
-    fn engine(&self) -> (Arc<dyn Translator>, String) {
+    /// The translator new jobs get, the model label in their key and
+    /// whether they clean the English first.
+    fn engine(&self) -> (Arc<dyn Translator>, String, bool) {
         let engine = self
             .engine
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (engine.translator.clone(), engine.settings.key_label())
+        (
+            engine.translator.clone(),
+            engine.settings.key_label(),
+            engine.settings.clean,
+        )
     }
 
     /// The menu entry offering the translation of `english` (an SRT).
@@ -233,10 +245,10 @@ impl Translations {
     /// names the played file on the dashboard; a job started without one
     /// takes the first one given.
     pub fn ensure(self: &Arc<Self>, english: &str, label: Option<&str>) {
-        let (translator, model) = self.engine();
+        let (translator, model, cleanup) = self.engine();
         let key = self.key(english, &model);
         let now = now_ms();
-        {
+        let cues = {
             let Ok(mut jobs) = self.jobs.lock() else {
                 return;
             };
@@ -250,7 +262,7 @@ impl Translations {
                     return;
                 }
             }
-            let cues = srt::parse(english);
+            let (cues, cleaned) = source(english, cleanup);
             jobs.insert(
                 key,
                 Job {
@@ -266,12 +278,23 @@ impl Translations {
                     finished_ms: None,
                     from_disk: false,
                     failure: None,
+                    cleaned,
                 },
             );
-        }
+            if let Some(c) = cleaned {
+                event!(
+                    "translate",
+                    "translation source cleaned ads={} marks={} tags={} emptied={}",
+                    c.ads,
+                    c.marks,
+                    c.tags,
+                    c.emptied
+                );
+            }
+            cues
+        };
         let this = self.clone();
-        let english = english.to_owned();
-        tokio::spawn(async move { this.run(key, english, translator).await });
+        tokio::spawn(async move { this.run(key, cues, translator).await });
     }
 
     /// The file to serve for the translation of `english` now, if a job
@@ -306,6 +329,7 @@ impl Translations {
                         finished_ms: job.finished_ms,
                         from_disk: job.from_disk,
                         failure: job.failure.clone(),
+                        cleaned: job.cleaned,
                     })
                     .collect()
             })
@@ -330,7 +354,7 @@ impl Translations {
         }
     }
 
-    async fn run(self: Arc<Self>, key: u64, english: String, translator: Arc<dyn Translator>) {
+    async fn run(self: Arc<Self>, key: u64, cues: Vec<Cue>, translator: Arc<dyn Translator>) {
         if let Some(done) = self.load(key).await {
             event!("translate", "translation served from=disk");
             let lines = srt::parse(&done).len();
@@ -350,7 +374,6 @@ impl Translations {
             job.phase = Phase::Running;
             job.started_ms = Some(now_ms());
         });
-        let cues = srt::parse(&english);
         let langs = Langs {
             source: "eng".to_owned(),
             target: self.lang.clone(),
@@ -448,6 +471,17 @@ impl Translations {
     }
 }
 
+/// The cues to translate from `english`, cleaned when `cleanup` is on.
+fn source(english: &str, cleanup: bool) -> (Vec<Cue>, Option<Cleaned>) {
+    let cues = srt::parse(english);
+    if cleanup {
+        let (cues, cleaned) = clean::clean(&cues);
+        (cues, Some(cleaned))
+    } else {
+        (cues, None)
+    }
+}
+
 /// The menu name of a translation into `lang`.
 fn label(lang: &str) -> String {
     let name = match lang {
@@ -523,6 +557,7 @@ mod tests {
         TranslateSettings {
             model: model.to_owned(),
             reasoning: settings::MODEL_DEFAULT.to_owned(),
+            clean: false,
         }
     }
 
@@ -672,6 +707,7 @@ mod tests {
                 TranslateSettings {
                     model: "new/model".to_owned(),
                     reasoning: "huge".to_owned(),
+                    clean: false,
                 },
                 Refused::Invalid(Invalid::Reasoning),
             ),
@@ -686,6 +722,7 @@ mod tests {
         let chosen = TranslateSettings {
             model: "new/model".to_owned(),
             reasoning: "high".to_owned(),
+            clean: false,
         };
         translations.change(chosen.clone()).await.unwrap();
         assert_eq!(settings::load(&file), Ok(Some(chosen.clone())));
@@ -710,6 +747,66 @@ mod tests {
         assert!(models.contains(&"old/model".to_owned()));
         assert!(models.contains(&"new/model reasoning=high".to_owned()));
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn cleanup_takes_adverts_and_marks_out_before_translating() {
+        let translations = Arc::new(
+            Translations::new(
+                Box::new(|s: &TranslateSettings| {
+                    Some(Arc::new(Named(s.model.clone())) as Arc<dyn Translator>)
+                }),
+                TranslateSettings {
+                    clean: true,
+                    ..test_settings("m/x")
+                },
+                "tur".to_owned(),
+                None,
+            )
+            .unwrap(),
+        );
+        let english = srt::render(
+            &[
+                cue(0, "Subtitles by someone"),
+                cue(1, "[door creaks]"),
+                cue(2, "JOHN: (sighs) Hello."),
+                cue(3, "Goodbye."),
+            ],
+            SAME,
+        );
+        translations.ensure(&english, None);
+        let served = srt::parse(&finished(&translations, &english).await);
+        let texts: Vec<&str> = served.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, vec!["m/x Hello.", "m/x Goodbye."]);
+        assert_eq!(served[0].start_ms, cue(2, "").start_ms, "source times");
+        let job = &translations.status().jobs[0];
+        assert_eq!(job.lines, 2);
+        assert_eq!(
+            job.cleaned,
+            Some(Cleaned {
+                ads: 1,
+                marks: 3,
+                tags: 0,
+                emptied: 1,
+            })
+        );
+        assert_eq!(job.model, format!("m/x clean={}", clean::VERSION));
+
+        // Off: the same English is another translation, line for line.
+        let off = TranslateSettings {
+            clean: false,
+            ..test_settings("m/x")
+        };
+        translations.change(off).await.unwrap();
+        translations.ensure(&english, None);
+        let served = srt::parse(&finished(&translations, &english).await);
+        assert_eq!(served.len(), 4);
+        assert_eq!(served[1].text, "m/x [door creaks]");
+        let jobs = translations.status().jobs;
+        assert!(
+            jobs.iter()
+                .any(|job| job.model == "m/x" && job.cleaned.is_none())
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! Translation settings the dashboard changes (SS-048): the model and its
-//! reasoning effort. A saved choice is kept in a small JSON file so restarts
+//! Translation settings the dashboard changes (SS-048): the model, its
+//! reasoning effort and whether the English is cleaned first (SS-057). A saved choice is kept in a small JSON file so restarts
 //! and deploys keep it, and it wins over `SUBSYNC_TRANSLATE_MODEL` and
 //! `SUBSYNC_TRANSLATE_REASONING`. The file holds no key: the OpenRouter key
 //! and the target language stay in the environment.
@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::clean;
 use crate::openrouter::{self, DEFAULT_MODEL, DEFAULT_REASONING, REASONING_EFFORTS};
 
 /// What `reasoning` holds for "send no effort, the model's own default".
@@ -19,6 +20,14 @@ pub struct TranslateSettings {
     pub model: String,
     /// One of [`REASONING_EFFORTS`], or [`MODEL_DEFAULT`].
     pub reasoning: String,
+    /// Clean the English before translating ([`clean`]); on when a file
+    /// saved before SS-057 does not say.
+    #[serde(default = "on")]
+    pub clean: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 /// Why a choice was refused. Safe to log and to show.
@@ -33,6 +42,7 @@ impl TranslateSettings {
         Self {
             model: DEFAULT_MODEL.to_owned(),
             reasoning: DEFAULT_REASONING.to_owned(),
+            clean: true,
         }
     }
 
@@ -42,6 +52,7 @@ impl TranslateSettings {
         Self {
             model: model.unwrap_or(defaults.model),
             reasoning: reasoning.unwrap_or(defaults.reasoning),
+            ..defaults
         }
     }
 
@@ -61,13 +72,18 @@ impl TranslateSettings {
         openrouter::reasoning_setting(Some(&self.reasoning))
     }
 
-    /// Part of the translation key: another effort is another translation;
-    /// `default` keeps the key translations had before SS-046.
+    /// Part of the translation key: another effort or cleanup is another
+    /// translation; `default` keeps the key translations had before SS-046,
+    /// and cleanup off the one before SS-057.
     pub fn key_label(&self) -> String {
-        match self.effort() {
+        let mut label = match self.effort() {
             Some(effort) => format!("{} reasoning={effort}", self.model),
             None => self.model.clone(),
+        };
+        if self.clean {
+            label.push_str(&format!(" clean={}", clean::VERSION));
         }
+        label
     }
 }
 
@@ -111,6 +127,7 @@ mod tests {
         TranslateSettings {
             model: model.to_owned(),
             reasoning: reasoning.to_owned(),
+            clean: true,
         }
     }
 
@@ -161,9 +178,21 @@ mod tests {
 
     #[test]
     fn key_label_matches_the_one_before_the_dashboard() {
-        assert_eq!(settings("a/b", "low").key_label(), "a/b reasoning=low");
-        assert_eq!(settings("a/b", "default").key_label(), "a/b");
+        let unclean = |model, reasoning| TranslateSettings {
+            clean: false,
+            ..settings(model, reasoning)
+        };
+        assert_eq!(unclean("a/b", "low").key_label(), "a/b reasoning=low");
+        assert_eq!(unclean("a/b", "default").key_label(), "a/b");
         assert_eq!(settings("a/b", "default").effort(), None);
+        assert_eq!(
+            settings("a/b", "low").key_label(),
+            format!("a/b reasoning=low clean={}", clean::VERSION)
+        );
+        assert_eq!(
+            settings("a/b", "default").key_label(),
+            format!("a/b clean={}", clean::VERSION)
+        );
     }
 
     #[test]
@@ -177,6 +206,16 @@ mod tests {
             !path.with_extension("json.tmp").exists(),
             "no temp file left"
         );
+
+        // A file saved before SS-057 has no `clean`: cleanup is on.
+        std::fs::write(&path, r#"{"model":"a/b","reasoning":"low"}"#).unwrap();
+        assert_eq!(load(&path), Ok(Some(settings("a/b", "low"))));
+        let off = TranslateSettings {
+            clean: false,
+            ..settings("a/b", "low")
+        };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), Ok(Some(off)));
 
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(load(&path), Err(LoadError::Malformed));
