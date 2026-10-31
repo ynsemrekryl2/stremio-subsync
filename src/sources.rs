@@ -1048,6 +1048,8 @@ pub struct SourcesProbe {
     /// Best few ranking scores, highest first.
     pub top_scores: Vec<i32>,
     pub downloads: Vec<Result<SrtStats, SourceError>>,
+    /// Downloads left out because an earlier one had the same lines (SS-055).
+    pub duplicates: usize,
 }
 
 /// One M3 probe: the report and the cues of each download (`None` where it
@@ -1071,12 +1073,44 @@ impl Probe {
     /// Downloads the next few ranked candidates and appends them to the
     /// report and the cues (SS-040).
     pub async fn download_more(&mut self) {
-        let take = self.rest.len().min(MORE_DOWNLOADS);
-        let batch: Vec<_> = self.rest.drain(..take).collect();
-        let (downloads, cues) =
-            download(&self.sources, &self.query, self.filename.as_deref(), &batch).await;
-        self.report.downloads.extend(downloads);
-        self.cues.extend(cues);
+        self.take(MORE_DOWNLOADS).await;
+    }
+
+    /// Downloads ranked candidates in order until `want` new ones are read
+    /// or failed. One with the same lines (times and text) as an earlier
+    /// download is left out and the next one taken in its place: sources
+    /// share files, and a copy would only take a slot (SS-055). Fetches at
+    /// most twice `want`, so a run of copies cannot spend the quota.
+    async fn take(&mut self, want: usize) {
+        let (mut taken, mut fetched) = (0, 0);
+        while taken < want && fetched < 2 * want && !self.rest.is_empty() {
+            let (i, candidate) = self.rest.remove(0);
+            fetched += 1;
+            let bytes = match self.sources[i].download(&self.query, &candidate).await {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    self.report.downloads.push(Err(err));
+                    self.cues.push(None);
+                    taken += 1;
+                    continue;
+                }
+            };
+            let cues = srt::parse(&srt::decode(&bytes, &self.query.lang));
+            if !cues.is_empty() && self.cues.iter().flatten().any(|seen| *seen == cues) {
+                self.report.duplicates += 1;
+                continue;
+            }
+            self.report.downloads.push(Ok(SrtStats {
+                source: candidate.source,
+                score: rank::score(&candidate.release, self.filename.as_deref()),
+                bytes: bytes.len(),
+                cues: cues.len(),
+                first_ms: cues.first().map(|c| c.start_ms),
+                last_end_ms: cues.iter().map(|c| c.end_ms).max(),
+            }));
+            self.cues.push(Some(cues));
+            taken += 1;
+        }
     }
 }
 
@@ -1101,58 +1135,23 @@ pub async fn probe(
         .take(5)
         .map(|(_, c)| rank::score(&c.release, filename))
         .collect();
-    let rest = found.split_off(found.len().min(PROBE_DOWNLOADS));
-    let (downloads, cues) = download(sources, query, filename, &found).await;
-    Probe {
+    let mut probe = Probe {
         report: SourcesProbe {
-            elapsed_ms: started.elapsed().as_millis(),
+            elapsed_ms: 0,
             searches,
             top_scores,
-            downloads,
+            downloads: Vec::new(),
+            duplicates: 0,
         },
-        cues,
+        cues: Vec::new(),
         sources: sources.to_vec(),
         query: query.clone(),
         filename: filename.map(str::to_owned),
-        rest,
-    }
-}
-
-/// Downloads `batch` in order: each one's shape and cues.
-async fn download(
-    sources: &[Arc<dyn SubtitleSource>],
-    query: &Query,
-    filename: Option<&str>,
-    batch: &[(usize, Candidate)],
-) -> (Vec<Result<SrtStats, SourceError>>, Vec<Option<Vec<Cue>>>) {
-    let mut downloads = Vec::new();
-    let mut read = Vec::new();
-    for (i, candidate) in batch {
-        let result = sources[*i].download(query, candidate).await.map(|bytes| {
-            let cues = srt::parse(&srt::decode(&bytes, &query.lang));
-            let stats = SrtStats {
-                source: candidate.source,
-                score: rank::score(&candidate.release, filename),
-                bytes: bytes.len(),
-                cues: cues.len(),
-                first_ms: cues.first().map(|c| c.start_ms),
-                last_end_ms: cues.iter().map(|c| c.end_ms).max(),
-            };
-            (stats, cues)
-        });
-        let result = match result {
-            Ok((stats, cues)) => {
-                read.push(Some(cues));
-                Ok(stats)
-            }
-            Err(err) => {
-                read.push(None);
-                Err(err)
-            }
-        };
-        downloads.push(result);
-    }
-    (downloads, read)
+        rest: found,
+    };
+    probe.take(PROBE_DOWNLOADS).await;
+    probe.report.elapsed_ms = started.elapsed().as_millis();
+    probe
 }
 
 #[cfg(test)]
@@ -1512,8 +1511,21 @@ mod tests {
             Box::pin(async move {
                 match candidate.link.as_str() {
                     "bad" => Err(SourceError::Status(404)),
-                    _ => Ok(b"1\n00:00:01,000 --> 00:00:02,000\nA\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n"
-                        .to_vec()),
+                    // The same lines as "dup", stored another way.
+                    "copy" => Ok(b"\xEF\xBB\xBF1\r\n00:00:01,000 --> 00:00:02,000\r\nA\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,500\r\nB\r\n".to_vec()),
+                    other if other.starts_with("new") => {
+                        Ok(format!("1\n00:00:01,000 --> 00:00:02,000\n{other}\n").into_bytes())
+                    }
+                    "dup" => Ok(
+                        b"1\n00:00:01,000 --> 00:00:02,000\nA\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n"
+                            .to_vec(),
+                    ),
+                    // Each other candidate its own text, the same times.
+                    _ => Ok(format!(
+                        "1\n00:00:01,000 --> 00:00:02,000\n{}\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n",
+                        candidate.release
+                    )
+                    .into_bytes()),
                 }
             })
         }
@@ -1545,6 +1557,53 @@ mod tests {
         assert!(!probe.has_more());
         probe.download_more().await;
         assert_eq!(probe.report.downloads.len(), 8, "nothing left to take");
+    }
+
+    #[tokio::test]
+    async fn a_copy_of_an_earlier_download_gives_its_slot_to_the_next() {
+        let file = "Movie.2020.1080p.BluRay.x264-GRP.mkv";
+        let ranked = |links: &[&str]| -> Vec<Candidate> {
+            links
+                .iter()
+                .enumerate()
+                .map(|(i, link)| {
+                    let release = format!("Movie.2020.r{}", "x".repeat(links.len() - i));
+                    candidate(SourceKind::Wyzie, &release, link)
+                })
+                .collect()
+        };
+        let source = |found| -> Vec<Arc<dyn SubtitleSource>> {
+            vec![Arc::new(FakeSource {
+                kind: SourceKind::Wyzie,
+                found: Ok(found),
+            })]
+        };
+        let lines = |probe: &Probe| -> Vec<String> {
+            probe
+                .cues
+                .iter()
+                .map(|c| c.as_ref().map_or("-".into(), |c| c[0].text.clone()))
+                .collect()
+        };
+
+        // Second and fourth are copies of the first; a failure still counts.
+        let sources = source(ranked(&[
+            "dup", "copy", "bad", "dup", "new1", "new2", "new3",
+        ]));
+        let mut first = probe(&sources, &movie(), Some(file)).await;
+        assert_eq!(lines(&first), vec!["A", "-", "new1"]);
+        assert_eq!(first.report.duplicates, 2);
+        assert_eq!(first.report.downloads.len(), first.cues.len());
+        first.download_more().await;
+        assert_eq!(lines(&first), vec!["A", "-", "new1", "new2", "new3"]);
+        assert!(!first.has_more());
+
+        // A run of copies stops after twice the slots, keeping the rest.
+        let sources = source(ranked(&["dup", "dup", "dup", "dup", "dup", "dup", "new1"]));
+        let probe = probe(&sources, &movie(), Some(file)).await;
+        assert_eq!(lines(&probe), vec!["A"]);
+        assert_eq!(probe.report.duplicates, 5);
+        assert!(probe.has_more(), "the last one is left for later");
     }
 
     #[tokio::test]
@@ -1598,7 +1657,10 @@ mod tests {
         assert_eq!(outcome.downloads[1], Err(SourceError::Status(404)));
         assert!(outcome.top_scores[2] < 0, "CAM release ranks last");
         let counts: Vec<Option<usize>> = times.iter().map(|t| t.as_ref().map(Vec::len)).collect();
-        assert_eq!(times[0].as_ref().unwrap()[0].text, "A");
+        assert_eq!(
+            times[0].as_ref().unwrap()[0].text,
+            "Movie.2020.1080p.BluRay.x264-GRP"
+        );
         assert_eq!(counts, vec![Some(2), None, Some(2)]);
     }
 }

@@ -217,7 +217,8 @@ dl.terms dd { margin: 0; color: var(--muted); }
         onun zamanları cetvel olarak kullanılır.</dd>
       <dt>Aday</dt>
       <dd>OpenSubtitles, SubDL, AltyaziDB, SubSource ya da Wyzie'de bulunan, hedef dildeki altyazı. Dosya adına en çok benzeyen 3'ü indirilir;
-        hiçbiri uymazsa sıradaki 3'ü de denenir.</dd>
+        hiçbiri uymazsa sıradaki 3'ü de denenir. Önceki bir indirmeyle aynı satırları taşıyan kopya sayılmaz,
+        yerine sıradaki indirilir.</dd>
       <dt>Hizalama, kabul</dt>
       <dd>Adayın satırları cetvele kaydırılarak (gerekirse 25↔24 fps düzeltmesiyle) oturtulur. Başta, ortada
         ve sonda aynı kaydırma tutarsa aday kabul edilir ve menüye konur.</dd>
@@ -388,8 +389,10 @@ function candidates(line) {
   const parts = searches.map(([, src, n, err, code]) => SOURCES[src] + " " +
     (n !== undefined ? n : (err === "Status" ? "HTTP " + code : SOURCE_ERRORS[err] || err)));
   const failed = searches.length && searches.every((m) => m[2] === undefined);
+  const copies = Number((line.match(/duplicates: (\d+)/) || [])[1] || 0);
   return { found, read, failed, text: (failed ? "kaynaklara ulaşılamadı" : found + " bulundu") +
-    (parts.length ? " (" + parts.join(" · ") + ")" : "") + (read ? ", " + read + " indirildi" : "") };
+    (parts.length ? " (" + parts.join(" · ") + ")" : "") + (read ? ", " + read + " indirildi" : "") +
+    (copies ? ", " + copies + " kopya atlandı" : "") };
 }
 
 /** One `m4` trial: candidate index, accepted, fix and why not. */
@@ -503,7 +506,9 @@ function track(ev) {
   } else if (stage === "m3more") {
     // None of the first downloads fitted; the next ranked ones (SS-040).
     const read = (line.match(/Ok\(SrtStats/g) || []).length;
-    if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi";
+    const copies = Number((line.match(/duplicates=(\d+)/) || [])[1] || 0);
+    if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi" +
+      (copies ? " (" + copies + " kopya atlandı)" : "");
   } else if (stage === "m3fb") {
     if (req) req.inSpare = true;
     const found = candidates(line);

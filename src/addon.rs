@@ -873,12 +873,13 @@ async fn align_candidates(
     }
     let mut entries = align_round(probe, rulers.clone(), lang.clone(), None, 0).await?;
     if entries.is_empty() && probe.has_more() {
-        let tried = probe.cues.len();
+        let (tried, copies) = (probe.cues.len(), probe.report.duplicates);
         probe.download_more().await;
         event!(
             "m3",
-            "m3 more downloads={:?}",
-            &probe.report.downloads[tried..]
+            "m3 more downloads={:?} duplicates={}",
+            &probe.report.downloads[tried..],
+            probe.report.duplicates - copies
         );
         entries = align_round(probe, rulers.clone(), lang, None, tried).await?;
     }
@@ -1520,7 +1521,11 @@ mod tests {
                 .unwrap()
                 .push(candidate.release.clone());
             let i: usize = candidate.release[1..].parse().unwrap();
-            let bytes = self.files[i].clone().into_bytes();
+            // Each file its own text, or later ones would be left out as
+            // copies of the first (SS-055); timings stay as given.
+            let bytes = self.files[i]
+                .replacen("\n\n", &format!(" r{i}\n\n"), 1)
+                .into_bytes();
             Box::pin(async { Ok(bytes) })
         }
     }
