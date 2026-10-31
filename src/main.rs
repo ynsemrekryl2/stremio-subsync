@@ -232,16 +232,18 @@ async fn main() {
                 );
                 std::process::exit(2);
             };
-            let reasoning = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
-            let Some(client) = client.with_reasoning(reasoning.as_deref()) else {
+            let var = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
+            let reasoning = openrouter::reasoning_setting(var.as_deref());
+            let Some(client) = client.with_reasoning(reasoning) else {
                 eprintln!(
-                    "SUBSYNC_TRANSLATE_REASONING must be one of {}",
+                    "SUBSYNC_TRANSLATE_REASONING must be default or one of {}",
                     openrouter::REASONING_EFFORTS.join(", ")
                 );
                 std::process::exit(2);
             };
-            // Another effort is another translation; unset keeps the old key.
-            let model = match &reasoning {
+            // Another effort is another translation; `default` keeps the
+            // key translations had before SS-046.
+            let model = match reasoning {
                 Some(effort) => format!("{model} reasoning={effort}"),
                 None => model,
             };

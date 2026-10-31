@@ -34,10 +34,25 @@ pub const ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "openai/gpt-6-luna";
 
 /// Reasoning efforts OpenRouter takes (`reasoning.effort`); which ones a
-/// model accepts is its own. Unset, the model's default applies (GPT-6
-/// Luna: `medium`). `SUBSYNC_TRANSLATE_REASONING` picks one (SS-046).
+/// model accepts is its own. `SUBSYNC_TRANSLATE_REASONING` picks one (SS-046).
 pub const REASONING_EFFORTS: [&str; 7] =
     ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+/// Used when `SUBSYNC_TRANSLATE_REASONING` is unset. On GPT-6 Luna, `low`
+/// translated a film 1.7× faster and ~25% cheaper than its own default
+/// `medium`, and a blind read found no difference (SS-046).
+pub const DEFAULT_REASONING: &str = "low";
+
+/// The effort to send for `SUBSYNC_TRANSLATE_REASONING`: unset is
+/// [`DEFAULT_REASONING`], `default` sends none (the model's own default,
+/// for a model without reasoning), anything else is checked by
+/// [`OpenRouter::with_reasoning`].
+pub fn reasoning_setting(var: Option<&str>) -> Option<&str> {
+    match var {
+        None => Some(DEFAULT_REASONING),
+        Some("default") => None,
+        Some(effort) => Some(effort),
+    }
+}
 
 /// Bumped by hand when the prompt text or the data sent and received change.
 pub const PROMPT_VERSION: u32 = 2;
@@ -644,10 +659,11 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
         .ok_or("OPENROUTER_API_KEY is not set")?;
     let model =
         std::env::var("SUBSYNC_TRANSLATE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned());
-    let reasoning = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
+    let var = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
+    let reasoning = reasoning_setting(var.as_deref());
     let client = OpenRouter::new(key.trim().to_owned(), &model)
         .ok_or("bad model id")?
-        .with_reasoning(reasoning.as_deref())
+        .with_reasoning(reasoning)
         .ok_or("bad reasoning effort")?;
     let bytes = std::fs::read(srt).map_err(|err| format!("read: {:?}", err.kind()))?;
     let cues = crate::srt::parse(&crate::srt::decode(&bytes, "eng"));
@@ -658,7 +674,7 @@ pub async fn check(srt: &std::path::Path, out: Option<&std::path::Path>) -> Resu
     let blocks = crate::translate::layout(cues.len()).len();
     println!(
         "model={model} reasoning={} lines={} blocks={blocks} target={}",
-        reasoning.as_deref().unwrap_or("default"),
+        reasoning.unwrap_or("default"),
         cues.len(),
         langs.target
     );
@@ -950,6 +966,14 @@ mod tests {
         for bad in ["", "LOW", "fast", "low "] {
             assert!(client().with_reasoning(Some(bad)).is_none(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn unset_reasoning_is_low_and_default_is_the_models_own() {
+        assert_eq!(reasoning_setting(None), Some("low"));
+        assert_eq!(reasoning_setting(Some("default")), None);
+        assert_eq!(reasoning_setting(Some("none")), Some("none"));
+        assert!(REASONING_EFFORTS.contains(&DEFAULT_REASONING));
     }
 
     #[tokio::test]

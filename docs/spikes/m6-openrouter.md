@@ -90,6 +90,8 @@ token'ı o zaman ayrıca sayılmıyordu).
 - Kalite: üç çıktıdan rastgele 40 satır körleme yan yana konup kullanıcıya
   okutuluyor (sayfa yerel; metin depoya ve log'a girmez). Varsayılan bu
   okumayla seçilir.
+- **Okuma sonucu:** kullanıcı üç sütun arasında kalite farkı görmedi.
+  Varsayılan `low` oldu (`openrouter::DEFAULT_REASONING`).
 
 ## Gemini 3.8 Flash ile karşılaştırma (yarıda bırakıldı)
 
