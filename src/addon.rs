@@ -3,6 +3,7 @@
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{MatchedPath, Path, Query as UrlQuery, Request, State},
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
@@ -27,10 +28,11 @@ use crate::mp4::Container;
 use crate::pgs;
 use crate::range::RangeReader;
 use crate::ruler::Event;
+use crate::settings::{self, TranslateSettings};
 use crate::sources::{self, Query, SubtitleSource};
 use crate::srt;
 use crate::streams::{self, StreamSource};
-use crate::translations::Translations;
+use crate::translations::{Refused, Translations};
 
 /// Shared state for the HTTP handlers.
 pub struct AppState {
@@ -174,6 +176,7 @@ pub fn router(state: AppState) -> Router {
         .route("/{token}/dashboard", get(dashboard))
         .route(EVENTS_ROUTE, get(events_json))
         .route(TRANSLATIONS_ROUTE, get(translations_json))
+        .route(SETTINGS_ROUTE, get(settings_json).post(change_settings))
         .layer(middleware::from_fn_with_state(state.clone(), log_access))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -181,6 +184,7 @@ pub fn router(state: AppState) -> Router {
 
 const EVENTS_ROUTE: &str = "/{token}/events.json";
 const TRANSLATIONS_ROUTE: &str = "/{token}/translations.json";
+const SETTINGS_ROUTE: &str = "/{token}/settings.json";
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 
 /// Live view of recent log lines (SS-029), behind the same token.
@@ -229,6 +233,66 @@ async fn translations_json(
     }
     let status = state.translations.as_ref().map(|t| t.status());
     ([(header::CACHE_CONTROL, "no-store")], Json(status)).into_response()
+}
+
+/// The translation choice the dashboard shows and changes (SS-048).
+#[derive(Serialize)]
+struct SettingsView {
+    current: TranslateSettings,
+    defaults: TranslateSettings,
+    /// Efforts besides [`settings::MODEL_DEFAULT`].
+    efforts: &'static [&'static str],
+}
+
+fn settings_view(translations: &Translations) -> SettingsView {
+    SettingsView {
+        current: translations.settings(),
+        defaults: TranslateSettings::defaults(),
+        efforts: &crate::openrouter::REASONING_EFFORTS,
+    }
+}
+
+/// `null` when translation is off.
+async fn settings_json(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let view = state.translations.as_deref().map(settings_view);
+    ([(header::CACHE_CONTROL, "no-store")], Json(view)).into_response()
+}
+
+/// Takes a new choice for new translation jobs. The body is read only
+/// after the token check, so a wrong token gets 404 whatever it sends.
+async fn change_settings(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(translations) = &state.translations else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    let Ok(choice) = serde_json::from_slice::<TranslateSettings>(&body) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "refused": "body" }))).into_response();
+    };
+    let (status, refused) = match translations.change(choice).await {
+        Ok(()) => return Json(settings_view(translations)).into_response(),
+        Err(Refused::Invalid(settings::Invalid::Model)) => (StatusCode::BAD_REQUEST, "model"),
+        Err(Refused::Invalid(settings::Invalid::Reasoning)) => {
+            (StatusCode::BAD_REQUEST, "reasoning")
+        }
+        Err(Refused::Unbuilt) => (StatusCode::BAD_REQUEST, "unbuilt"),
+        Err(Refused::Save(kind)) => {
+            event!(
+                "translate",
+                "translation settings save failed error={kind:?}"
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, "save")
+        }
+    };
+    (status, Json(json!({ "refused": refused }))).into_response()
 }
 
 /// One line per request with the route template, never the path itself:
@@ -1805,12 +1869,21 @@ mod tests {
                 .with_subtitle_sources(vec![source], "tur".to_owned())
                 .with_fallback_lang("eng".to_owned())
                 .with_cache_dir(cache.to_owned())
-                .with_translations(crate::translations::Translations::new(
-                    translator,
-                    "tur".to_owned(),
-                    "test/model".to_owned(),
-                    Some(cache.to_owned()),
-                )),
+                .with_translations(
+                    crate::translations::Translations::new(
+                        Box::new(move |_| {
+                            Some(translator.clone() as Arc<dyn crate::translate::Translator>)
+                        }),
+                        TranslateSettings {
+                            model: "test/model".to_owned(),
+                            reasoning: settings::MODEL_DEFAULT.to_owned(),
+                        },
+                        "tur".to_owned(),
+                        Some(cache.to_owned()),
+                    )
+                    .unwrap()
+                    .with_settings_file(cache.join("settings.json")),
+                ),
         )
     }
 
@@ -1961,6 +2034,87 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (_, off) = get(&format!("/{TOKEN}/translations.json")).await;
         assert_eq!(off, Some(Value::Null), "translation off");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    async fn post(app: &Router, uri: String, body: &str) -> (StatusCode, Value) {
+        let request = Request::post(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn dashboard_changes_the_translation_settings() {
+        let (head, fits, _) = film();
+        let cache = std::env::temp_dir().join(format!(
+            "subsync-settings-route-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let translator = Arc::new(GatedTranslator {
+            go: tokio::sync::Semaphore::new(0),
+            analyzed: Mutex::new(0),
+        });
+        let app = translated_app(&head, &fits, translator, &cache);
+        let uri = format!("/{TOKEN}/settings.json");
+
+        let (status, body) = call(&app, uri.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        let view: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            view["current"],
+            json!({ "model": "test/model", "reasoning": "default" })
+        );
+        assert_eq!(view["defaults"]["model"], crate::openrouter::DEFAULT_MODEL);
+        assert!(view["efforts"].as_array().unwrap().contains(&json!("low")));
+
+        let refused = [
+            (r#"{"model":"nope","reasoning":"low"}"#, "model"),
+            (r#"{"model":"a/b","reasoning":"huge"}"#, "reasoning"),
+            (r#"{"model":"a/b"}"#, "body"),
+            ("not json", "body"),
+        ];
+        for (body, why) in refused {
+            let (status, answer) = post(&app, uri.clone(), body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(answer["refused"], why, "{body}");
+        }
+
+        let (status, answer) = post(
+            &app,
+            uri.clone(),
+            r#"{"model":"vendor/other","reasoning":"high"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["current"]["model"], "vendor/other");
+        let (_, body) = call(&app, format!("/{TOKEN}/translations.json")).await;
+        let status_now: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(status_now["model"], "vendor/other reasoning=high");
+        let saved = std::fs::read_to_string(cache.join("settings.json")).unwrap();
+        assert!(saved.contains("vendor/other"), "kept for a restart");
+
+        // A wrong token is 404 whatever it sends; without translation, off.
+        let wrong = "/wrong-token-123/settings.json".to_owned();
+        assert_eq!(call(&app, wrong.clone()).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(post(&app, wrong, "not json").await.0, StatusCode::NOT_FOUND);
+        let (_, off) = get(&uri).await;
+        assert_eq!(off, Some(Value::Null));
+        let (status, answer) =
+            post(&self::app(), uri, r#"{"model":"a/b","reasoning":"low"}"#).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(answer["refused"], "off");
         let _ = std::fs::remove_dir_all(&cache);
     }
 

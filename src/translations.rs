@@ -11,11 +11,12 @@
 //!
 //! Logs carry counts only; the English and translated text stay in memory,
 //! in served files and in the cache. The dashboard sees each job's progress
-//! and the played file's name (SS-047), never the text.
+//! and the played file's name (SS-047), never the text. It can change the
+//! model and its reasoning effort (SS-048); jobs started before keep theirs.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -24,6 +25,7 @@ use tokio::sync::Semaphore;
 use crate::align::Fix;
 use crate::events::{event, now_ms};
 use crate::menu::{self, MenuEntry};
+use crate::settings::{self, Invalid, TranslateSettings};
 use crate::srt::{self, Cue};
 use crate::translate::{self, Langs, Translator};
 
@@ -55,6 +57,8 @@ enum Phase {
 
 struct Job {
     phase: Phase,
+    /// The model and effort it was started with.
+    model: String,
     /// The file to serve now: translated so far, then English.
     srt: String,
     /// The played file's name, for the dashboard only.
@@ -74,6 +78,7 @@ struct Job {
 #[derive(Debug, Serialize)]
 pub struct JobView {
     pub phase: &'static str,
+    pub model: String,
     pub label: Option<String>,
     pub lines: usize,
     pub lines_done: usize,
@@ -88,37 +93,117 @@ pub struct JobView {
 #[derive(Debug, Serialize)]
 pub struct Status {
     pub lang: String,
+    /// What new jobs use, as [`TranslateSettings::key_label`].
     pub model: String,
+    pub settings: TranslateSettings,
     pub parallel: usize,
     pub jobs: Vec<JobView>,
 }
 
-pub struct Translations {
+/// Builds the translator for a choice; `None` when it cannot.
+pub type Build = Box<dyn Fn(&TranslateSettings) -> Option<Arc<dyn Translator>> + Send + Sync>;
+
+/// The translator new jobs get, and the choice it was built from.
+struct Engine {
     translator: Arc<dyn Translator>,
+    settings: TranslateSettings,
+}
+
+/// Why a new choice was not taken; the old one stays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refused {
+    Invalid(Invalid),
+    /// The translator could not be built for it.
+    Unbuilt,
+    /// It could not be written to the settings file.
+    Save(std::io::ErrorKind),
+}
+
+pub struct Translations {
+    build: Build,
+    engine: RwLock<Engine>,
     /// ISO 639-2 target language.
     lang: String,
-    /// Part of the job key: another model or prompt is another translation.
-    model: String,
     cache_dir: Option<PathBuf>,
+    /// Where a choice made on the dashboard is kept across restarts.
+    settings_file: Option<PathBuf>,
     jobs: Mutex<HashMap<u64, Job>>,
     permits: Semaphore,
 }
 
 impl Translations {
+    /// `None` when `build` cannot make a translator for `settings`.
     pub fn new(
-        translator: Arc<dyn Translator>,
+        build: Build,
+        settings: TranslateSettings,
         lang: String,
-        model: String,
         cache_dir: Option<PathBuf>,
-    ) -> Self {
-        Self {
-            translator,
+    ) -> Option<Self> {
+        let translator = build(&settings)?;
+        Some(Self {
+            build,
+            engine: RwLock::new(Engine {
+                translator,
+                settings,
+            }),
             lang,
-            model,
             cache_dir,
+            settings_file: None,
             jobs: Mutex::new(HashMap::new()),
             permits: Semaphore::new(PARALLEL),
+        })
+    }
+
+    /// Saves choices made on the dashboard to `path`.
+    pub fn with_settings_file(mut self, path: PathBuf) -> Self {
+        self.settings_file = Some(path);
+        self
+    }
+
+    /// The choice new jobs use.
+    pub fn settings(&self) -> TranslateSettings {
+        self.engine
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .settings
+            .clone()
+    }
+
+    /// Makes `settings` the choice for new jobs, saved first so a restart
+    /// keeps it. Running jobs finish with the translator they started with.
+    pub async fn change(&self, settings: TranslateSettings) -> Result<(), Refused> {
+        settings.check().map_err(Refused::Invalid)?;
+        let translator = (self.build)(&settings).ok_or(Refused::Unbuilt)?;
+        if let Some(path) = self.settings_file.clone() {
+            let saved = settings.clone();
+            tokio::task::spawn_blocking(move || settings::save(&path, &saved))
+                .await
+                .map_err(|_| Refused::Save(std::io::ErrorKind::Other))?
+                .map_err(|err| Refused::Save(err.kind()))?;
         }
+        event!(
+            "translate",
+            "translation settings changed model={}",
+            settings.key_label()
+        );
+        let mut engine = self
+            .engine
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *engine = Engine {
+            translator,
+            settings,
+        };
+        Ok(())
+    }
+
+    /// The translator new jobs get and the model label in their key.
+    fn engine(&self) -> (Arc<dyn Translator>, String) {
+        let engine = self
+            .engine
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (engine.translator.clone(), engine.settings.key_label())
     }
 
     /// The menu entry offering the translation of `english` (an SRT).
@@ -130,11 +215,11 @@ impl Translations {
         }
     }
 
-    fn key(&self, english: &str) -> u64 {
+    /// Another model or prompt is another translation.
+    fn key(&self, english: &str, model: &str) -> u64 {
         menu::fnv(&format!(
-            "{}\0{}\0{}\0{english}",
+            "{}\0{model}\0{}\0{english}",
             self.lang,
-            self.model,
             crate::openrouter::PROMPT_VERSION
         ))
     }
@@ -148,7 +233,8 @@ impl Translations {
     /// names the played file on the dashboard; a job started without one
     /// takes the first one given.
     pub fn ensure(self: &Arc<Self>, english: &str, label: Option<&str>) {
-        let key = self.key(english);
+        let (translator, model) = self.engine();
+        let key = self.key(english, &model);
         let now = now_ms();
         {
             let Ok(mut jobs) = self.jobs.lock() else {
@@ -169,6 +255,7 @@ impl Translations {
                 key,
                 Job {
                     phase: Phase::Queued,
+                    model,
                     srt: partial(&cues, &[]),
                     label: label.map(str::to_owned),
                     lines: cues.len(),
@@ -184,14 +271,15 @@ impl Translations {
         }
         let this = self.clone();
         let english = english.to_owned();
-        tokio::spawn(async move { this.run(key, english).await });
+        tokio::spawn(async move { this.run(key, english, translator).await });
     }
 
     /// The file to serve for the translation of `english` now, if a job
     /// for it exists.
     pub fn current(&self, english: &str) -> Option<String> {
+        let key = self.key(english, &self.engine().1);
         let jobs = self.jobs.lock().ok()?;
-        jobs.get(&self.key(english)).map(|job| job.srt.clone())
+        jobs.get(&key).map(|job| job.srt.clone())
     }
 
     /// The latest jobs for the dashboard, newest first.
@@ -208,6 +296,7 @@ impl Translations {
                             Phase::Done => "done",
                             Phase::Failed => "failed",
                         },
+                        model: job.model.clone(),
                         label: job.label.clone(),
                         lines: job.lines,
                         lines_done: job.lines_done,
@@ -223,9 +312,11 @@ impl Translations {
             .unwrap_or_default();
         jobs.sort_by_key(|job| std::cmp::Reverse(job.queued_ms));
         jobs.truncate(SHOWN);
+        let settings = self.settings();
         Status {
             lang: self.lang.clone(),
-            model: self.model.clone(),
+            model: settings.key_label(),
+            settings,
             parallel: PARALLEL,
             jobs,
         }
@@ -239,7 +330,7 @@ impl Translations {
         }
     }
 
-    async fn run(self: Arc<Self>, key: u64, english: String) {
+    async fn run(self: Arc<Self>, key: u64, english: String, translator: Arc<dyn Translator>) {
         if let Some(done) = self.load(key).await {
             event!("translate", "translation served from=disk");
             let lines = srt::parse(&done).len();
@@ -272,7 +363,7 @@ impl Translations {
             translate::layout(cues.len()).len()
         );
         let mut reached = partial(&cues, &[]);
-        let result = translate::translate(&*self.translator, &cues, &langs, |done| {
+        let result = translate::translate(&*translator, &cues, &langs, |done| {
             reached = partial(&cues, done);
             self.update(key, |job| {
                 job.srt = reached.clone();
@@ -428,6 +519,24 @@ mod tests {
         assert!(partial(&english, &[]).contains("çeviri %0"));
     }
 
+    fn test_settings(model: &str) -> TranslateSettings {
+        TranslateSettings {
+            model: model.to_owned(),
+            reasoning: settings::MODEL_DEFAULT.to_owned(),
+        }
+    }
+
+    /// Always `translator`, whatever the choice.
+    fn fixed(translator: Arc<dyn Translator>) -> Translations {
+        Translations::new(
+            Box::new(move |_| Some(translator.clone())),
+            test_settings("test/model"),
+            "tur".to_owned(),
+            None,
+        )
+        .unwrap()
+    }
+
     /// Fails every analysis; counts them.
     struct Down(Mutex<usize>);
 
@@ -451,12 +560,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_job_waits_before_starting_again() {
         let down = Arc::new(Down(Mutex::new(0)));
-        let translations = Arc::new(Translations::new(
-            down.clone(),
-            "tur".to_owned(),
-            "test/model".to_owned(),
-            None,
-        ));
+        let translations = Arc::new(fixed(down.clone()));
         let english = srt::render(&[cue(0, "en 0"), cue(1, "en 1")], SAME);
         translations.ensure(&english, None);
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -480,6 +584,132 @@ mod tests {
             "label filled in"
         );
         assert!(job.finished_ms.is_some());
+    }
+
+    /// Translates each line as `<model> <text>`, so a test sees which
+    /// translator did a job.
+    struct Named(String);
+
+    impl Translator for Named {
+        fn analyze<'a>(
+            &'a self,
+            _request: &'a translate::AnalysisRequest,
+        ) -> translate::AnalyzeFuture<'a> {
+            Box::pin(async {
+                Ok(translate::Analysis {
+                    summary: "A film".to_owned(),
+                    characters: Vec::new(),
+                    glossary: Vec::new(),
+                })
+            })
+        }
+
+        fn translate<'a>(
+            &'a self,
+            request: &'a translate::BlockRequest,
+        ) -> translate::TranslateFuture<'a> {
+            Box::pin(async move {
+                Ok(request
+                    .context
+                    .iter()
+                    .filter(|l| request.output_ids.contains(&l.id))
+                    .map(|l| translate::Line {
+                        id: l.id,
+                        text: format!("{} {}", self.0, l.text),
+                    })
+                    .collect())
+            })
+        }
+    }
+
+    async fn finished(translations: &Translations, english: &str) -> String {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match translations.current(english) {
+                    Some(srt) if !srt.contains("SubSync") => break srt,
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_new_choice_translates_new_jobs_and_is_saved() {
+        let file = std::env::temp_dir()
+            .join(format!(
+                "subsync-translations-settings-{}-{}",
+                std::process::id(),
+                now_ms()
+            ))
+            .join("settings.json");
+        let translations = Arc::new(
+            Translations::new(
+                Box::new(|s: &TranslateSettings| {
+                    // A model the translator cannot be built for.
+                    (s.model != "broken/model")
+                        .then(|| Arc::new(Named(s.model.clone())) as Arc<dyn Translator>)
+                }),
+                test_settings("old/model"),
+                "tur".to_owned(),
+                None,
+            )
+            .unwrap()
+            .with_settings_file(file.clone()),
+        );
+        let english = srt::render(&[cue(0, "en 0"), cue(1, "en 1")], SAME);
+        translations.ensure(&english, Some("A.mkv"));
+        assert!(
+            finished(&translations, &english)
+                .await
+                .contains("old/model en 1")
+        );
+
+        let refused = [
+            (test_settings("no-vendor"), Refused::Invalid(Invalid::Model)),
+            (
+                TranslateSettings {
+                    model: "new/model".to_owned(),
+                    reasoning: "huge".to_owned(),
+                },
+                Refused::Invalid(Invalid::Reasoning),
+            ),
+            (test_settings("broken/model"), Refused::Unbuilt),
+        ];
+        for (choice, why) in refused {
+            assert_eq!(translations.change(choice).await, Err(why));
+        }
+        assert_eq!(translations.settings(), test_settings("old/model"), "kept");
+        assert!(!file.exists(), "nothing saved");
+
+        let chosen = TranslateSettings {
+            model: "new/model".to_owned(),
+            reasoning: "high".to_owned(),
+        };
+        translations.change(chosen.clone()).await.unwrap();
+        assert_eq!(settings::load(&file), Ok(Some(chosen.clone())));
+        let status = translations.status();
+        assert_eq!(status.model, "new/model reasoning=high");
+        assert_eq!(status.settings, chosen);
+
+        // Same English, new model: a new job, translated by the new one.
+        translations.ensure(&english, Some("A.mkv"));
+        assert!(
+            finished(&translations, &english)
+                .await
+                .contains("new/model en 1")
+        );
+        let models: Vec<String> = translations
+            .status()
+            .jobs
+            .into_iter()
+            .map(|job| job.model)
+            .collect();
+        assert_eq!(models.len(), 2);
+        assert!(models.contains(&"old/model".to_owned()));
+        assert!(models.contains(&"new/model reasoning=high".to_owned()));
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 
     #[test]

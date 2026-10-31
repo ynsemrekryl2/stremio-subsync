@@ -75,6 +75,16 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .bar.done > i { background: var(--ok); } .bar.failed > i { background: var(--bad); }
 .job .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
 .req .bar { height: 6px; }
+.form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.form label.grow { flex: 1 1 260px; }
+.form input, .form select, .form button { font: inherit; color: var(--text); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; min-width: 0; }
+.form button { cursor: pointer; }
+.form button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.form button:disabled { opacity: .45; cursor: default; }
+.hint { font-size: 12px; margin: 6px 0 0; overflow-wrap: anywhere; }
+.hint.bad { color: var(--bad); } .hint.ok { color: var(--ok); }
 @media (max-width: 600px) { .row { grid-template-columns: 56px 1fr; } .row .area { display: none; } }
 </style>
 </head>
@@ -87,6 +97,23 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
     <span id="translator" class="muted"></span>
     <span id="missed" class="muted"></span>
   </header>
+
+  <section id="settings" hidden>
+    <div class="sec-head"><h2>Çeviri ayarı</h2><span class="muted">yeni çevirilerde geçerli; süren iş eski modelle biter</span></div>
+    <form class="form" id="settings-form">
+      <label class="grow">Model (OpenRouter)
+        <input id="model" list="models" autocomplete="off" spellcheck="false" required>
+        <datalist id="models"></datalist>
+      </label>
+      <label>Düşünme düzeyi
+        <select id="reasoning"></select>
+      </label>
+      <button type="submit" class="primary" id="save" disabled>Kaydet</button>
+      <button type="button" id="reset">Varsayılanı doldur</button>
+    </form>
+    <p class="hint muted" id="model-info"></p>
+    <p class="hint" id="settings-note"></p>
+  </section>
 
   <section>
     <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
@@ -139,8 +166,13 @@ const FAILURES = { Empty: "boş altyazı", BadAnalysis: "analiz boş döndü",
   "Translator(Transient)": "geçici sağlayıcı hatası", "Translator(Permanent)": "sağlayıcı reddetti",
   "Translator(BadAnswer)": "yanıt okunamadı" };
 const LANG_NAMES = { tur: "Türkçe" };
+const EFFORTS = { default: "modelin varsayılanı", none: "yok", minimal: "en az", low: "düşük", medium: "orta",
+  high: "yüksek", xhigh: "çok yüksek", max: "en yüksek" };
+const REFUSED = { model: "model adı «firma/ad» biçiminde olmalı", reasoning: "düşünme düzeyi geçersiz",
+  unbuilt: "bu modelle istemci kurulamadı", body: "istek okunamadı", save: "ayar sunucuda dosyaya yazılamadı",
+  off: "çeviri kapalı" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
-  paused: false, filter: "", translations: undefined,
+  paused: false, filter: "", translations: undefined, settings: null, models: new Map(),
   counts: { requests: 0, cached: 0, match: 0, mkv: 0, ruler: 0, accepted: 0, notice: 0 } };
 const $ = (id) => document.getElementById(id);
 
@@ -349,6 +381,7 @@ function renderJobs() {
     meta.append(el("span", "", job.lines_done + " / " + job.lines + " satır"),
       el("span", "", job.blocks + " blok"),
       ...jobTimes(job, now).map((text) => el("span", "", text)));
+    if (job.model !== t.model) meta.append(el("span", "", "model: " + job.model));
     if (job.failure) meta.append(el("span", "", "neden: " + (FAILURES[job.failure] || job.failure)));
     card.append(top, bar(job), meta);
     return card;
@@ -490,6 +523,97 @@ async function poll() {
   setTimeout(poll, 2000);
 }
 
+/** The dashboard's translation choice (SS-048). */
+async function loadSettings() {
+  try {
+    const res = await fetch("settings.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const view = await res.json();
+    if (!view) return; // translation off: the section stays hidden
+    state.settings = view;
+    $("reasoning").replaceChildren(...["default", ...view.efforts].map((e) =>
+      Object.assign(el("option", "", EFFORTS[e] ? EFFORTS[e] + " (" + e + ")" : e), { value: e })));
+    fillSettings(view.current);
+    $("settings").hidden = false;
+    loadModels();
+  } catch (err) {
+    setTimeout(loadSettings, 5000);
+  }
+}
+function fillSettings(choice) {
+  $("model").value = choice.model;
+  $("reasoning").value = choice.reasoning;
+  settingsChanged();
+}
+function chosen() {
+  return { model: $("model").value.trim(), reasoning: $("reasoning").value };
+}
+function settingsChanged() {
+  const now = state.settings && state.settings.current, c = chosen();
+  $("save").disabled = !now || !c.model || (c.model === now.model && c.reasoning === now.reasoning);
+  modelInfo();
+}
+/** OpenRouter's public model list, straight from the browser (no key): the
+ *  ones with structured outputs, since translation needs them. */
+async function loadModels() {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models", { credentials: "omit", referrerPolicy: "no-referrer" });
+    const page = await res.json();
+    const usable = page.data.filter((m) => (m.supported_parameters || []).includes("structured_outputs"))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    for (const m of usable) state.models.set(m.id, m);
+    $("models").replaceChildren(...usable.map((m) =>
+      Object.assign(el("option", "", m.name + " · " + prices(m)), { value: m.id })));
+    modelInfo();
+  } catch (err) {
+    // A free-text model id still works.
+  }
+}
+function perMillion(price) {
+  const n = Number(price) * 1e6;
+  return Number.isFinite(n) ? "$" + n.toFixed(2) : "?";
+}
+function prices(m) {
+  return "giriş " + perMillion(m.pricing && m.pricing.prompt) + " / çıkış " + perMillion(m.pricing && m.pricing.completion) + " (milyon token)";
+}
+function modelInfo() {
+  const info = $("model-info"), c = chosen(), m = state.models.get(c.model);
+  info.className = "hint muted";
+  if (!m) {
+    if (state.models.size && c.model) {
+      info.textContent = "OpenRouter listesinde yapılandırılmış çıktı destekleyen böyle bir model yok; çeviri reddedilebilir.";
+      info.className = "hint bad";
+    } else info.textContent = "";
+    return;
+  }
+  const thinks = (m.supported_parameters || []).includes("reasoning");
+  info.textContent = m.name + " · " + prices(m) +
+    (thinks ? "" : " · düşünme ayarı almıyor, «modelin varsayılanı» seç");
+  if (!thinks && c.reasoning !== "default") info.className = "hint bad";
+}
+$("model").oninput = settingsChanged;
+$("reasoning").onchange = settingsChanged;
+$("reset").onclick = () => { if (state.settings) fillSettings(state.settings.defaults); };
+$("settings-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const note = $("settings-note");
+  $("save").disabled = true;
+  try {
+    const res = await fetch("settings.json", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(chosen()) });
+    const answer = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((answer && REFUSED[answer.refused]) || "sunucu " + res.status);
+    state.settings = answer;
+    fillSettings(answer.current);
+    note.className = "hint ok";
+    note.textContent = "Kaydedildi " + time(Date.now()) + ": yeni çeviriler bu ayarla yapılacak.";
+  } catch (err) {
+    note.className = "hint bad";
+    note.textContent = "Kaydedilmedi: " + err.message;
+    settingsChanged();
+  }
+};
+
 $("pause").onclick = () => {
   state.paused = !state.paused;
   $("pause").textContent = state.paused ? "Devam et" : "Duraklat";
@@ -499,6 +623,7 @@ $("pause").onclick = () => {
 $("search").oninput = (e) => { state.filter = e.target.value; renderLog(); };
 poll();
 pollTranslations();
+loadSettings();
 </script>
 </body>
 </html>

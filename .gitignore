@@ -3,6 +3,8 @@
 /dumps
 # Served subtitles: local only.
 /cache
+# Translation settings chosen on the dashboard: local only.
+/settings.json
 
 # Worktrees and preserved local runtime data.
 /.claude/

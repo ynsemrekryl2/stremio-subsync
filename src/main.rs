@@ -13,6 +13,7 @@ mod pgs;
 mod range;
 mod rank;
 mod ruler;
+mod settings;
 mod sources;
 mod srt;
 mod streams;
@@ -223,37 +224,60 @@ async fn main() {
     let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
     match translate_into.filter(|_| !key.trim().is_empty() && !label_mode) {
         Some(lang) => {
-            let model = std::env::var("SUBSYNC_TRANSLATE_MODEL")
-                .unwrap_or_else(|_| openrouter::DEFAULT_MODEL.to_owned());
-            let Some(client) = openrouter::OpenRouter::new(key.trim().to_owned(), &model) else {
-                eprintln!(
-                    "SUBSYNC_TRANSLATE_MODEL must be a model id such as {}",
-                    openrouter::DEFAULT_MODEL
-                );
+            let from_env = settings::TranslateSettings::from_env(
+                std::env::var("SUBSYNC_TRANSLATE_MODEL").ok(),
+                std::env::var("SUBSYNC_TRANSLATE_REASONING").ok(),
+            );
+            match from_env.check() {
+                Err(settings::Invalid::Model) => {
+                    eprintln!(
+                        "SUBSYNC_TRANSLATE_MODEL must be a model id such as {}",
+                        openrouter::DEFAULT_MODEL
+                    );
+                    std::process::exit(2);
+                }
+                Err(settings::Invalid::Reasoning) => {
+                    eprintln!(
+                        "SUBSYNC_TRANSLATE_REASONING must be {} or one of {}",
+                        settings::MODEL_DEFAULT,
+                        openrouter::REASONING_EFFORTS.join(", ")
+                    );
+                    std::process::exit(2);
+                }
+                Ok(()) => {}
+            }
+            // A choice saved on the dashboard wins over the environment
+            // (SS-048).
+            let settings_file = std::path::PathBuf::from(
+                std::env::var("SUBSYNC_SETTINGS_FILE")
+                    .unwrap_or_else(|_| "settings.json".to_owned()),
+            );
+            let (chosen, from) = match settings::load(&settings_file) {
+                Ok(Some(saved)) => (saved, "dashboard"),
+                Ok(None) => (from_env, "environment"),
+                Err(err) => {
+                    event!("start", "translation settings file ignored error={err:?}");
+                    (from_env, "environment")
+                }
+            };
+            let key = key.trim().to_owned();
+            let build: translations::Build = Box::new(move |chosen| {
+                let client = openrouter::OpenRouter::new(key.clone(), &chosen.model)?
+                    .with_reasoning(chosen.effort())?;
+                Some(Arc::new(client))
+            });
+            let label = chosen.key_label();
+            let Some(translations) =
+                translations::Translations::new(build, chosen, lang.clone(), cache_dir)
+            else {
+                eprintln!("translation settings refused: {label}");
                 std::process::exit(2);
             };
-            let var = std::env::var("SUBSYNC_TRANSLATE_REASONING").ok();
-            let reasoning = openrouter::reasoning_setting(var.as_deref());
-            let Some(client) = client.with_reasoning(reasoning) else {
-                eprintln!(
-                    "SUBSYNC_TRANSLATE_REASONING must be default or one of {}",
-                    openrouter::REASONING_EFFORTS.join(", ")
-                );
-                std::process::exit(2);
-            };
-            // Another effort is another translation; `default` keeps the
-            // key translations had before SS-046.
-            let model = match reasoning {
-                Some(effort) => format!("{model} reasoning={effort}"),
-                None => model,
-            };
-            event!("start", "translation: on (model {model}, into {lang})");
-            state = state.with_translations(translations::Translations::new(
-                Arc::new(client),
-                lang,
-                model,
-                cache_dir,
-            ));
+            event!(
+                "start",
+                "translation: on (model {label} from {from}, into {lang})"
+            );
+            state = state.with_translations(translations.with_settings_file(settings_file));
         }
         None => event!("start", "translation: off"),
     }

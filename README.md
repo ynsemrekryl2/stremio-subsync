@@ -63,8 +63,9 @@ http://127.0.0.1:7001/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. `scripts/dev.sh` bunu Anahtar Zinciri'nden alır (`scripts/dev.sh subdl`). |
 | `OPENROUTER_API_KEY` | — | Hedef dilde uyan altyazı yoksa uyan İngilizce altyazı bu anahtarla çevrilir ve menüde "Türkçe çeviri" girdisi olur (SS-026). Yoksa çeviri kapalı. Loglanmaz. `scripts/dev.sh openrouter` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
-| `SUBSYNC_TRANSLATE_MODEL` | `openai/gpt-6-luna` | Çeviri modeli (OpenRouter kimliği). |
+| `SUBSYNC_TRANSLATE_MODEL` | `openai/gpt-6-luna` | Çeviri modeli (OpenRouter kimliği). Panelden seçilen model bunun önüne geçer (SS-048). |
 | `SUBSYNC_TRANSLATE_REASONING` | `low` | Çeviri modelinin düşünme düzeyi (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; hangisini kabul ettiği modele bağlı). `default` ise alan gönderilmez, modelin kendi varsayılanı geçer (GPT-6 Luna'da `medium`; düşünmeyen modeller için). `low`, Luna'da `medium`'dan ~1,7 kat hızlı ve ~%25 ucuz, kalite farkı görülmedi (SS-046). Başka düzey başka çeviri sayılır (cache ayrı). |
+| `SUBSYNC_SETTINGS_FILE` | `settings.json` | Panelde seçilen çeviri modeli ve düşünme düzeyi burada saklanır; yeniden başlatma ve deploy sonrası kalır, ortam değişkenlerinin önüne geçer. Anahtar içermez. Dosya silinirse yeniden ortam değişkenleri geçer (SS-048). |
 | `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
 | `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Kaydırması olan her adayın bir de `yerel` sürümü gelir (SS-021: kayma filmin içinde değişiyorsa satırları çevresine göre ayrıca kaydırır). Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
 

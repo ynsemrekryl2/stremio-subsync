@@ -12,6 +12,8 @@ ExecStart=/usr/local/bin/stremio-subsync
 # the only writable place.
 StateDirectory=stremio-subsync
 Environment=SUBSYNC_CACHE_DIR=%S/stremio-subsync/cache
+# The translation model and effort chosen on the dashboard (SS-048).
+Environment=SUBSYNC_SETTINGS_FILE=%S/stremio-subsync/settings.json
 # The server shuts down gracefully on Ctrl-C only.
 KillSignal=SIGINT
 Restart=on-failure

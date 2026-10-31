@@ -304,7 +304,7 @@ impl Translator for OpenRouter {
     }
 }
 
-fn valid_model(model: &str) -> bool {
+pub fn valid_model(model: &str) -> bool {
     !model.trim().is_empty()
         && model.len() <= 256
         && model.matches('/').count() == 1
