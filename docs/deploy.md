@@ -30,7 +30,7 @@ Caddy HTTPS sertifikasını Let's Encrypt'ten kendisi alır ve yeniler. Uygulama
 ## 3. Deploy (Mac'ten)
 
 Ön koşul: `scripts/dev.sh` Mac'te en az bir kez çalışmış olmalı. AIOStreams
-linki (ve varsa SubDL ve AltyaziDB anahtarları) oradaki Anahtar Zinciri girdilerinden
+linki (ve varsa SubDL, AltyaziDB ve SubSource anahtarları) oradaki Anahtar Zinciri girdilerinden
 alınır, ssh'in standart girdisiyle sunucuya gider; ekrana ve komut satırına
 düşmez.
 
@@ -47,7 +47,7 @@ sürer (Rust araç zinciri de kurulur). Her deploy:
    uyduğu için `cache/`, `dumps/`, `.local/`, worktree'ler ve `target/` gitmez.
 2. İlk seferde `deploy/setup.sh` çalışır: Caddy, güvenlik duvarı, systemd
    birimi ve yeni bir token.
-3. AIOStreams linkini, SubDL ve AltyaziDB anahtarlarını `deploy/env.sh` ile env dosyasına
+3. AIOStreams linkini, SubDL, AltyaziDB ve SubSource anahtarlarını `deploy/env.sh` ile env dosyasına
    yazar (Anahtar Zinciri'nde olmayan anahtar sunucudan da silinir).
 4. Sunucuda derler, servisi yeniden başlatır.
 
@@ -63,7 +63,7 @@ Sunucudaki dosyalar:
 
 | Yol | İçerik |
 |---|---|
-| `/etc/stremio-subsync.env` | Token, alan adı, AIOStreams linki, SubDL ve AltyaziDB anahtarları (yalnız root, 0600) |
+| `/etc/stremio-subsync.env` | Token, alan adı, AIOStreams linki, SubDL, AltyaziDB ve SubSource anahtarları (yalnız root, 0600) |
 | `/etc/systemd/system/stremio-subsync.service` | Servis birimi (`deploy/stremio-subsync.service`) |
 | `/etc/caddy/Caddyfile` | HTTPS reverse proxy (`deploy/Caddyfile`) |
 | `/var/lib/stremio-subsync/cache/` | Sunulan menülerin cache'i; deploy ve yeniden başlatmada korunur |

@@ -216,7 +216,7 @@ dl.terms dd { margin: 0; color: var(--muted); }
       <dd>Metin altyazı (SRT, ASS) doğrudan cetvel olur. PGS resim biçimindedir; metin altyazı yoksa
         onun zamanları cetvel olarak kullanılır.</dd>
       <dt>Aday</dt>
-      <dd>OpenSubtitles ya da SubDL'de bulunan, hedef dildeki altyazı. Dosya adına en çok benzeyen 3'ü indirilir;
+      <dd>OpenSubtitles, SubDL, AltyaziDB ya da SubSource'ta bulunan, hedef dildeki altyazı. Dosya adına en çok benzeyen 3'ü indirilir;
         hiçbiri uymazsa sıradaki 3'ü de denenir.</dd>
       <dt>Hizalama, kabul</dt>
       <dd>Adayın satırları cetvele kaydırılarak (gerekirse 25↔24 fps düzeltmesiyle) oturtulur. Başta, ortada
@@ -283,7 +283,7 @@ const EFFORTS = { default: "modelin varsayılanı", none: "yok", minimal: "en az
 const REFUSED = { model: "model adı «firma/ad» biçiminde olmalı", reasoning: "düşünme düzeyi geçersiz",
   unbuilt: "bu modelle istemci kurulamadı", body: "istek okunamadı", save: "ayar sunucuda dosyaya yazılamadı",
   off: "çeviri kapalı" };
-const SOURCES = { OpenSubtitles: "OpenSubtitles", SubDl: "SubDL" };
+const SOURCES = { OpenSubtitles: "OpenSubtitles", SubDl: "SubDL", AltyaziDb: "AltyaziDB", SubSource: "SubSource" };
 const SOURCE_ERRORS = { Timeout: "zaman aşımı", Connect: "bağlanamadı", Decode: "cevap okunamadı",
   TooLarge: "dosya çok büyük", NoSubtitle: "arşivde uygun SRT yok", Other: "hata" };
 const WINDOWS = ["başta", "ortada", "sonda"];
@@ -382,7 +382,7 @@ function rulerPairs(text) {
 
 /** Source searches and downloads of an `m3` line, as one sentence. */
 function candidates(line) {
-  const searches = [...line.matchAll(/\((OpenSubtitles|SubDl), (?:Ok\((\d+)\)|Err\((\w+)(?:\((\d+)\))?\))\)/g)];
+  const searches = [...line.matchAll(/\((OpenSubtitles|SubDl|AltyaziDb|SubSource), (?:Ok\((\d+)\)|Err\((\w+)(?:\((\d+)\))?\))\)/g)];
   const found = searches.reduce((s, m) => s + Number(m[2] || 0), 0);
   const read = (line.match(/Ok\(SrtStats/g) || []).length;
   const parts = searches.map(([, src, n, err, code]) => SOURCES[src] + " " +

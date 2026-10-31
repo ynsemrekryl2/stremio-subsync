@@ -34,7 +34,8 @@ ikisi macOS Anahtar Zinciri'ne kaydedilir ve kurulum linki panoya kopyalanır.
 Sonraki açılışlar hiçbir şey sormaz; kurulum linki aynı kalır, eklentiyi
 yeniden kurmak gerekmez. `scripts/dev.sh link` linki yeniden panoya kopyalar,
 `scripts/dev.sh dashboard` olay panelini açar, `scripts/dev.sh subdl` SubDL
-anahtarını, `scripts/dev.sh altyazidb` AltyaziDB anahtarını gizli girişle
+anahtarını, `scripts/dev.sh altyazidb` AltyaziDB anahtarını,
+`scripts/dev.sh subsource` SubSource anahtarını gizli girişle
 Anahtar Zinciri'ne kaydeder (sonraki açılışlar onu kullanır), `scripts/dev.sh forget` sırları siler (sonraki açılışta yeni token). Ek `SUBSYNC_*` değişkenleri
 geçer, örneğin `SUBSYNC_DUMP_DIR=dumps scripts/dev.sh`.
 
@@ -63,6 +64,7 @@ http://127.0.0.1:7001/<SUBSYNC_TOKEN>/manifest.json
 | `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
 | `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. `scripts/dev.sh` bunu Anahtar Zinciri'nden alır (`scripts/dev.sh subdl`). |
 | `ALTYAZIDB_API_KEY` | — | AltyaziDB'nin ücretsiz anahtarı (üye olunca); yoksa AltyaziDB aranmaz. Yalnız `tr` ve `en`. Loglanmaz. `scripts/dev.sh altyazidb` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
+| `SUBSOURCE_API_KEY` | — | SubSource'un ücretsiz anahtarı (hesap panelinin API sekmesinden); yoksa SubSource aranmaz. Arama başına 2 istek (başlık + liste), ücretsiz kota günde 7 200. Loglanmaz. `scripts/dev.sh subsource` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
 | `OPENROUTER_API_KEY` | — | Hedef dilde uyan altyazı yoksa uyan İngilizce altyazı bu anahtarla çevrilir ve menüde "Türkçe çeviri" girdisi olur (SS-026). Yoksa çeviri kapalı. Loglanmaz. `scripts/dev.sh openrouter` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
 | `SUBSYNC_TRANSLATE_MODEL` | `openai/gpt-6-luna` | Çeviri modeli (OpenRouter kimliği). Panelden seçilen model bunun önüne geçer (SS-048). |
 | `SUBSYNC_TRANSLATE_REASONING` | `low` | Çeviri modelinin düşünme düzeyi (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; hangisini kabul ettiği modele bağlı). `default` ise alan gönderilmez, modelin kendi varsayılanı geçer (GPT-6 Luna'da `medium`; düşünmeyen modeller için). `low`, Luna'da `medium`'dan ~1,7 kat hızlı ve ~%25 ucuz, kalite farkı görülmedi (SS-046). Başka düzey başka çeviri sayılır (cache ayrı). |

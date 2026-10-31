@@ -185,6 +185,12 @@ async fn main() {
         {
             found.push(Arc::new(source));
         }
+        if let Ok(key) = std::env::var("SUBSOURCE_API_KEY")
+            && !key.trim().is_empty()
+            && let Some(source) = sources::SubSource::new(key.trim().to_owned())
+        {
+            found.push(Arc::new(source));
+        }
         let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
         event!("start", "sources probe: on (lang {lang}, {kinds:?})");
         // English that fits is the text a translation starts from (SS-036).

@@ -1,5 +1,5 @@
 //! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on),
-//! SubDL (free key) and AltyaziDB (free key) for one title and language, and
+//! SubDL, AltyaziDB and SubSource (free keys) for one title and language, and
 //! one candidate's SRT bytes.
 //!
 //! IMDb ids, release names, download links and the source keys never reach
@@ -32,6 +32,7 @@ const SUBDL_API: &str = "https://api.subdl.com/api/v1/subtitles";
 const SUBDL_DOWNLOAD: &str = "https://dl.subdl.com";
 const ALTYAZIDB_SEARCH: &str = "https://altyazidb.com/api/v1/search";
 const ALTYAZIDB_SUBTITLE: &str = "https://altyazidb.com/api/v1/subtitle";
+const SUBSOURCE_API: &str = "https://api.subsource.net/api/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -113,6 +114,7 @@ pub enum SourceKind {
     OpenSubtitles,
     SubDl,
     AltyaziDb,
+    SubSource,
 }
 
 /// One subtitle a source offers. `Debug` shows no name and no link.
@@ -400,6 +402,142 @@ pub fn altyazidb_language(lang: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Deserialize)]
+struct SsTitles {
+    #[serde(default)]
+    data: Vec<SsTitle>,
+}
+
+#[derive(Deserialize)]
+struct SsTitle {
+    #[serde(rename = "movieId")]
+    movie_id: Value,
+    #[serde(rename = "imdbId")]
+    imdb_id: Option<String>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    season: Option<u32>,
+}
+
+/// SubSource's own id for `query`'s title: a series has one per season.
+pub fn parse_subsource_title(body: &[u8], query: &Query) -> Result<Option<u64>, SourceError> {
+    let list: SsTitles = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
+    Ok(list
+        .data
+        .into_iter()
+        .filter(|t| t.imdb_id.as_deref().is_none_or(|id| id == query.imdb))
+        .filter(|t| match query.kind {
+            Kind::Movie => true,
+            Kind::Series => query.season.is_none() || t.season == query.season,
+        })
+        .find_map(|t| t.movie_id.as_u64()))
+}
+
+#[derive(Deserialize)]
+struct SsList {
+    #[serde(default)]
+    data: Vec<SsEntry>,
+}
+
+#[derive(Deserialize)]
+struct SsEntry {
+    #[serde(rename = "subtitleId")]
+    subtitle_id: Value,
+    language: Option<String>,
+    #[serde(rename = "releaseInfo", default)]
+    release_info: Vec<String>,
+    #[serde(rename = "hearingImpaired")]
+    hearing_impaired: Option<bool>,
+    #[serde(rename = "foreignParts")]
+    foreign_parts: Option<bool>,
+    framerate: Option<String>,
+}
+
+/// SubSource list for one title (a series season), kept to the language and,
+/// when a release names episodes, to `query`'s; foreign-parts-only subtitles
+/// are left out. Releases with no episode mark (season packs) stay.
+pub fn parse_subsource(body: &[u8], query: &Query) -> Result<Vec<Candidate>, SourceError> {
+    let list: SsList = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
+    let lang = subsource_language(&query.lang);
+    Ok(list
+        .data
+        .into_iter()
+        .filter(|e| {
+            lang.is_some_and(|l| {
+                e.language
+                    .as_deref()
+                    .is_some_and(|g| g.eq_ignore_ascii_case(l))
+            })
+        })
+        .filter(|e| e.foreign_parts != Some(true))
+        .filter(|e| {
+            let (Some(season), Some(episode)) = (query.season, query.episode) else {
+                return true;
+            };
+            let marks: Vec<_> = e
+                .release_info
+                .iter()
+                .flat_map(|r| episode_marks(r))
+                .collect();
+            marks.is_empty() || marks.contains(&(season, episode))
+        })
+        .filter_map(|e| {
+            let id = e.subtitle_id.as_u64()?;
+            let release = e
+                .release_info
+                .into_iter()
+                .max_by_key(|n| word_count(n))
+                .unwrap_or_default();
+            let fps_milli = e
+                .framerate
+                .and_then(|f| f.trim().parse::<f64>().ok())
+                .filter(|f| *f > 0.0 && *f < 1000.0)
+                .map(|f| (f * 1000.0).round() as u32);
+            Some(Candidate {
+                source: SourceKind::SubSource,
+                release,
+                fps_milli,
+                hearing_impaired: e.hearing_impaired,
+                link: format!("{SUBSOURCE_API}/subtitles/{id}/download"),
+            })
+        })
+        .collect())
+}
+
+/// SubSource's language name for an ISO 639-2 code.
+pub fn subsource_language(lang: &str) -> Option<&'static str> {
+    Some(match lang {
+        "tur" => "turkish",
+        "eng" => "english",
+        "ger" | "deu" => "german",
+        "fre" | "fra" => "french",
+        "spa" => "spanish",
+        "ita" => "italian",
+        "por" => "portuguese",
+        "rus" => "russian",
+        "ara" => "arabic",
+        "dut" | "nld" => "dutch",
+        "pol" => "polish",
+        "ell" | "gre" => "greek",
+        "swe" => "swedish",
+        "dan" => "danish",
+        "fin" => "finnish",
+        "nor" => "norwegian",
+        "cze" | "ces" => "czech",
+        "hun" => "hungarian",
+        "rum" | "ron" => "romanian",
+        "bul" => "bulgarian",
+        "hrv" => "croatian",
+        "srp" => "serbian",
+        "heb" => "hebrew",
+        "jpn" => "japanese",
+        "kor" => "korean",
+        "ind" => "indonesian",
+        "vie" => "vietnamese",
+        "ukr" => "ukrainian",
+        _ => return None,
+    })
+}
+
 /// `(season, episode)` pairs written in a file name: `S01E02`, `s1e2`, `1x02`.
 fn episode_marks(name: &str) -> Vec<(u32, u32)> {
     let b = name.to_ascii_lowercase().into_bytes();
@@ -439,7 +577,7 @@ fn episode_marks(name: &str) -> Vec<(u32, u32)> {
     marks
 }
 
-/// The SRT inside a SubDL archive: for an episode, the file named for it
+/// The SRT inside a SubDL or SubSource archive: for an episode, the file named for it
 /// (or the only one); for a movie, the largest.
 pub fn pick_srt(archive: &[u8], query: &Query) -> Result<Vec<u8>, SourceError> {
     let mut zip =
@@ -685,6 +823,76 @@ impl SubtitleSource for AltyaziDb {
                 return Err(SourceError::NoSubtitle);
             }
             Ok(body)
+        })
+    }
+}
+
+/// SubSource with the user's key. No `Debug`: the key is in every request's
+/// `X-API-Key` header.
+pub struct SubSource {
+    key: String,
+    client: reqwest::Client,
+}
+
+impl SubSource {
+    pub fn new(key: String) -> Option<Self> {
+        Some(Self {
+            key,
+            client: client()?,
+        })
+    }
+
+    fn get(&self, url: Url) -> reqwest::RequestBuilder {
+        self.client.get(url).header("X-API-Key", &self.key)
+    }
+}
+
+impl SubtitleSource for SubSource {
+    fn kind(&self) -> SourceKind {
+        SourceKind::SubSource
+    }
+
+    fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a> {
+        Box::pin(async move {
+            let Some(language) = subsource_language(&query.lang) else {
+                return Ok(Vec::new());
+            };
+            // Two steps: the IMDb id gives SubSource's title (one per season),
+            // the title gives its subtitles.
+            let mut params = vec![
+                ("searchType", "imdb".to_owned()),
+                ("imdb", query.imdb.clone()),
+            ];
+            match (query.kind, query.season) {
+                (Kind::Movie, _) => params.push(("type", "movie".to_owned())),
+                (Kind::Series, season) => {
+                    params.push(("type", "series".to_owned()));
+                    if let Some(s) = season {
+                        params.push(("season", s.to_string()));
+                    }
+                }
+            }
+            let url = Url::parse_with_params(&format!("{SUBSOURCE_API}/movies/search"), &params)
+                .map_err(|_| SourceError::Other)?;
+            let Some(title) = parse_subsource_title(&get_capped(self.get(url)).await?, query)?
+            else {
+                return Ok(Vec::new());
+            };
+            let params = [
+                ("movieId", title.to_string()),
+                ("language", language.to_owned()),
+                ("limit", "100".to_owned()),
+            ];
+            let url = Url::parse_with_params(&format!("{SUBSOURCE_API}/subtitles"), &params)
+                .map_err(|_| SourceError::Other)?;
+            parse_subsource(&get_capped(self.get(url)).await?, query)
+        })
+    }
+
+    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+        Box::pin(async move {
+            let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
+            pick_srt(&get_capped(self.get(url)).await?, query)
         })
     }
 }
@@ -991,6 +1199,78 @@ mod tests {
             Ok(Vec::new())
         );
         assert_eq!(altyazidb_language("eng"), Some("en"));
+    }
+
+    #[test]
+    fn subsource_title_is_the_asked_season() {
+        let body = json!({ "success": true, "data": [
+            { "movieId": 11, "imdbId": "tt0903747", "type": "tvseries", "season": 2 },
+            { "movieId": 12, "imdbId": "tt0000001", "type": "tvseries", "season": 1 },
+            { "movieId": 13, "imdbId": "tt0903747", "type": "tvseries", "season": 1 }
+        ]})
+        .to_string();
+        assert_eq!(
+            parse_subsource_title(body.as_bytes(), &episode()),
+            Ok(Some(13))
+        );
+        let film = json!({ "success": true, "data": [
+            { "movieId": 21, "imdbId": "tt0133093", "type": "movie", "season": null }
+        ]})
+        .to_string();
+        assert_eq!(
+            parse_subsource_title(film.as_bytes(), &movie()),
+            Ok(Some(21))
+        );
+        let none = json!({ "success": true, "data": [] }).to_string();
+        assert_eq!(parse_subsource_title(none.as_bytes(), &movie()), Ok(None));
+        assert_eq!(
+            parse_subsource_title(b"<html>", &movie()),
+            Err(SourceError::Decode)
+        );
+    }
+
+    #[test]
+    fn subsource_keeps_language_episode_and_packs_but_not_foreign_parts() {
+        let body = json!({ "success": true, "data": [
+            { "subtitleId": 201, "language": "turkish", "framerate": "23.976",
+              "releaseInfo": ["Show.S01E02.1080p.WEB.h264-FLUX", "Show.S01E02.720p"],
+              "hearingImpaired": true, "foreignParts": false },
+            { "subtitleId": 202, "language": "turkish", "releaseInfo": ["Show.S01.1080p.BluRay"] },
+            { "subtitleId": 203, "language": "turkish", "releaseInfo": ["Show.S01E05.720p"] },
+            { "subtitleId": 204, "language": "english", "releaseInfo": ["Show.S01E02.720p"] },
+            { "subtitleId": 205, "language": "turkish", "releaseInfo": ["Show.S01E02"],
+              "foreignParts": true },
+            { "subtitleId": "../x", "language": "turkish", "releaseInfo": ["Show.S01E02"] }
+        ], "pagination": { "page": 1, "limit": 100, "total": 6, "pages": 1 } })
+        .to_string();
+        let found = parse_subsource(body.as_bytes(), &episode()).unwrap();
+        let links: Vec<&str> = found.iter().map(|c| c.link.as_str()).collect();
+        assert_eq!(
+            links,
+            vec![
+                "https://api.subsource.net/api/v1/subtitles/201/download",
+                "https://api.subsource.net/api/v1/subtitles/202/download"
+            ]
+        );
+        assert_eq!(found[0].source, SourceKind::SubSource);
+        assert_eq!(found[0].release, "Show.S01E02.1080p.WEB.h264-FLUX");
+        assert_eq!(found[0].fps_milli, Some(23_976));
+        assert_eq!(found[0].hearing_impaired, Some(true));
+        assert_eq!(found[1].release, "Show.S01.1080p.BluRay");
+        assert_eq!(found[1].hearing_impaired, None);
+        // A movie keeps every release, whatever it names.
+        let film = Query::new("movie", "tt0903747", "tur").unwrap();
+        assert_eq!(parse_subsource(body.as_bytes(), &film).unwrap().len(), 3);
+        assert_eq!(
+            parse_subsource(b"<html>", &episode()),
+            Err(SourceError::Decode)
+        );
+        let other_lang = Query::new("series", "tt0903747:1:2", "pob").unwrap();
+        assert_eq!(
+            parse_subsource(body.as_bytes(), &other_lang),
+            Ok(Vec::new())
+        );
+        assert_eq!(subsource_language("eng"), Some("english"));
     }
 
     #[test]
