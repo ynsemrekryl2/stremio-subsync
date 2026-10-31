@@ -70,6 +70,9 @@ fi
 cd \$HOME/$src
 \$HOME/.cargo/bin/cargo build --release --locked
 sudo install -m 755 target/release/stremio-subsync /usr/local/bin/
+# The unit changes too (SS-048 added a variable); setup.sh runs only once.
+sudo install -m 644 deploy/stremio-subsync.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart stremio-subsync
 systemctl is-active stremio-subsync
 EOF
