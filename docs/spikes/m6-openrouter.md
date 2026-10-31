@@ -108,6 +108,30 @@ bölünmüş cümle.
   her cue'yu ayrı id ile istiyor ve bağlam veriyor.
 - Küçük kaymalar çoğunlukla geri yönde (ikinci satır daha fazla metin
   alıyor): Türkçede fiilin sona gelmesiyle uyumlu, doğal.
-- Prompt sürümü 3 (kural eklendi) için aynı filmin "sonrası" ölçümü
-  yapılmadı (~0,06 $). Kazanç payı en çok 3 çift; asıl soru kuralın
-  doğallığı bozup bozmadığı.
+
+**Sonrası (2026-10-31, prompt sürümü 3, aynı film ve model):**
+
+| Eşik | Sürüm 2 | Sürüm 3 |
+|---|---|---|
+| > 0.15 | 105 | 101 |
+| > 0.20 | 54 | 57 |
+| > 0.25 | 23 | 33 |
+| > 0.30 | 7 | 14 |
+| **> 0.35** | **3** (1 ileri, 2 geri) | **7** (3 ileri, 4 geri) |
+| `\|moved\|` ortanca / p90 / p99 | 0.070 / 0.191 / 0.308 | 0.061 / 0.196 / 0.359 |
+| Neredeyse boş satır (kaynak ≥10 harf, çeviri <%30) | 5 | 8 |
+| Toplam harf oranı (çeviri / kaynak) | 1.017 | 1.011 |
+
+Çalıştırma: `result=ok`, 955 sn, ilk blok 31 sn, 62 çağrı (1 analiz,
+60 blok, 1 onarım), tekrar 0, 217 126 giriş / 0 önbellek / 97 342 çıkış
+token, **0,0758 $**. Blok ortanca 15,0 sn (sürüm 2'de 11,1 sn), blok
+başına ~1 560 çıkış token'ı (~1 220).
+
+- **Kural fayda göstermedi.** Kaymış çift 3'ten 7'ye çıktı, kuyruk
+  biraz kalınlaştı; ortanca hafifçe düştü. İki çalıştırmanın satırlarının
+  yalnız 542 / 2 034'ü birebir aynı, yani tek çalıştırmalık fark
+  gürültü içinde: kural ne iyileştirdi ne açıkça bozdu.
+- Bedeli var: blok başına daha çok çıkış token'ı (büyük olasılıkla
+  düşünme), ~%35 daha uzun blok süresi, ~%25 daha pahalı.
+- Sonuç: sorun bu kurulumda zaten nadir (%0,5–1,1); kural kaldırılmalı,
+  `balance` ölçümü kalır (model ya da istem değişince tekrar bakmak için).
