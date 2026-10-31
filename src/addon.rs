@@ -1245,7 +1245,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         let list: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(list["subtitles"][0]["lang"], "⚠ Dosya yok");
+        assert_eq!(list["subtitles"][0]["lang"], menu::NOTICE_LANG);
         let path = list["subtitles"][0]["url"]
             .as_str()
             .unwrap()
@@ -1400,7 +1400,7 @@ mod tests {
                 .unwrap();
         assert_eq!(status, StatusCode::OK);
         let list: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(list["subtitles"][0]["lang"], "⚠ Aday yok");
+        assert_eq!(names(&app, &list).await, ["NoCandidates"]);
         tokio::time::timeout(std::time::Duration::from_secs(1), read.notified())
             .await
             .expect("the request must also trigger the background block probe");
@@ -1435,7 +1435,7 @@ mod tests {
         let (status, body) = call(&app, uri).await;
         assert_eq!(status, StatusCode::OK);
         let list: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(list["subtitles"][0]["lang"], "⚠ İng. resim");
+        assert_eq!(names(&app, &list).await, ["ImageOnly"]);
         let saved: Vec<_> = std::fs::read_dir(dir.join("pgs"))
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -1539,12 +1539,12 @@ mod tests {
                 vec!["tur"],
                 3,
             ),
-            (vec![o(), o(), o(), o()], false, vec!["⚠ Uyan yok"], 4),
-            (vec![o(), o(), o()], false, vec!["⚠ Uyan yok"], 3),
+            (vec![o(), o(), o(), o()], false, vec!["NoneAccepted"], 4),
+            (vec![o(), o(), o()], false, vec!["NoneAccepted"], 3),
             (
                 vec![o(), o(), o(), o(), o(), o(), o(), fits.clone()],
                 false,
-                vec!["⚠ Uyan yok"],
+                vec!["NoneAccepted"],
                 6,
             ),
             // Labeling mode lists every candidate anyway.
@@ -1580,12 +1580,7 @@ mod tests {
             let (status, body) = call(&app, uri).await;
             assert_eq!(status, StatusCode::OK, "case {i}");
             let list: Value = serde_json::from_str(&body).unwrap();
-            let langs: Vec<&str> = list["subtitles"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|s| s["lang"].as_str().unwrap())
-                .collect();
+            let langs = names(&app, &list).await;
             if !label_mode {
                 assert_eq!(langs, menu, "case {i}");
             }
@@ -1734,14 +1729,14 @@ mod tests {
                 None,
                 Some(&fits),
                 true,
-                vec!["⚠ Aday yok", "eng"],
+                vec!["NoCandidates", "eng"],
                 vec!["tur", "eng"],
             ),
             (
                 Some(&other),
                 Some(&fits),
                 true,
-                vec!["⚠ Uyan yok", "eng"],
+                vec!["NoneAccepted", "eng"],
                 vec!["tur", "eng"],
             ),
             (Some(&fits), Some(&fits), true, vec!["tur"], vec!["tur"]),
@@ -1749,10 +1744,10 @@ mod tests {
                 Some(&other),
                 Some(&other),
                 true,
-                vec!["⚠ Uyan yok"],
+                vec!["NoneAccepted"],
                 vec!["tur", "eng"],
             ),
-            (None, Some(&fits), false, vec!["⚠ Aday yok"], vec!["tur"]),
+            (None, Some(&fits), false, vec!["NoCandidates"], vec!["tur"]),
         ];
         for (i, (tur, eng, on, menu, searched)) in cases.into_iter().enumerate() {
             let mut srt = std::collections::HashMap::new();
@@ -1782,17 +1777,12 @@ mod tests {
             let (status, body) = call(&app, uri).await;
             assert_eq!(status, StatusCode::OK, "case {i}");
             let list: Value = serde_json::from_str(&body).unwrap();
-            let langs: Vec<&str> = list["subtitles"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|s| s["lang"].as_str().unwrap())
-                .collect();
+            let langs = names(&app, &list).await;
             assert_eq!(langs, menu, "case {i}");
             assert_eq!(*source.searched.lock().unwrap(), searched, "case {i}");
 
             // The English entry is the fitting subtitle, moved onto the ruler.
-            if let Some(n) = langs.iter().position(|&l| l == "eng") {
+            if let Some(n) = langs.iter().position(|l| l == "eng") {
                 let url = list["subtitles"][n]["url"].as_str().unwrap();
                 let path = url.trim_start_matches("http://127.0.0.1:7000").to_owned();
                 let (status, served) = call(&app, path).await;
@@ -1888,6 +1878,28 @@ mod tests {
     }
 
     /// The menu's languages and the path of each entry's file.
+    /// The menu's names, a notice by its kind: every notice has one name,
+    /// so its file tells which it is.
+    async fn names(app: &Router, list: &Value) -> Vec<String> {
+        let mut out = Vec::new();
+        for entry in list["subtitles"].as_array().unwrap() {
+            let lang = entry["lang"].as_str().unwrap();
+            if lang != menu::NOTICE_LANG {
+                out.push(lang.to_owned());
+                continue;
+            }
+            let url = entry["url"].as_str().unwrap();
+            let path = url.trim_start_matches("http://127.0.0.1:7000").to_owned();
+            let srt = call(app, path).await.1;
+            let notice = Notice::ALL
+                .into_iter()
+                .find(|n| n.entry().srt == srt)
+                .expect("a notice's file");
+            out.push(format!("{notice:?}"));
+        }
+        out
+    }
+
     async fn menu_of(app: &Router) -> Vec<(String, String)> {
         let uri = format!("/{TOKEN}/subtitles/movie/tt1/filename=A.mkv&videoSize=5.json");
         let (status, body) = call(app, uri).await;
@@ -1925,7 +1937,7 @@ mod tests {
         let app = translated_app(&head, &fits, translator.clone(), &cache);
         let menu = menu_of(&app).await;
         let langs: Vec<&str> = menu.iter().map(|(l, _)| l.as_str()).collect();
-        assert_eq!(langs, vec!["⚠ Aday yok", "Türkçe çeviri", "eng"]);
+        assert_eq!(langs, vec![menu::NOTICE_LANG, "Türkçe çeviri", "eng"]);
         let (english, translation) = (&menu[2].1, &menu[1].1);
         let english = srt::parse(&call(&app, english.clone()).await.1);
 
@@ -2139,7 +2151,7 @@ mod tests {
                 .with_fallback_lang("eng".to_owned()),
         );
         let langs: Vec<String> = menu_of(&app).await.into_iter().map(|(l, _)| l).collect();
-        assert_eq!(langs, vec!["⚠ Aday yok", "eng"]);
+        assert_eq!(langs, vec![menu::NOTICE_LANG, "eng"]);
     }
 
     async fn call(app: &Router, uri: String) -> (StatusCode, String) {

@@ -25,6 +25,11 @@ pub const KEEP_FOUND_S: u64 = 30 * 24 * 3600;
 pub const KEEP_NONE_S: u64 = 24 * 3600;
 pub const KEEP_PASSING_S: u64 = 60;
 
+/// The menu name of every notice: Stremio lists it as a language of its own.
+pub const NOTICE_LANG: &str = "SubSync Hata";
+/// A notice's one subtitle line runs from the start to past any video's end.
+const NOTICE_SPAN: &str = "00:00:00,000 --> 99:59:59,000";
+
 /// Why no subtitle is offered. Shown in Stremio's menu as one entry, so the
 /// viewer is not left waiting for nothing; the entry's "subtitle" explains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,66 +59,75 @@ pub enum Notice {
 }
 
 impl Notice {
-    /// Menu name (short: Stremio's menu cuts long names) and explanation.
+    /// Every notice, for tests that tell them apart by their text.
+    #[cfg(test)]
+    pub const ALL: [Notice; 10] = [
+        Self::NoEnglishTrack,
+        Self::ImageOnly,
+        Self::NotIndexed,
+        Self::NoStreamMatch,
+        Self::NoCandidates,
+        Self::NoneAccepted,
+        Self::NotMkv,
+        Self::Unsupported,
+        Self::Failed,
+        Self::NotReady,
+    ];
+
+    /// What happened and what the viewer can do about it.
     fn text(self) -> (&'static str, &'static str) {
         match self {
             Self::NoEnglishTrack => (
-                "⚠ İng. iz yok",
-                "SubSync: Bu dosyada İngilizce altyazı yok, senkron için cetvel \
-                 bulunamadı. Başka bir sürüm deneyin; WEB-DL sürümlerinde genelde metin \
-                 altyazı olur.",
+                "Dosyada İngilizce altyazı yok, senkron için cetvel bulunamadı.",
+                "Başka bir sürüm seçin; WEB-DL sürümlerinde genelde metin altyazı olur.",
             ),
             Self::ImageOnly => (
-                "⚠ İng. resim",
-                "SubSync: Bu dosyanın İngilizce altyazısı resim biçiminde ve \
-                 zamanları okunamadı, cetvel çıkarılamadı. WEB-DL ya da BluRay rip \
-                 bir sürüm deneyin.",
+                "Dosyanın İngilizce altyazısı resim biçiminde ve zamanları okunamadı.",
+                "WEB-DL ya da BluRay rip bir sürüm seçin.",
             ),
             Self::NotIndexed => (
-                "⚠ İz okunmuyor",
-                "SubSync: Bu dosyanın İngilizce altyazısı dizinlenmemiş; okumak için \
-                 dosyanın tamamı gerekir. Başka bir sürüm deneyin.",
+                "Dosyanın İngilizce altyazısı dizinlenmemiş; okumak için dosyanın tamamı gerekir.",
+                "Başka bir sürüm seçin.",
             ),
             Self::NoStreamMatch => (
-                "⚠ Dosya yok",
-                "SubSync: Oynatılan dosya AIOStreams listesinde bulunamadı.",
+                "Oynatılan dosya AIOStreams listesinde bulunamadı.",
+                "Sürümü AIOStreams listesinden seçip açın.",
             ),
             Self::NoCandidates => (
-                "⚠ Aday yok",
-                "SubSync: Bu yapım için aranan dilde altyazı bulunamadı.",
+                "Bu yapım için aranan dilde altyazı bulunamadı.",
+                "Menüde çeviri varsa onu seçin; altyazı 1 gün sonra yeniden aranır.",
             ),
             Self::NoneAccepted => (
-                "⚠ Uyan yok",
-                "SubSync: Bulunan altyazıların hiçbiri bu dosyaya baştan sona oturmadı.",
+                "Bulunan altyazıların hiçbiri bu dosyaya baştan sona oturmadı.",
+                "Menüde çeviri varsa onu seçin ya da başka bir sürüm deneyin.",
             ),
             Self::NotMkv => (
-                "⚠ MKV değil",
-                "SubSync: Dosya MKV değil ya da debrid servisi henüz hazırlamadı. \
-                 Hazırsa videoyu biraz sonra yeniden açın.",
+                "Dosya MKV değil ya da debrid servisi henüz hazırlamadı.",
+                "Videoyu bir dakika sonra yeniden açın.",
             ),
             Self::Unsupported => (
-                "⚠ Biçim dışı",
-                "SubSync: Bu dosya biçiminde (AVI, TS ya da parçalı MP4) gömülü \
-                 altyazı zamanları okunamıyor, senkron için cetvel yok. MKV sürümü deneyin.",
+                "Bu dosya biçiminde (AVI, TS ya da parçalı MP4) altyazı zamanları okunamıyor.",
+                "MKV sürümünü seçin.",
             ),
             Self::Failed => (
-                "⚠ Geçici hata",
-                "SubSync: Bir kaynağa ulaşılamadı. Videoyu biraz sonra yeniden açın.",
+                "Bir kaynağa ulaşılamadı.",
+                "Videoyu bir dakika sonra yeniden açın.",
             ),
             Self::NotReady => (
-                "⚠ Hazırlanıyor",
-                "SubSync: Altyazı hâlâ hazırlanıyor. Videoyu birkaç saniye sonra yeniden açın.",
+                "Altyazı hâlâ hazırlanıyor.",
+                "Videoyu birkaç saniye sonra yeniden açın.",
             ),
         }
     }
 
-    /// The menu entry: the reason as its name, the explanation as a
-    /// subtitle shown for the first ten seconds.
+    /// The menu entry: named [`NOTICE_LANG`] whatever the reason; picked,
+    /// it shows what happened and what to do for the whole video, so it is
+    /// seen wherever the viewer picks it.
     pub fn entry(self) -> MenuEntry {
-        let (lang, message) = self.text();
+        let (what, todo) = self.text();
         MenuEntry {
-            lang: lang.to_owned(),
-            srt: format!("1\n00:00:01,000 --> 00:00:10,000\n{message}\n\n"),
+            lang: NOTICE_LANG.to_owned(),
+            srt: format!("1\n{NOTICE_SPAN}\nSubSync Hata: {what}\nNe yapmalı: {todo}\n\n"),
             translated: false,
         }
     }
@@ -547,31 +561,29 @@ mod tests {
     }
 
     #[test]
-    fn notice_entry_names_the_reason_and_explains() {
+    fn notice_entry_is_one_name_and_explains_for_the_whole_video() {
         let entry = Notice::NoEnglishTrack.entry();
-        assert_eq!(entry.lang, "⚠ İng. iz yok");
         let cues = srt::parse(&entry.srt);
         assert_eq!(cues.len(), 1);
-        assert_eq!((cues[0].start_ms, cues[0].end_ms), (1_000, 10_000));
-        assert!(
-            cues[0]
-                .text
-                .starts_with("SubSync: Bu dosyada İngilizce altyazı yok")
+        assert_eq!(cues[0].start_ms, 0);
+        assert!(cues[0].end_ms >= 99 * 3_600_000);
+        assert_eq!(
+            cues[0].text,
+            "SubSync Hata: Dosyada İngilizce altyazı yok, senkron için cetvel bulunamadı.\n\
+             Ne yapmalı: Başka bir sürüm seçin; WEB-DL sürümlerinde genelde metin altyazı olur."
         );
-        // Short enough for Stremio's menu.
-        for notice in [
-            Notice::NoEnglishTrack,
-            Notice::ImageOnly,
-            Notice::NotIndexed,
-            Notice::NoStreamMatch,
-            Notice::NoCandidates,
-            Notice::NoneAccepted,
-            Notice::NotMkv,
-            Notice::Unsupported,
-            Notice::Failed,
-            Notice::NotReady,
-        ] {
-            assert!(notice.entry().lang.chars().count() <= 14, "{notice:?}");
+        let mut texts = std::collections::HashSet::new();
+        for notice in Notice::ALL {
+            let entry = notice.entry();
+            assert_eq!(entry.lang, NOTICE_LANG, "{notice:?}");
+            let cues = srt::parse(&entry.srt);
+            assert_eq!(cues.len(), 1, "{notice:?}");
+            let lines: Vec<&str> = cues[0].text.lines().collect();
+            assert_eq!(lines.len(), 2, "{notice:?}");
+            assert!(lines[0].starts_with("SubSync Hata: "), "{notice:?}");
+            assert!(lines[1].starts_with("Ne yapmalı: "), "{notice:?}");
+            // Tests tell notices apart by their text.
+            assert!(texts.insert(entry.srt), "{notice:?}");
         }
         assert_eq!(Notice::NotReady.keep_s(), KEEP_PASSING_S);
         assert_eq!(Notice::NoneAccepted.keep_s(), KEEP_NONE_S);
