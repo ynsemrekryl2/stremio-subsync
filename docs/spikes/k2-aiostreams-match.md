@@ -69,6 +69,7 @@ eklenir. Tercihen hem Real-Debrid hem TorBox'tan gelen stream'ler denenir.
 | 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü | Real-Debrid | 14 | 1 | 1 | 1 | `Http { same_host: false }` | 416 |
 | 2026-10-27 | Stremio masaüstü, macOS | dizi bölümü (range açık) | Real-Debrid | 16 | 1 | 1 | 1 | `Http { same_host: false }` | 601 |
 | 2026-10-27 | Stremio masaüstü, macOS | aynı bölüm, 2. istek | Real-Debrid | 16 | 1 | 1 | 1 | `Http { same_host: false }` | 760 |
+| 2026-10-31 | Stremio (VPS üzerinden) | film | TorBox | 29 | 1 | 1 | 1 | `Http { same_host: false }` | 5838 |
 
 Range okuma sonuçları:
 
@@ -76,6 +77,7 @@ Range okuma sonuçları:
 |---|---|---|---|---|---|---|---|---|---|
 | bölüm, 1. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 1246 |
 | bölüm, 2. istek | `[Other, RealDebrid]` | 206 | ✓ | ✓ | ✓ | `Other` | 65536 | ✓ | 658 |
+| TorBox film (VPS IP'si) | `[Other, TorBox]` | 206 | ✓ | ✓ | ✓ | `Matroska` | 65536 | ✓ | 540 |
 
 İkinci tur (2026-10-27, range ve K3 açık): 16 istek daha (film ve dizi,
 9–41 stream); **hepsinde `both: 1`**. Ayrıntılar K3 notunda.
@@ -117,7 +119,7 @@ MKV'ydi; boyut karşılaştırması tek başına "gerçek dosya değil" demek de
 - **Dizi bölümleri (2 örnek):** aynı tablo; her ikisinde de `both: 1`. Şu ana
   kadar 3/3 örnekte filename + boyut tek stream'i kesin seçiyor, `filename_loose`
   hiçbirinde ek aday getirmedi.
-- TorBox aboneliği bitti; tüm örnekler Real-Debrid. TorBox ölçümü SS-007'de.
+- 2026-10-27'deki örneklerin hepsi Real-Debrid. TorBox: aşağıda (SS-007).
 - Stream listesi ilk istekte ~1,5 sn, sonrakilerde ~0,4 sn'de geldi; altyazı yanıtını bekletmediği için oynatmayı
   etkilemedi. Gerçek akışta bu süre altyazı gecikmesine eklenecek; cache gerekli.
 - `content: Other`: Real-Debrid `Content-Type` olarak video/octet-stream dışı
@@ -125,6 +127,23 @@ MKV'ydi; boyut karşılaştırması tek başına "gerçek dosya değil" demek de
   güvenilmemeli.
 - Aynı oturumda iki `route=none token=bad status=404` isteği düştü. Funnel genel
   adres olduğu için tarayıcı/bot istekleri olabilir; add-on'u etkilemiyor.
+
+## TorBox (SS-007, 2026-10-31)
+
+AIOStreams'te Real-Debrid ve TorBox birlikte açık; okumalar Oracle
+sunucusunun IP'sinden, oynatma evden. İlk tur: 1 film.
+
+- **Eşleşme:** 29 stream'de `both: 1`. TorBox stream'leri de `filename` ve
+  `videoSize` taşıyor; eşleşme Real-Debrid'deki gibi çalışıyor.
+- **URL davranışı:** tek yönlendirmeyle TorBox CDN'ine gidiyor
+  (`hops: [Other, TorBox]`). Range'e uyuluyor (206), boyut `videoSize` ile
+  aynı. Real-Debrid'den farkı: `Content-Type` doğru (`Matroska`).
+- **Süre:** stream listesi 5,8 sn. RD'li sunucu ölçümlerinde de ilk istek
+  5,5–8,4 sn sürdüğü oldu; TorBox'a özgü sayılmaz. İlk 64 KB 0,54 sn.
+- **Yan etki:** dosya TorBox'ta hazırdı; hazır olmayan bir dosyada URL
+  çağrısının indirme başlatıp başlatmadığı bu turda görülmedi.
+- **Seçim kuralı notu:** aynı dosya iki debrid'de de varsa listede ilk gelen
+  okunur; okumanın hangi debrid'e gittiği `hops`'tan anlaşılır.
 
 ## Boyutla eşleşme (SS-020, 2026-10-29)
 

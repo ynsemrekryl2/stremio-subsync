@@ -16,7 +16,9 @@ Stremio oynatması evden sürerken aynı filmi okudu: AIOStreams 14 stream,
 menüye ~7 sn. Debrid sunucu IP'sinden gelen okumayı reddetmedi, oynatma
 kesilmedi. İstek tekrarında (Stremio aynı isteği iki kez attı) okuma yine
 sorunsuz.
-TorBox: SS-007.
+
+**TorBox (2026-10-31, SS-007): evet**, VPS IP'sinden. 206, `Accept-Ranges`,
+boyut tutuyor, `Content-Type: video/x-matroska`. Ayrıntı K2 notunda.
 
 ## Yöntem
 
@@ -69,6 +71,7 @@ Her satır bir dosya. `İng. metin iz(ler)i` sütunu codec ve `cue_points`.
 | 15 | 2026-10-27 | dizi bölümü | RD | 30 KB | 1229 (678) | SRT: 551 | **evet** | 1 / 30 KB |
 | 16 | 2026-10-27 | film | RD | 59 KB | 2715 (2715) | SRT: **0** (fr-CA, es-419 SRT: 0) | **hayır** — Cues yalnız video | 1 / 60 KB |
 | 17 | 2026-10-27 | dizi bölümü | RD | 22 KB | 896 (369) | SRT: 527 | **evet** | 1 / 23 KB |
+| 18 | 2026-10-31 | film | TorBox | 118 KB | 4969 (2837) | SRT: 1132 (+ pl SRT: 1000) | **evet** | 1 / 119 KB |
 
 MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
 
@@ -98,7 +101,8 @@ MKV olmayan / gerçek dosya olmayan eşleşmeler (K3 sayımına girmez):
   ayrı bir satır yok: ya Stremio altyazı istemedi, ya da hata yalnız oynatıcı
   tarafında oldu. Sayılan her satırda EBML başlığı, Tracks ve Cues dosyanın
   kendisinden okunduğu için sayımı etkilemiyor.
-- Açık kalanlar: TorBox (SS-007). VPS IP'sinden okuma SS-008 ile doğrulandı.
+- Açık kalanlar: TorBox'ta 10 dosya (SS-007; 2026-10-31 itibarıyla 1/10,
+  o da indekslenmiş). VPS IP'sinden okuma SS-008 ile doğrulandı.
 
 ## Notlar
 
