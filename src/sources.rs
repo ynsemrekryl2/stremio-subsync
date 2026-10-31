@@ -1,6 +1,6 @@
 //! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on),
-//! SubDL, AltyaziDB and SubSource (free keys) for one title and language, and
-//! one candidate's SRT bytes.
+//! SubDL, AltyaziDB, SubSource and Wyzie (free keys) for one title and
+//! language, and one candidate's SRT bytes.
 //!
 //! IMDb ids, release names, download links and the source keys never reach
 //! the log: `Debug` on these types prints only kinds, counts and flags.
@@ -33,6 +33,7 @@ const SUBDL_DOWNLOAD: &str = "https://dl.subdl.com";
 const ALTYAZIDB_SEARCH: &str = "https://altyazidb.com/api/v1/search";
 const ALTYAZIDB_SUBTITLE: &str = "https://altyazidb.com/api/v1/subtitle";
 const SUBSOURCE_API: &str = "https://api.subsource.net/api/v1";
+const WYZIE_SEARCH: &str = "https://sub.wyzie.io/search";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -107,6 +108,16 @@ impl Query {
         };
         same(self.season, season) && same(self.episode, episode)
     }
+
+    /// False when release names mark episodes and none is the asked one;
+    /// names with no mark (season packs) fit.
+    fn names_fit<'n>(&self, names: impl IntoIterator<Item = &'n str>) -> bool {
+        let (Some(season), Some(episode)) = (self.season, self.episode) else {
+            return true;
+        };
+        let marks: Vec<_> = names.into_iter().flat_map(episode_marks).collect();
+        marks.is_empty() || marks.contains(&(season, episode))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -115,6 +126,7 @@ pub enum SourceKind {
     SubDl,
     AltyaziDb,
     SubSource,
+    Wyzie,
 }
 
 /// One subtitle a source offers. `Debug` shows no name and no link.
@@ -475,17 +487,7 @@ pub fn parse_subsource(body: &[u8], query: &Query) -> Result<Vec<Candidate>, Sou
             })
         })
         .filter(|e| e.foreign_parts != Some(true))
-        .filter(|e| {
-            let (Some(season), Some(episode)) = (query.season, query.episode) else {
-                return true;
-            };
-            let marks: Vec<_> = e
-                .release_info
-                .iter()
-                .flat_map(|r| episode_marks(r))
-                .collect();
-            marks.is_empty() || marks.contains(&(season, episode))
-        })
+        .filter(|e| query.names_fit(e.release_info.iter().map(String::as_str)))
         .filter_map(|e| {
             let id = e.subtitle_id.as_u64()?;
             let release = e
@@ -542,6 +544,68 @@ pub fn subsource_language(lang: &str) -> Option<&'static str> {
         "ukr" => "ukrainian",
         _ => return None,
     })
+}
+
+#[derive(Deserialize)]
+struct WzEntry {
+    url: Option<String>,
+    language: Option<String>,
+    format: Option<String>,
+    release: Option<String>,
+    releases: Option<Vec<String>>,
+    #[serde(rename = "fileName")]
+    file_name: Option<String>,
+    #[serde(rename = "isHearingImpaired")]
+    hearing_impaired: Option<bool>,
+    /// True for a machine translation.
+    ai: Option<bool>,
+}
+
+/// Wyzie list (filtered by language, format and episode on the server), kept
+/// to the language, SRT and, when a release names episodes, `query`'s.
+/// Machine translations are left out, as on AltyaziDB (SS-052).
+pub fn parse_wyzie(body: &[u8], query: &Query) -> Result<Vec<Candidate>, SourceError> {
+    let list: Vec<WzEntry> = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
+    let lang = wyzie_language(&query.lang);
+    Ok(list
+        .into_iter()
+        .filter(|e| lang.is_some() && e.language.as_deref() == lang.as_deref())
+        .filter(|e| {
+            e.format
+                .as_deref()
+                .is_none_or(|f| f.eq_ignore_ascii_case("srt"))
+        })
+        .filter(|e| e.ai != Some(true))
+        .filter_map(|e| {
+            let link = e.url.filter(|u| u.starts_with("https://"))?;
+            let file = e.file_name.map(|n| rank::strip_extension(&n).to_owned());
+            let names: Vec<String> = [e.release, file]
+                .into_iter()
+                .flatten()
+                .chain(e.releases.unwrap_or_default())
+                .collect();
+            if !query.names_fit(names.iter().map(String::as_str)) {
+                return None;
+            }
+            Some(Candidate {
+                source: SourceKind::Wyzie,
+                release: names
+                    .into_iter()
+                    .max_by_key(|n| word_count(n))
+                    .unwrap_or_default(),
+                fps_milli: None,
+                hearing_impaired: e.hearing_impaired,
+                link,
+            })
+        })
+        .collect())
+}
+
+/// Wyzie's language code (ISO 639-1) for an ISO 639-2 one.
+pub fn wyzie_language(lang: &str) -> Option<String> {
+    subdl_language(lang)
+        .filter(|c| c.len() == 2)
+        .map(str::to_ascii_lowercase)
 }
 
 /// `(season, episode)` pairs written in a file name: `S01E02`, `s1e2`, `1x02`.
@@ -899,6 +963,68 @@ impl SubtitleSource for SubSource {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
             pick_srt(&get_capped(self.get(url)).await?, query)
+        })
+    }
+}
+
+/// Wyzie Subs with the user's key. No `Debug`: the key is part of every
+/// search URL. Download links carry Wyzie's own token, not the key.
+pub struct Wyzie {
+    key: String,
+    client: reqwest::Client,
+}
+
+impl Wyzie {
+    pub fn new(key: String) -> Option<Self> {
+        Some(Self {
+            key,
+            client: client()?,
+        })
+    }
+}
+
+impl SubtitleSource for Wyzie {
+    fn kind(&self) -> SourceKind {
+        SourceKind::Wyzie
+    }
+
+    fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a> {
+        Box::pin(async move {
+            let Some(language) = wyzie_language(&query.lang) else {
+                return Ok(Vec::new());
+            };
+            let mut params = vec![
+                ("id", query.imdb.clone()),
+                ("language", language),
+                ("format", "srt".to_owned()),
+                // Every source the key may use (charlie and lima on a free one).
+                ("source", "all".to_owned()),
+                ("limit", "50".to_owned()),
+                ("key", self.key.clone()),
+            ];
+            if let (Some(s), Some(e)) = (query.season, query.episode) {
+                params.push(("season", s.to_string()));
+                params.push(("episode", e.to_string()));
+            }
+            let url =
+                Url::parse_with_params(WYZIE_SEARCH, &params).map_err(|_| SourceError::Other)?;
+            parse_wyzie(&get_capped(self.client.get(url)).await?, query)
+        })
+    }
+
+    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+        Box::pin(async move {
+            let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
+            let body = get_capped(self.client.get(url)).await?;
+            // An archive the server did not unpack.
+            if body.starts_with(b"PK") {
+                return pick_srt(&body, query);
+            }
+            // Errors come back as JSON; a subtitle never starts with `{`.
+            if body.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{') {
+                return Err(SourceError::NoSubtitle);
+            }
+            Ok(body)
         })
     }
 }
@@ -1279,6 +1405,45 @@ mod tests {
             Ok(Vec::new())
         );
         assert_eq!(subsource_language("eng"), Some("english"));
+    }
+
+    #[test]
+    fn wyzie_keeps_language_srt_and_episode_but_not_machine() {
+        let url = |id: u32| format!("https://sub.wyzie.io/c/abc/id/{id}?format=srt&tok=t");
+        let body = json!([
+            { "id": "301", "url": url(301), "format": "srt", "language": "tr",
+              "isHearingImpaired": true, "source": "charlie", "release": "Show.S01E02.720p",
+              "releases": ["Show.S01E02.1080p.WEB.h264-FLUX"], "fileName": "show.s01e02.srt",
+              "ai": false },
+            { "id": "302", "url": url(302), "format": "srt", "language": "tr",
+              "release": "Show.S01.1080p.BluRay", "releases": null },
+            { "id": "303", "url": url(303), "format": "srt", "language": "tr",
+              "release": "Show.S01E05.720p" },
+            { "id": "304", "url": url(304), "format": "srt", "language": "en",
+              "release": "Show.S01E02.720p" },
+            { "id": "305", "url": url(305), "format": "ass", "language": "tr",
+              "release": "Show.S01E02.720p" },
+            { "id": "306", "url": url(306), "format": "srt", "language": "tr",
+              "release": "Show.S01E02.720p", "ai": true },
+            { "id": "307", "url": "http://sub.wyzie.io/c/x", "format": "srt", "language": "tr" }
+        ])
+        .to_string();
+        let found = parse_wyzie(body.as_bytes(), &episode()).unwrap();
+        let links: Vec<&str> = found.iter().map(|c| c.link.as_str()).collect();
+        assert_eq!(links, vec![url(301), url(302)]);
+        assert_eq!(found[0].source, SourceKind::Wyzie);
+        assert_eq!(found[0].release, "Show.S01E02.1080p.WEB.h264-FLUX");
+        assert_eq!(found[0].hearing_impaired, Some(true));
+        assert_eq!(found[1].release, "Show.S01.1080p.BluRay");
+        assert_eq!(found[1].hearing_impaired, None);
+        assert_eq!(parse_wyzie(b"[]", &episode()), Ok(Vec::new()));
+        assert_eq!(
+            parse_wyzie(br#"{"error":"bad key"}"#, &episode()),
+            Err(SourceError::Decode)
+        );
+        let other_lang = Query::new("series", "tt0903747:1:2", "pob").unwrap();
+        assert_eq!(parse_wyzie(body.as_bytes(), &other_lang), Ok(Vec::new()));
+        assert_eq!(wyzie_language("tur").as_deref(), Some("tr"));
     }
 
     #[test]

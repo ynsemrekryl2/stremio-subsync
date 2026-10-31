@@ -10,6 +10,7 @@
 #   scripts/dev.sh subdl       save a SubDL API key (hidden input); later starts use it
 #   scripts/dev.sh altyazidb   save an AltyaziDB API key (hidden input); later starts use it
 #   scripts/dev.sh subsource   save a SubSource API key (hidden input); later starts use it
+#   scripts/dev.sh wyzie       save a Wyzie Subs API key (hidden input); later starts use it
 #   scripts/dev.sh openrouter  save an OpenRouter API key (hidden input); later starts
 #                              translate the fitting English subtitle with it
 #   scripts/dev.sh translate-check <english.srt> [out.srt]
@@ -67,6 +68,15 @@ subsource)
 	echo "SubSource key saved; restart the server to use it"
 	exit 0
 	;;
+wyzie)
+	read -rsp "Wyzie Subs API key (hidden, Enter): " key
+	echo
+	[ -n "$key" ] || { echo "empty key, nothing saved" >&2; exit 1; }
+	store wyzie-key "$key"
+	unset key
+	echo "Wyzie key saved; restart the server to use it"
+	exit 0
+	;;
 openrouter)
 	read -rsp "OpenRouter API key (hidden, Enter): " key
 	echo
@@ -91,12 +101,13 @@ forget)
 	security delete-generic-password -s "$service" -a subdl-key >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a altyazidb-key >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a subsource-key >/dev/null 2>&1 || true
+	security delete-generic-password -s "$service" -a wyzie-key >/dev/null 2>&1 || true
 	security delete-generic-password -s "$service" -a openrouter-key >/dev/null 2>&1 || true
 	echo "secrets removed from the Keychain ($service)"
 	exit 0
 	;;
 *)
-	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|altyazidb|subsource|openrouter|translate-check|balance-check|forget]" >&2
+	echo "usage: scripts/dev.sh [start|link|dashboard|subdl|altyazidb|subsource|wyzie|openrouter|translate-check|balance-check|forget]" >&2
 	exit 2
 	;;
 esac
@@ -130,6 +141,10 @@ fi
 if [ -z "${SUBSOURCE_API_KEY:-}" ] && [ -n "$(secret subsource-key)" ]; then
 	SUBSOURCE_API_KEY="$(secret subsource-key)"
 	export SUBSOURCE_API_KEY
+fi
+if [ -z "${WYZIE_API_KEY:-}" ] && [ -n "$(secret wyzie-key)" ]; then
+	WYZIE_API_KEY="$(secret wyzie-key)"
+	export WYZIE_API_KEY
 fi
 # Optional translation of the fitting English subtitle (SS-026).
 if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -n "$(secret openrouter-key)" ]; then
