@@ -59,9 +59,11 @@ haftada bir güncellenir). Listede IMDb karşılığı olmayan başlıklar aranm
 Eski bir kurulumda Kitsu bölümlerinde SubSync görünmüyorsa eklentiyi
 Stremio'ya yeniden kur.
 
-Aynı sayfa bir panel de: her isteğin sonucu, kaynakların durumu, süren
-çeviriler ve maliyeti, cache temizleme, yeniden başlatma, çeviri modeli.
-Stremio'da eklentinin **Configure** düğmesi de bu sayfayı açar.
+Aynı sayfa bir panel de, üç sekmeli: **Durum** (son isteklerin özeti,
+kaynakların durumu, süren çeviriler ve maliyeti, her isteğin sonucu),
+**Kurulum** (bağlantılar, anahtarlar, Stremio'ya kurma, yedek) ve
+**Ayarlar** (çeviri modeli, cache temizleme, yeniden başlatma). Stremio'da
+eklentinin **Configure** düğmesi bu sayfayı Kurulum sekmesinde açar.
 
 ## Bir şey olursa
 

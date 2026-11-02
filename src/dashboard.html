@@ -42,18 +42,46 @@ a { color: var(--accent); }
 section, details.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
 .sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-bottom: 4px; }
 .sec-note { font-size: 13px; color: var(--muted); margin-bottom: 10px; max-width: 75ch; }
+.small { font-size: 12px; }
+.tabs { display: flex; gap: 4px; margin-top: 10px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs a { display: flex; align-items: center; gap: 6px; padding: 8px 14px; margin-bottom: -1px; white-space: nowrap;
+  color: var(--muted); font-weight: 600; text-decoration: none; border-bottom: 2px solid transparent; }
+.tabs a:hover { color: var(--text); }
+.tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.need-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.need-dot[hidden], .tab[hidden] { display: none; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 2px;
+  align-content: start; min-width: 0; }
+.tile .n { font-size: 26px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.tile .label { font-size: 13px; font-weight: 600; }
+.tile .sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.tile.ok .n { color: var(--ok); } .tile.warn .n { color: var(--warn); } .tile.bad .n { color: var(--bad); }
+.tile.info .n { color: var(--accent); } .tile.off .n { color: var(--muted); font-size: 18px; }
+.overview-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 10px; font-size: 12px;
+  color: var(--muted); }
+.health { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .requests, .jobs { display: grid; gap: 10px; }
-.req { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
-.req.ok { border-left-color: var(--ok); } .req.warn { border-left-color: var(--warn); }
-.req.bad { border-left-color: var(--bad); } .req.wait { border-left-color: var(--accent); }
-.req .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
-.req .headline { font-weight: 600; font-size: 15px; flex: 1 1 260px; }
+.requests { gap: 6px; }
+details.req { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; }
+details.req.ok { border-left-color: var(--ok); } details.req.warn { border-left-color: var(--warn); }
+details.req.bad { border-left-color: var(--bad); } details.req.wait { border-left-color: var(--accent); }
+details.req > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 2px 12px; padding: 8px 12px; }
+details.req > summary::-webkit-details-marker { display: none; }
+details.req > summary::before { content: "›"; display: inline-block; width: 8px; color: var(--muted);
+  transition: transform .15s; }
+details.req[open] > summary::before { transform: rotate(90deg); }
+.req .headline { font-weight: 600; }
 .req.ok .headline { color: var(--ok); } .req.warn .headline { color: var(--warn); }
 .req.bad .headline { color: var(--bad); }
-.req .when { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.req .file { overflow-wrap: anywhere; font-size: 13px; }
+.req .file { flex: 1 1 200px; min-width: 0; font-size: 13px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.req[open] .file { white-space: normal; overflow-wrap: anywhere; color: var(--text); }
+.req .when { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.req .body { display: grid; gap: 6px; padding: 0 12px 10px 32px; }
+.req .body:empty { display: none; }
 .req .why { font-size: 13px; color: var(--muted); }
-.req .why b { color: var(--text); font-weight: 600; }
 dl.steps { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 2px 0 0; font-size: 13px; }
 dl.steps dt { color: var(--muted); }
 dl.steps dd { margin: 0; overflow-wrap: anywhere; }
@@ -164,6 +192,8 @@ dl.terms dd { margin: 0; color: var(--muted); }
   dl.terms { grid-template-columns: 1fr; gap: 0; }
   dl.terms dd { margin-bottom: 8px; }
   .row { grid-template-columns: 56px 1fr; } .row .area { display: none; }
+  .req .body { padding-left: 12px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
 </head>
@@ -171,181 +201,211 @@ dl.terms dd { margin: 0; color: var(--muted); }
 <main>
   <header>
     <div class="title">
-      <h1>SubSync paneli</h1>
+      <h1>SubSync</h1>
       <span id="conn" class="pill">bağlanıyor…</span>
+      <span id="uptime" class="muted small"></span>
     </div>
-    <p class="lead">Stremio'nun altyazı isteklerini, her isteğin nasıl sonuçlandığını ve süren çevirileri canlı gösterir.
-      Veriler yalnız sunucunun belleğinde durur; sunucu yeniden başlayınca sıfırlanır.</p>
-    <div class="meta-line">
-      <span id="uptime"></span>
-      <span id="sources-on"></span>
-      <span id="translator"></span>
-      <span id="missed"></span>
-    </div>
+    <nav class="tabs" aria-label="Bölümler">
+      <a href="#durum" data-tab="durum">Durum</a>
+      <a href="#kurulum" data-tab="kurulum">Kurulum <span class="need-dot" id="setup-dot" title="AIOStreams linki eksik" hidden></span></a>
+      <a href="#ayarlar" data-tab="ayarlar">Ayarlar</a>
+    </nav>
   </header>
 
-  <details class="box" id="setup">
-    <summary>Kurulum <small id="setup-sum">bağlantılar, anahtarlar ve Stremio'ya kurulum</small></summary>
-    <p class="banner" id="setup-need" hidden>Altyazı üretmek için önce <b>AIOStreams linki</b> gerekiyor:
-      oynatılan dosya onunla bulunur. Aşağıya girip kaydet.</p>
-    <p class="sec-note">Bu sayfanın adresi kurulum linkinin gizli parçasını taşır; kimseyle paylaşma.
-      Kaydedilen değerler sunucuda yalnız eklentinin okuyabildiği bir dosyada durur ve buraya bir daha gösterilmez;
-      yalnız «kayıtlı» ya da «yok» görünür. Boş bıraktığın alan değişmez.</p>
-    <div class="install">
-      <a class="primary" id="install-app">Stremio'ya kur</a>
-      <a id="install-web" target="_blank" rel="noreferrer">Stremio Web'de kur</a>
-      <button type="button" id="copy-link">Kurulum linkini kopyala</button>
-    </div>
-    <form id="secrets-form">
-      <div class="keys" id="keys"><div class="empty">Yükleniyor…</div></div>
-      <div class="actions">
-        <button type="submit" class="primary" id="secrets-save" disabled>Kaydet</button>
+  <div class="tab" data-tab="durum">
+    <p class="banner" id="status-need" hidden>AIOStreams linki girilmemiş; altyazı üretilmez.
+      <a href="#kurulum">Kuruluma git</a></p>
+
+    <section class="overview">
+      <div class="tiles" id="tiles"></div>
+      <div class="overview-foot">
+        <span id="tally"></span>
+        <span class="health"><span class="muted">Kaynaklar:</span> <span class="chips" id="health"></span></span>
       </div>
-    </form>
-    <p class="hint" id="setup-note"></p>
-    <div class="actions-list">
-      <div class="action">
-        <div>
-          <b>Yedeği indir</b>
-          <small>Kurulum linkinin gizli parçası, bütün bağlantı ve anahtarlar ve çeviri ayarı tek dosyada. Sunucu
-            silinirse yeni sunucuda «Yedekten yükle» ile hepsi geri gelir; sunucunun adresi aynıysa Stremio'daki
-            eklentiye dokunmak gerekmez. <b>Dosya bütün şifrelerini taşır:</b> şifre yöneticinde sakla, kimseye
-            gönderme. Bir anahtarı değiştirince yeni yedek al.</small>
+      <p class="hint muted" id="missed"></p>
+    </section>
+
+    <section id="jobs-section" hidden>
+      <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted small"></span></div>
+      <p class="sec-note">Hedef dilde uyan altyazı yoksa dosyaya oturan İngilizce çevrilir. Çeviri sürerken menüdeki
+        çeviri girdisi o ana kadar çevrileni verir; yeniden seçmek daha uzununu getirir.</p>
+      <div id="jobs" class="jobs"></div>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2>Son istekler</h2><span class="muted small">en yeni üstte, son 30</span></div>
+      <p class="sec-note">Ayrıntı için satıra tıkla. Veriler sunucunun belleğinde durur, yeniden başlayınca sıfırlanır.</p>
+      <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok. Stremio'da bir video açınca burada görünür.</div></div>
+    </section>
+
+    <details class="box" id="glossary">
+      <summary>Terimler <small>istek ayrıntılarında geçen kelimeler ne demek</small></summary>
+      <dl class="terms">
+        <dt>Cetvel</dt>
+        <dd>Videonun içindeki İngilizce altyazının zaman çizelgesi. Metni okunmaz, yalnız her satırın ne zaman
+          başlayıp bittiği alınır. Dışarıdan bulunan altyazılar bu zamanlara oturtulur.</dd>
+        <dt>Dizin (Cues)</dt>
+        <dd>MKV dosyasının içindeki atlama tablosu. Altyazı satırlarının zamanları buradan okunur, böylece
+          dosyanın tamamı indirilmez. İz dizinde yoksa okunamaz.</dd>
+        <dt>Metin / PGS altyazı</dt>
+        <dd>Metin altyazı (SRT, ASS) doğrudan cetvel olur. PGS resim biçimindedir; metin altyazı yoksa
+          onun zamanları cetvel olarak kullanılır.</dd>
+        <dt>Aday</dt>
+        <dd>OpenSubtitles, The Subtitle Database, SubDL, AltyaziDB, SubSource ya da Wyzie'de bulunan, hedef dildeki
+          altyazı (SRT, ASS ya da VTT; ZIP, RAR ya da gzip arşivinde de olabilir). Dosya adına en çok benzeyen 3'ü indirilir;
+          hiçbiri uymazsa sıradaki 3'ü de denenir. Önceki bir indirmeyle aynı satırları taşıyan kopya sayılmaz,
+          yerine sıradaki indirilir.</dd>
+        <dt>Hizalama, kabul</dt>
+        <dd>Adayın satırları cetvele kaydırılarak (gerekirse 25↔24 fps düzeltmesiyle) oturtulur. Başta, ortada
+          ve sonda aynı kaydırma tutarsa aday kabul edilir ve menüye konur.</dd>
+        <dt>İsabet</dt>
+        <dd>Cetvel satırlarının yüzde kaçının bir aday satırıyla aynı anda başladığı. Yüksek isabet iyi oturma demektir.</dd>
+        <dt>Yerel kabul</dt>
+        <dd>Kayma film boyunca adım adım değişiyorsa satırlar bölge bölge kaydırılır; her bölge tutarsa
+          aday yine kabul edilir.</dd>
+        <dt>İngilizce yedek</dt>
+        <dd>Hedef dilde uyan altyazı yoksa, dosyaya oturan İngilizce aday menüye konur ve hedef dile çevrilir.</dd>
+        <dt>Cache</dt>
+        <dd>Sonuçlar saklanır: bulunan altyazı 30 gün, "uygun yok" cevabı 1 gün, geçici hatalar 60 saniye.
+          Bu sürede aynı dosya yeniden okunmaz. «Ayarlar» sekmesindeki tuşla hepsi silinebilir.</dd>
+        <dt>Maliyet</dt>
+        <dd>Bir çevirinin OpenRouter'a ödediği tutar, sağlayıcının kendi bildirdiği değer (ABD doları).
+          Diskten gelen çeviri yeniden ödenmez.</dd>
+      </dl>
+    </details>
+
+    <details class="box" id="log-box">
+      <summary>Ham olay akışı <small>sunucunun log satırları, sorun ararken</small></summary>
+      <div class="tools" id="tools">
+        <button id="pause" aria-pressed="false">Duraklat</button>
+        <input id="search" type="search" placeholder="Süz…" aria-label="Olayları süz">
+      </div>
+      <div id="log"><div class="empty">Olay bekleniyor…</div></div>
+    </details>
+  </div>
+
+  <div class="tab" data-tab="kurulum" hidden>
+    <section id="setup">
+      <div class="sec-head"><h2>Bağlantılar ve anahtarlar</h2></div>
+      <p class="banner" id="setup-need" hidden>Altyazı üretmek için önce <b>AIOStreams linki</b> gerekiyor:
+        oynatılan dosya onunla bulunur. Aşağıya girip kaydet.</p>
+      <p class="sec-note">Kaydedilen değerler sunucuda yalnız eklentinin okuyabildiği bir dosyada durur ve buraya bir
+        daha gösterilmez; yalnız «kayıtlı» ya da «yok» görünür. Boş bıraktığın alan değişmez.</p>
+      <form id="secrets-form">
+        <div class="keys" id="keys"><div class="empty">Yükleniyor…</div></div>
+        <div class="actions">
+          <button type="submit" class="primary" id="secrets-save" disabled>Kaydet</button>
         </div>
-        <a class="button" href="backup" download="subsync-backup.json">Yedeği indir</a>
+      </form>
+      <p class="hint" id="setup-note"></p>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2>Stremio'ya kur</h2></div>
+      <p class="sec-note">Eklenti Stremio hesabına eklenir; aynı hesaptaki TV'lerde de görünür. Bu sayfanın adresi
+        kurulum linkinin gizli parçasını taşır; kimseyle paylaşma.</p>
+      <div class="install">
+        <a class="primary" id="install-app">Stremio'ya kur</a>
+        <a id="install-web" target="_blank" rel="noreferrer">Stremio Web'de kur</a>
+        <button type="button" id="copy-link">Kurulum linkini kopyala</button>
       </div>
-      <div class="action">
-        <div>
-          <b>Yedekten yükle</b>
-          <small>Bu sunucudaki bütün bağlantı ve anahtarların, çeviri ayarının ve kurulum linkinin yerine yedektekiler
-            geçer; yedekte olmayan anahtar kaldırılır. Eklenti yeniden başlar. Yedeğin linki bu sayfanınkinden farklıysa
-            sayfa yedeğin adresine geçer.</small>
+      <p class="hint" id="install-note"></p>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2>Yedek</h2></div>
+      <div class="actions-list">
+        <div class="action">
+          <div>
+            <b>Yedeği indir</b>
+            <small>Kurulum linkinin gizli parçası, bütün bağlantı ve anahtarlar ve çeviri ayarı tek dosyada. Sunucu
+              silinirse yeni sunucuda «Yedekten yükle» ile hepsi geri gelir; sunucunun adresi aynıysa Stremio'daki
+              eklentiye dokunmak gerekmez. <b>Dosya bütün şifrelerini taşır:</b> şifre yöneticinde sakla, kimseye
+              gönderme. Bir anahtarı değiştirince yeni yedek al.</small>
+          </div>
+          <a class="button" href="backup" download="subsync-backup.json">Yedeği indir</a>
         </div>
-        <label class="button">Dosya seç<input type="file" id="restore-file" accept=".json,application/json"></label>
-      </div>
-    </div>
-    <p class="hint" id="backup-note"></p>
-  </details>
-
-  <section id="jobs-section">
-    <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
-    <p class="sec-note">Hedef dilde uyan altyazı bulunamadığında, dosyaya oturan İngilizce altyazı çevrilir.
-      Çeviri sürerken menüdeki çeviri girdisi o ana kadar çevrilen kısmı verir; yeniden seçmek daha uzununu getirir.</p>
-    <div id="jobs" class="jobs"><div class="empty">Henüz çeviri yok.</div></div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h2>Son istekler</h2><span class="muted">en yeni üstte, son 15</span></div>
-    <p class="sec-note">Her kart bir oynatmayı anlatır: önce sonuç, altında adım adım ne olduğu.
-      Terimlerin anlamı sayfanın altındaki sözlükte.</p>
-    <div id="requests" class="requests"><div class="empty">Henüz altyazı isteği yok. Stremio'da bir video açınca burada görünür.</div></div>
-  </section>
-
-  <section id="settings" hidden>
-    <div class="sec-head"><h2>Çeviri ayarı</h2></div>
-    <p class="sec-note">Yeni başlayan çevirilerde geçerli olur; süren bir çeviri başladığı modelle biter.
-      Seçim sunucuda dosyaya yazılır, yeniden başlatma ve deploy sonrası da kalır.</p>
-    <form class="form" id="settings-form">
-      <label>
-        <span>Model</span>
-        <input id="model" list="models" autocomplete="off" spellcheck="false" required>
-        <datalist id="models"></datalist>
-        <small>OpenRouter model kimliği (<code>firma/ad</code>). Listede yalnız yapılandırılmış çıktı
-          destekleyen modeller var; çeviri buna ihtiyaç duyar.</small>
-      </label>
-      <label>
-        <span>Düşünme düzeyi</span>
-        <select id="reasoning"></select>
-        <small>Yükseldikçe çeviri yavaşlar ve pahalanır. Ölçümde «düşük» ile daha yüksek düzeyler arasında fark görülmedi.</small>
-      </label>
-      <label class="check">
-        <span><input type="checkbox" id="clean"> İngilizceyi çeviriden önce temizle</span>
-        <small>Reklam ve imza satırları (altyazı sitesi adı ya da adresi, «Subtitles by…») atılır; işitme engelliler
-          işaretleri (<code>[door creaks]</code>, <code>(sighs)</code>, <code>JOHN:</code>, yalnız ♪ olan satırlar) ve
-          <code>&lt;font&gt;</code> gibi biçim etiketleri kırpılır, <code>&lt;i&gt;</code> kalır. Açık ve kapalı ayrı
-          çeviri sayılır; diskteki eski çeviri silinmez.</small>
-      </label>
-      <div class="actions">
-        <button type="submit" class="primary" id="save" disabled>Kaydet</button>
-        <button type="button" id="reset">Varsayılanı doldur</button>
-      </div>
-    </form>
-    <p class="hint muted" id="model-info"></p>
-    <p class="hint" id="settings-note"></p>
-  </section>
-
-  <section id="maintenance">
-    <div class="sec-head"><h2>Bakım</h2></div>
-    <div class="actions-list">
-      <div class="action">
-        <div>
-          <b>Cache'i temizle</b>
-          <small>Sorgulanmış filmlerin ve indirilmiş altyazıların saklanan cevaplarını siler: bulunan altyazılar,
-            «uygun yok» ve hata cevapları. Her dosya bir sonraki açılışta baştan işlenir (dosya okunur, kaynaklarda
-            yeniden aranır). Şu an oynayan videoda altyazıyı yeniden seçmek için videoyu kapatıp açın.
-            Ayarlara dokunulmaz.</small>
-          <label id="clear-translations-row" hidden><input type="checkbox" id="clear-translations">
-            Biten çevirileri de sil <small>(aynı İngilizceyi yeniden çevirmek yeniden para tutar)</small></label>
+        <div class="action">
+          <div>
+            <b>Yedekten yükle</b>
+            <small>Bu sunucudaki bütün bağlantı ve anahtarların, çeviri ayarının ve kurulum linkinin yerine yedektekiler
+              geçer; yedekte olmayan anahtar kaldırılır. Eklenti yeniden başlar. Yedeğin linki bu sayfanınkinden farklıysa
+              sayfa yedeğin adresine geçer.</small>
+          </div>
+          <label class="button">Dosya seç<input type="file" id="restore-file" accept=".json,application/json"></label>
         </div>
-        <button type="button" id="clear-cache">Cache'i temizle</button>
       </div>
-      <div class="action">
-        <div>
-          <b>Eklentiyi yeniden başlat</b>
-          <small>Sunucu kendini yeniden çalıştırır; birkaç saniye sürer. Bellekteki her şey sıfırlanır: bu paneldeki
-            olaylar ve süren çeviriler (yarıda kalan çeviri, altyazı yeniden istenince baştan başlar). Diskteki cache
-            ve ayarlar kalır. Panel, sunucu dönünce kendini yeniler.</small>
+      <p class="hint" id="backup-note"></p>
+    </section>
+  </div>
+
+  <div class="tab" data-tab="ayarlar" hidden>
+    <section id="settings-off" hidden>
+      <div class="sec-head"><h2>Çeviri</h2></div>
+      <p class="sec-note">Çeviri kapalı: sunucuda OpenRouter anahtarı yok. «Kurulum» sekmesinden eklenebilir.</p>
+    </section>
+
+    <section id="settings" hidden>
+      <div class="sec-head"><h2>Çeviri ayarı</h2></div>
+      <p class="sec-note">Yeni başlayan çevirilerde geçerli olur; süren bir çeviri başladığı modelle biter.
+        Seçim sunucuda dosyaya yazılır, yeniden başlatma ve deploy sonrası da kalır.</p>
+      <form class="form" id="settings-form">
+        <label>
+          <span>Model</span>
+          <input id="model" list="models" autocomplete="off" spellcheck="false" required>
+          <datalist id="models"></datalist>
+          <small>OpenRouter model kimliği (<code>firma/ad</code>). Listede yalnız yapılandırılmış çıktı
+            destekleyen modeller var; çeviri buna ihtiyaç duyar.</small>
+        </label>
+        <label>
+          <span>Düşünme düzeyi</span>
+          <select id="reasoning"></select>
+          <small>Yükseldikçe çeviri yavaşlar ve pahalanır. Ölçümde «düşük» ile daha yüksek düzeyler arasında fark görülmedi.</small>
+        </label>
+        <label class="check">
+          <span><input type="checkbox" id="clean"> İngilizceyi çeviriden önce temizle</span>
+          <small>Reklam ve imza satırları (altyazı sitesi adı ya da adresi, «Subtitles by…») atılır; işitme engelliler
+            işaretleri (<code>[door creaks]</code>, <code>(sighs)</code>, <code>JOHN:</code>, yalnız ♪ olan satırlar) ve
+            <code>&lt;font&gt;</code> gibi biçim etiketleri kırpılır, <code>&lt;i&gt;</code> kalır. Açık ve kapalı ayrı
+            çeviri sayılır; diskteki eski çeviri silinmez.</small>
+        </label>
+        <div class="actions">
+          <button type="submit" class="primary" id="save" disabled>Kaydet</button>
+          <button type="button" id="reset">Varsayılanı doldur</button>
         </div>
-        <button type="button" id="restart" class="danger">Yeniden başlat</button>
+      </form>
+      <p class="hint muted" id="model-info"></p>
+      <p class="hint" id="settings-note"></p>
+    </section>
+
+    <section id="maintenance">
+      <div class="sec-head"><h2>Bakım</h2></div>
+      <div class="actions-list">
+        <div class="action">
+          <div>
+            <b>Cache'i temizle</b>
+            <small>Sorgulanmış filmlerin ve indirilmiş altyazıların saklanan cevaplarını siler: bulunan altyazılar,
+              «uygun yok» ve hata cevapları. Her dosya bir sonraki açılışta baştan işlenir (dosya okunur, kaynaklarda
+              yeniden aranır). Şu an oynayan videoda altyazıyı yeniden seçmek için videoyu kapatıp açın.
+              Ayarlara dokunulmaz.</small>
+            <label id="clear-translations-row" hidden><input type="checkbox" id="clear-translations">
+              Biten çevirileri de sil <small>(aynı İngilizceyi yeniden çevirmek yeniden para tutar)</small></label>
+          </div>
+          <button type="button" id="clear-cache">Cache'i temizle</button>
+        </div>
+        <div class="action">
+          <div>
+            <b>Eklentiyi yeniden başlat</b>
+            <small>Sunucu kendini yeniden çalıştırır; birkaç saniye sürer. Bellekteki her şey sıfırlanır: bu paneldeki
+              olaylar ve süren çeviriler (yarıda kalan çeviri, altyazı yeniden istenince baştan başlar). Diskteki cache
+              ve ayarlar kalır. Panel, sunucu dönünce kendini yeniler.</small>
+          </div>
+          <button type="button" id="restart" class="danger">Yeniden başlat</button>
+        </div>
       </div>
-    </div>
-    <p class="hint" id="maint-note"></p>
-  </section>
-
-  <details class="box" id="glossary">
-    <summary>Terimler <small>panelde geçen kelimeler ne demek</small></summary>
-    <dl class="terms">
-      <dt>Cetvel</dt>
-      <dd>Videonun içindeki İngilizce altyazının zaman çizelgesi. Metni okunmaz, yalnız her satırın ne zaman
-        başlayıp bittiği alınır. Dışarıdan bulunan altyazılar bu zamanlara oturtulur.</dd>
-      <dt>Dizin (Cues)</dt>
-      <dd>MKV dosyasının içindeki atlama tablosu. Altyazı satırlarının zamanları buradan okunur, böylece
-        dosyanın tamamı indirilmez. İz dizinde yoksa okunamaz.</dd>
-      <dt>Metin / PGS altyazı</dt>
-      <dd>Metin altyazı (SRT, ASS) doğrudan cetvel olur. PGS resim biçimindedir; metin altyazı yoksa
-        onun zamanları cetvel olarak kullanılır.</dd>
-      <dt>Aday</dt>
-      <dd>OpenSubtitles, The Subtitle Database, SubDL, AltyaziDB, SubSource ya da Wyzie'de bulunan, hedef dildeki
-        altyazı (SRT, ASS ya da VTT; ZIP, RAR ya da gzip arşivinde de olabilir). Dosya adına en çok benzeyen 3'ü indirilir;
-        hiçbiri uymazsa sıradaki 3'ü de denenir. Önceki bir indirmeyle aynı satırları taşıyan kopya sayılmaz,
-        yerine sıradaki indirilir.</dd>
-      <dt>Hizalama, kabul</dt>
-      <dd>Adayın satırları cetvele kaydırılarak (gerekirse 25↔24 fps düzeltmesiyle) oturtulur. Başta, ortada
-        ve sonda aynı kaydırma tutarsa aday kabul edilir ve menüye konur.</dd>
-      <dt>İsabet</dt>
-      <dd>Cetvel satırlarının yüzde kaçının bir aday satırıyla aynı anda başladığı. Yüksek isabet iyi oturma demektir.</dd>
-      <dt>Yerel kabul</dt>
-      <dd>Kayma film boyunca adım adım değişiyorsa satırlar bölge bölge kaydırılır; her bölge tutarsa
-        aday yine kabul edilir.</dd>
-      <dt>İngilizce yedek</dt>
-      <dd>Hedef dilde uyan altyazı yoksa, dosyaya oturan İngilizce aday menüye konur ve hedef dile çevrilir.</dd>
-      <dt>Cache</dt>
-      <dd>Sonuçlar saklanır: bulunan altyazı 30 gün, "uygun yok" cevabı 1 gün, geçici hatalar 60 saniye.
-        Bu sürede aynı dosya yeniden okunmaz. «Bakım» bölümündeki tuşla hepsi silinebilir.</dd>
-      <dt>Maliyet</dt>
-      <dd>Bir çevirinin OpenRouter'a ödediği tutar, sağlayıcının kendi bildirdiği değer (ABD doları).
-        Diskten gelen çeviri yeniden ödenmez.</dd>
-    </dl>
-  </details>
-
-  <details class="box" id="log-box">
-    <summary>Ham olay akışı <small>sunucunun log satırları, sorun ararken</small></summary>
-    <div class="tools" id="tools">
-      <button id="pause" aria-pressed="false">Duraklat</button>
-      <input id="search" type="search" placeholder="Süz…" aria-label="Olayları süz">
-    </div>
-    <div id="log"><div class="empty">Olay bekleniyor…</div></div>
-  </details>
+      <p class="hint" id="maint-note"></p>
+    </section>
+  </div>
 </main>
 <script>
 "use strict";
@@ -376,7 +436,7 @@ const NOTICES = {
 };
 const RETRY = { day: "Bu cevap 1 gün saklanır; o süre içinde aynı dosya yeniden denenmez.",
   minute: "Bu cevap yalnız 60 saniye saklanır, sonraki açılışta yeniden denenir." };
-const MAX_ROWS = 1000, MAX_REQUESTS = 15;
+const MAX_ROWS = 1000, MAX_REQUESTS = 30;
 const PHASES = { queued: "sırada", running: "çevriliyor", done: "bitti", failed: "düştü" };
 const FAILURES = { Empty: "boş altyazı", BadAnalysis: "analiz boş döndü",
   "Translator(Transient)": "geçici sağlayıcı hatası", "Translator(Permanent)": "sağlayıcı reddetti",
@@ -396,7 +456,7 @@ const WINDOWS = ["başta", "ortada", "sonda"];
 const AFTER = { m5: "k2", m4: "m3", dump: "k2", m3more: "m3", m3fb: "m3", m5fb: "m3fb" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
   paused: false, filter: "", translations: undefined, settings: null, models: new Map(),
-  sourcesOn: null };
+  sourcesOn: null, health: new Map(), lastId: 0, cards: new Map(), open: new Set() };
 const $ = (id) => document.getElementById(id);
 /** What each link and key is for, where it comes from, what it costs (SS-061). */
 const KEYS = {
@@ -608,13 +668,22 @@ function alignment(round, sources) {
     (best.reject ? ", " + best.reject : ""), "bad"];
 }
 
+/** How each source answered its latest search, so a refused key or a full
+ *  quota shows without opening a request. */
+function sourceHealth(line, at) {
+  for (const m of searchesOf(line)) {
+    state.health.set(m.src, m.n !== null ? { at, kind: "ok", text: "" }
+      : { at, kind: ["Timeout", "Connect"].includes(m.err) ? "warn" : "bad", text: sourceError(m.err, m.code) });
+  }
+}
+
 /** Folds one event into the request it belongs to. Lines carry no request
  *  id, so each one goes to the latest request still waiting for that stage. */
 function track(ev) {
   const line = ev.line;
   if (ev.area === "request") {
     const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
-    state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "",
+    state.requests.unshift({ id: ++state.lastId, at: ev.at_ms, kind, label: ev.label || "",
       hints: { name: /has_filename: true/.test(line), size: /has_video_size: true/.test(line) },
       steps: {}, seen: new Set(), main: [], spare: [], dl: [], dlSpare: [] });
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
@@ -641,7 +710,11 @@ function track(ev) {
     if (from !== "probes") for (const done of ["k2", "m3", "menu"]) req.seen.add(done);
   } else if (stage === "k2") {
     if (/NoHints/.test(line)) return set("file", "Stremio dosya adı ve boyutu göndermedi", "bad");
-    if (/Failed/.test(line) && !/Matched/.test(line)) return set("file", "AIOStreams listesi okunamadı", "bad");
+    if (/Failed/.test(line) && !/Matched/.test(line)) {
+      state.health.set("aiostreams", { at: ev.at_ms, kind: "bad", text: "liste okunamadı" });
+      return set("file", "AIOStreams listesi okunamadı", "bad");
+    }
+    state.health.set("aiostreams", { at: ev.at_ms, kind: "ok", text: "" });
     const by = (line.match(/matched_by: Some\((\w+)\)/) || [])[1];
     const streams = (line.match(/streams: (\d+)/) || [])[1];
     if (!by) return set("file", Number(streams) ? "listedeki " + streams + " dosyanın hiçbirinde ad ya da boyut tutmadı"
@@ -662,6 +735,7 @@ function track(ev) {
     set("ruler", rulers.length ? "İngilizce PGS (resim) altyazıdan, " + num(rulers[0][1]) + " satır" : "PGS'ten çıkmadı",
       rulers.length ? "ok" : "bad");
   } else if (stage === "m3") {
+    sourceHealth(line, ev.at_ms);
     if (req) req.dl = downloadSources(line);
     const found = candidates(line);
     set("candidates", found.text, found.found ? "ok" : "bad");
@@ -673,6 +747,7 @@ function track(ev) {
     if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi" +
       (copies ? " (" + copies + " kopya atlandı)" : "");
   } else if (stage === "m3fb") {
+    sourceHealth(line, ev.at_ms);
     if (req) { req.inSpare = true; req.dlSpare = downloadSources(line); }
     const found = candidates(line);
     set("spare", "İngilizce aday: " + found.text, found.found ? "info" : "bad");
@@ -700,33 +775,76 @@ function outcome(r) {
   return o;
 }
 function outcomeOf(r, m, s) {
-  if (m && !m.notice) return { kind: "ok", head: m.entries + " " + (lang() ? lang() + " " : "") + "altyazı sunuldu",
+  if (m && !m.notice) return { kind: "ok", group: "found", head: m.entries + " " + (lang() ? lang() + " " : "") + "altyazı sunuldu",
     why: r.main.some((t) => t.local) ? "Kayma film boyunca değiştiği için bölge bölge kaydırılarak oturtuldu." : "" };
   if (m && m.notice) {
     const [head, why, todo, keep] = NOTICES[m.notice] || [m.notice, "", "", ""];
     const spare = m.entries > 1;
-    if (spare) return { kind: "warn", head: "İngilizce yedek sunuldu",
+    if (spare) return { kind: "warn", group: "spare", head: "İngilizce yedek sunuldu",
       why: head + ". " + why + " Yerine dosyaya oturan İngilizce altyazı" +
         (m.entries > 2 ? " ve hedef dile çevirisi" : "") + " menüye kondu." };
-    return { kind: m.notice === "NotReady" || keep === "minute" ? "warn" : "bad", head,
+    return { kind: m.notice === "NotReady" || keep === "minute" ? "warn" : "bad",
+      group: m.notice === "NotReady" ? "wait" : "missing", head,
       why: why + (todo ? " " + todo : "") + (keep ? " " + RETRY[keep] : "") };
   }
-  if (s && (s.from === "memory" || s.from === "disk")) return { kind: "ok", head: "Önceki cevap verildi",
+  if (s && (s.from === "memory" || s.from === "disk")) return { kind: "ok", group: "cache", head: "Önceki cevap verildi",
     why: (s.from === "memory" ? "Bellekten" : "Diskteki cache'ten") + ", menüde " + s.offered + " girdi. Dosya yeniden okunmadı." };
   if (s && s.from === "joined") return { kind: "ok", head: "Aynı oynatmanın süren işine katıldı",
     why: "Stremio bu oynatma için ikinci kez istedi; ilk isteğin sonucu bekleniyor, ayrıca işlenmedi." };
-  if (s && s.from === "none") return { kind: "bad", head: "Boş cevap", why: "Sunucuda dosya ve altyazı kaynakları kapalı." };
-  if (s && s.from === "probes") return { kind: "wait", head: "Hazırlanıyor",
+  if (s && s.from === "none") return { kind: "bad", group: "missing", head: "Boş cevap", why: "Sunucuda dosya ve altyazı kaynakları kapalı." };
+  if (s && s.from === "probes") return { kind: "wait", group: "wait", head: "Hazırlanıyor",
     why: "15 saniyede bitmedi; Stremio'ya «hazırlanıyor» gitti, iş arka planda sürüyor. Videoyu biraz sonra yeniden açınca hazır olur." };
-  return { kind: "wait", head: "İşleniyor…", why: "" };
+  return { kind: "wait", group: "wait", head: "İşleniyor…", why: "" };
 }
 
-/** The sources the server has on, in the header line. */
-function renderSources() {
+/** AIOStreams and the sources the server has on, each with how its latest
+ *  search went. */
+function renderHealth() {
   const on = state.sourcesOn;
   if (on === null) return;
-  $("sources-on").textContent = on.length ? "Kaynaklar: " + on.map((k) => SOURCES[k] || k).join(", ")
-    : "Altyazı kaynağı kapalı";
+  const link = state.secrets && state.secrets.entries.find((e) => e.name === "aiostreams");
+  const chip = (name, h) => {
+    const c = el("span", "chip " + (h ? h.kind : ""), name + (h && h.text ? " · " + h.text : ""));
+    c.title = h ? "son arama " + time(h.at) : "bu açılıştan beri aranmadı";
+    return c;
+  };
+  const chips = [link && !link.set ? el("span", "chip bad", "AIOStreams · link yok") : chip("AIOStreams", state.health.get("aiostreams")),
+    ...on.map((k) => chip(SOURCES[k] || k, state.health.get(k)))];
+  if (!on.length) chips.push(el("span", "chip bad", "altyazı kaynağı kapalı"));
+  $("health").replaceChildren(...chips);
+}
+
+/** The tally of the requests on the page and the translations, for a glance. */
+function renderSummary() {
+  const count = { found: 0, spare: 0, missing: 0, wait: 0, cache: 0 };
+  for (const r of state.requests) {
+    const group = outcome(r).group;
+    if (group) count[group]++;
+  }
+  const tile = (n, label, kind, sub) => {
+    const t = el("div", "tile" + (n ? " " + kind : ""));
+    t.append(el("span", "n", String(n)), el("span", "label", label));
+    if (sub) t.append(el("span", "sub", sub));
+    return t;
+  };
+  const tiles = [tile(count.found, "altyazı bulundu", "ok"), tile(count.spare, "İngilizce yedek", "warn"),
+    tile(count.missing, "bulunamadı", "bad")];
+  const t = state.translations;
+  if (t === null) {
+    const off = el("div", "tile off");
+    off.append(el("span", "n", "kapalı"), el("span", "label", "çeviri"), el("span", "sub", "OpenRouter anahtarı yok"));
+    tiles.push(off);
+  } else if (t) {
+    const live = t.jobs.filter((j) => j.phase === "running" || j.phase === "queued").length;
+    const paid = t.jobs.filter((j) => !j.from_disk && j.cost_usd != null);
+    tiles.push(tile(live, "çeviri sürüyor", "info", (LANG_NAMES[t.lang] || t.lang) + " · " +
+      String(t.model).split(" ")[0].replace(/^[^/]*\//, "") +
+      (paid.length ? " · toplam " + usd(paid.reduce((sum, j) => sum + j.cost_usd, 0)) : "")));
+  }
+  $("tiles").replaceChildren(...tiles);
+  const n = state.requests.length;
+  $("tally").textContent = n ? "Son " + n + " istek" + (count.cache ? " · " + count.cache + " tanesi cache'ten" : "") +
+    (count.wait ? " · " + count.wait + " tanesi sürüyor" : "") : "Henüz istek yok";
 }
 
 function percent(job) {
@@ -772,24 +890,19 @@ function renderJobs() {
   const t = state.translations;
   const box = $("jobs");
   if (t === null) {
-    $("jobs-note").textContent = "";
-    $("translator").textContent = "Çeviri kapalı (sunucuda OpenRouter anahtarı yok)";
     $("jobs-section").hidden = true;
     return;
   }
   if (!t) return;
-  $("jobs-section").hidden = false;
-  $("translator").textContent = "Çeviri: " + (LANG_NAMES[t.lang] || t.lang) + ", " + model(t.model);
+  $("clear-translations-row").hidden = false;
+  // The tile above says translation is on; the list shows only once there is one.
+  $("jobs-section").hidden = !t.jobs.length;
+  if (!t.jobs.length) return;
   const live = t.jobs.filter((j) => j.phase === "running" || j.phase === "queued").length;
   const paid = t.jobs.filter((j) => !j.from_disk && j.cost_usd != null);
   const total = paid.reduce((sum, j) => sum + j.cost_usd, 0);
   $("jobs-note").textContent = [live ? live + " iş sürüyor · aynı anda en çok " + t.parallel : "",
-    paid.length ? "listedekilerin toplamı " + usd(total) : ""].filter(Boolean).join(" · ");
-  $("clear-translations-row").hidden = false;
-  if (!t.jobs.length) {
-    box.replaceChildren(el("div", "empty", "Henüz çeviri yok. Bir istek İngilizce yedeğe düşünce ilerlemesi burada görünür."));
-    return;
-  }
+    paid.length ? "listedekilerin toplamı " + usd(total) : "", model(t.model)].filter(Boolean).join(" · ");
   const now = Date.now();
   box.replaceChildren(...t.jobs.map((job) => {
     const card = el("div", "job" + (job.phase === "running" ? " live" : ""));
@@ -851,45 +964,72 @@ function stepsOf(r) {
   return rows;
 }
 
+/** One request as a line that opens to its steps. A card is rebuilt only
+ *  when what it shows changed, so an open one stays open across polls. */
+function requestCard(r) {
+  const o = outcome(r);
+  const rows = stepsOf(r);
+  const job = r.label && state.translations && state.translations.jobs.find((j) => j.label === r.label);
+  const done = job && (job.phase === "done" ? 100 : percent(job));
+  const sig = JSON.stringify([o, rows, r.tracks, job && [job.phase, job.from_disk, done, job.cost_usd]]);
+  const old = state.cards.get(r.id);
+  if (old && old.sig === sig) return old.node;
+
+  const card = el("details", "req " + o.kind);
+  card.dataset.id = r.id;
+  card.open = state.open.has(r.id);
+  card.addEventListener("toggle", () => { if (card.open) state.open.add(r.id); else state.open.delete(r.id); });
+  const head = el("summary");
+  head.append(el("span", "headline", o.head));
+  if (r.label) head.append(el("span", "file", r.label));
+  const jobKind = job && (job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "info");
+  if (job) head.append(el("span", "chip " + jobKind, "çeviri " + (job.from_disk ? "diskten"
+    : job.phase === "running" ? "%" + done : PHASES[job.phase])));
+  head.append(el("span", "when", time(r.at) + " · " + (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind)));
+
+  const body = el("div", "body");
+  if (o.why) body.append(el("p", "why", o.why));
+  if (rows.length) {
+    const dl = el("dl", "steps");
+    for (const [name, text, kind] of rows) dl.append(el("dt", "", name), el("dd", kind || "", text));
+    body.append(dl);
+  }
+  if (r.tracks) {
+    const chips = el("div", "chips");
+    chips.append(el("span", "muted", "Gömülü altyazılar:"));
+    if (!r.tracks.length) chips.append(el("span", "chip bad", "yok"));
+    for (const t of r.tracks) {
+      const note = { ruler: "cetvel", pgs: "resim, gerekirse cetvel", unindexed: "dizinde yok", short: "çok kısa" }[t.use];
+      const kind = { ruler: "ok", pgs: "info", unindexed: "warn", short: "warn" }[t.use] || "";
+      chips.append(el("span", "chip " + kind, t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : "")));
+    }
+    body.append(chips);
+  }
+  if (job) {
+    const chips = el("div", "chips");
+    chips.append(el("span", "chip " + jobKind,
+      "çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" + done +
+      (job.phase === "done" && !job.from_disk && job.cost_usd != null ? " · " + usd(job.cost_usd) : "")));
+    body.append(chips, bar(job));
+  }
+  card.append(head, body);
+  state.cards.set(r.id, { sig, node: card });
+  return card;
+}
+
 function renderRequests() {
+  renderSummary();
   const box = $("requests");
   if (!state.requests.length) return;
-  box.replaceChildren(...state.requests.map((r) => {
-    const o = outcome(r);
-    const card = el("article", "req " + o.kind);
-    const top = el("div", "top");
-    top.append(el("span", "headline", o.head),
-      el("span", "when", time(r.at) + " · " + (r.kind === "series" ? "bölüm" : r.kind === "movie" ? "film" : r.kind)));
-    card.append(top);
-    if (r.label) card.append(el("div", "file", r.label));
-    if (o.why) card.append(el("p", "why", o.why));
-    const rows = stepsOf(r);
-    if (rows.length) {
-      const dl = el("dl", "steps");
-      for (const [name, text, kind] of rows) dl.append(el("dt", "", name), el("dd", kind || "", text));
-      card.append(dl);
-    }
-    if (r.tracks) {
-      const chips = el("div", "chips");
-      chips.append(el("span", "muted", "Gömülü altyazılar:"));
-      if (!r.tracks.length) chips.append(el("span", "chip bad", "yok"));
-      for (const t of r.tracks) {
-        const note = { ruler: "cetvel", pgs: "resim, gerekirse cetvel", unindexed: "dizinde yok", short: "çok kısa" }[t.use];
-        const kind = { ruler: "ok", pgs: "info", unindexed: "warn", short: "warn" }[t.use] || "";
-        chips.append(el("span", "chip " + kind, t.label + (t.forced ? " (zorunlu)" : "") + (note ? " · " + note : "")));
-      }
-      card.append(chips);
-    }
-    const job = r.label && state.translations && state.translations.jobs.find((j) => j.label === r.label);
-    if (job) {
-      const chips = el("div", "chips");
-      chips.append(el("span", "chip " + (job.phase === "done" ? "ok" : job.phase === "failed" ? "bad" : "info"),
-        "çeviri: " + (job.from_disk ? "diskten" : PHASES[job.phase]) + " · %" + (job.phase === "done" ? 100 : percent(job)) +
-        (job.phase === "done" && !job.from_disk && job.cost_usd != null ? " · " + usd(job.cost_usd) : "")));
-      card.append(chips, bar(job));
-    }
-    return card;
-  }));
+  const nodes = state.requests.map(requestCard);
+  const ids = new Set(state.requests.map((r) => r.id));
+  for (const id of state.cards.keys()) if (!ids.has(id)) { state.cards.delete(id); state.open.delete(id); }
+  // Same requests in the same order: swap only the changed cards, so focus
+  // and a selection elsewhere in the list stay put.
+  const kids = [...box.children];
+  if (kids.length === nodes.length && kids.every((k, i) => k.dataset.id === String(state.requests[i].id))) {
+    nodes.forEach((node, i) => { if (kids[i] !== node) kids[i].replaceWith(node); });
+  } else box.replaceChildren(...nodes);
 }
 
 function renderTools() {
@@ -958,15 +1098,16 @@ async function poll() {
     const on = page.sources || [];
     const sourcesChanged = !state.sourcesOn || on.join() !== state.sourcesOn.join();
     state.sourcesOn = on;
-    if (sourcesChanged) renderSources();
+    if (sourcesChanged || page.events.length) renderHealth();
     if (page.events.length) { renderRequests(); renderTools(); if (!state.paused) renderLog(); }
   } catch (err) {
     $("conn").textContent = "bağlantı yok"; $("conn").className = "pill bad";
   }
   if (state.started) {
     const s = Math.floor((Date.now() - state.started) / 1000);
-    $("uptime").textContent = "Sunucu " + time(state.started) + "'den beri açık (" +
-      (s >= 3600 ? Math.floor(s / 3600) + " sa " : "") + Math.floor((s % 3600) / 60) + " dk)";
+    $("uptime").textContent = "sunucu açık: " + (s >= 3600 ? Math.floor(s / 3600) + " sa " : "") +
+      Math.floor((s % 3600) / 60) + " dk";
+    $("uptime").title = "başladı " + time(state.started);
   }
   setTimeout(poll, 2000);
 }
@@ -977,7 +1118,7 @@ async function loadSettings() {
     const res = await fetch("settings.json", { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
     const view = await res.json();
-    if (!view) return; // translation off: the section stays hidden
+    if (!view) { $("settings-off").hidden = false; return; } // translation off
     state.settings = view;
     $("reasoning").replaceChildren(...["default", ...view.efforts].map((e) =>
       Object.assign(el("option", "", EFFORTS[e] ? EFFORTS[e] + " (" + e + ")" : e), { value: e })));
@@ -1129,7 +1270,7 @@ function installLink() {
 $("install-app").href = installLink().replace(/^https?:/, "stremio:");
 $("install-web").href = "https://web.stremio.com/#/addons?addon=" + encodeURIComponent(installLink());
 $("copy-link").onclick = async () => {
-  const note = $("setup-note");
+  const note = $("install-note");
   try {
     await navigator.clipboard.writeText(installLink());
     note.className = "hint ok"; note.textContent = "Kurulum linki panoya kopyalandı.";
@@ -1199,9 +1340,10 @@ function renderSecrets(view) {
   $("keys").replaceChildren(...rows);
   const link = view.entries.find((e) => e.name === "aiostreams");
   const missing = !link || !link.set;
-  $("setup-need").hidden = !missing;
-  $("setup-sum").textContent = missing ? "AIOStreams linki eksik" : "bağlantılar, anahtarlar ve Stremio'ya kurulum";
-  if (missing || /\/configure\/?$/.test(location.pathname)) $("setup").open = true;
+  for (const id of ["setup-need", "status-need", "setup-dot"]) $(id).hidden = !missing;
+  // A new install has nothing to show yet: start where the link goes in.
+  if (missing && !location.hash) showTab("kurulum");
+  renderHealth();
   secretsChanged();
 }
 function secretChanges() {
@@ -1298,6 +1440,18 @@ $("pause").onclick = () => {
   if (!state.paused) renderLog();
 };
 $("search").oninput = (e) => { state.filter = e.target.value; renderLog(); };
+/** Three tabs on one page: the hash names the open one, and /configure
+ *  (Stremio's Configure button) opens Kurulum. */
+const TABS = ["durum", "kurulum", "ayarlar"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = "durum";
+  for (const panel of document.querySelectorAll(".tab")) panel.hidden = panel.dataset.tab !== name;
+  for (const a of document.querySelectorAll(".tabs a")) {
+    if (a.dataset.tab === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+}
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+showTab(location.hash.slice(1) || (/\/configure\/?$/.test(location.pathname) ? "kurulum" : "durum"));
 // Remember which boxes were open, for this browser only.
 for (const id of ["glossary", "log-box"]) {
   const box = $(id);
