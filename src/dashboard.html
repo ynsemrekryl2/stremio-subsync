@@ -129,6 +129,11 @@ dl.steps dd.bad::before { color: var(--bad); } dl.steps dd.info::before { color:
 .action button { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line);
   border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
 .action button.danger { color: var(--bad); border-color: var(--bad); }
+.action a.button, .action label.button { font: inherit; color: var(--text); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  text-decoration: none; font-size: 14px; }
+.action label.button input { display: none; }
+#setup .actions-list { margin-top: 16px; }
 .action button:disabled { opacity: .45; cursor: default; }
 details.box > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 details.box > summary small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
@@ -219,6 +224,28 @@ dl.terms dd { margin: 0; color: var(--muted); }
       </div>
     </form>
     <p class="hint" id="setup-note"></p>
+    <div class="actions-list">
+      <div class="action">
+        <div>
+          <b>Yedeği indir</b>
+          <small>Kurulum linkinin gizli parçası, bütün bağlantı ve anahtarlar ve çeviri ayarı tek dosyada. Sunucu
+            silinirse yeni sunucuda «Yedekten yükle» ile hepsi geri gelir; sunucunun adresi aynıysa Stremio'daki
+            eklentiye dokunmak gerekmez. <b>Dosya bütün şifrelerini taşır:</b> şifre yöneticinde sakla, kimseye
+            gönderme. Bir anahtarı değiştirince yeni yedek al.</small>
+        </div>
+        <a class="button" href="backup" download="subsync-backup.json">Yedeği indir</a>
+      </div>
+      <div class="action">
+        <div>
+          <b>Yedekten yükle</b>
+          <small>Bu sunucudaki bütün bağlantı ve anahtarların, çeviri ayarının ve kurulum linkinin yerine yedektekiler
+            geçer; yedekte olmayan anahtar kaldırılır. Eklenti yeniden başlar. Yedeğin linki bu sayfanınkinden farklıysa
+            sayfa yedeğin adresine geçer.</small>
+        </div>
+        <label class="button">Dosya seç<input type="file" id="restore-file" accept=".json,application/json"></label>
+      </div>
+    </div>
+    <p class="hint" id="backup-note"></p>
   </details>
 
   <section>
@@ -1207,10 +1234,13 @@ $("restart").onclick = async () => {
     $("restart").disabled = false;
   }
 };
-async function waitForRestart(before, since, note = "maint-note", button = "restart") {
+async function waitForRestart(before, since, note = "maint-note", button = "restart", base = "") {
   try {
-    const res = await fetch("events.json?after=" + Number.MAX_SAFE_INTEGER, { cache: "no-store" });
-    if (res.ok && (await res.json()).started_ms !== before) { location.reload(); return; }
+    const res = await fetch(base + "events.json?after=" + Number.MAX_SAFE_INTEGER, { cache: "no-store" });
+    if (res.ok && (await res.json()).started_ms !== before) {
+      if (base) location.href = base + "configure"; else location.reload();
+      return;
+    }
   } catch (err) {
     // Down while it restarts.
   }
@@ -1220,7 +1250,7 @@ async function waitForRestart(before, since, note = "maint-note", button = "rest
     $(button).disabled = false;
     return;
   }
-  setTimeout(() => waitForRestart(before, since, note, button), 1000);
+  setTimeout(() => waitForRestart(before, since, note, button, base), 1000);
 }
 
 /** The install link is this page's address with manifest.json at the end. */
@@ -1345,6 +1375,37 @@ $("secrets-form").onsubmit = async (e) => {
     secretsChanged();
   }
 };
+/** Puts a backup in place of the whole setup (SS-063). */
+$("restore-file").onchange = async (e) => {
+  const file = e.target.files[0], note = $("backup-note");
+  e.target.value = "";
+  if (!file) return;
+  let backup;
+  try { backup = JSON.parse(await file.text()); } catch (err) { backup = null; }
+  if (!backup || backup.subsync !== "subsync-backup" || typeof backup.token !== "string") {
+    note.className = "hint bad"; note.textContent = "Bu bir SubSync yedeği değil."; return;
+  }
+  const names = Object.keys(backup.values || {}).map((n) => (KEYS[n] || [n])[0]);
+  if (!confirm("Yedek yüklensin mi? İçinde: " + (names.join(", ") || "anahtar yok") +
+    (backup.settings ? ", çeviri ayarı" : "") + ". Buradaki bütün bağlantı ve anahtarların yerine geçer.")) return;
+  try {
+    const res = await fetch("restore", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(backup) });
+    const a = await res.json().catch(() => null);
+    if (!res.ok || !a) throw new Error(refusal(a, res.status));
+    const base = a.token_changed ? "/" + backup.token + "/" : "";
+    if (a.restarting) {
+      note.className = "hint muted";
+      note.textContent = "Yedek yüklendi; eklenti yeniden başlıyor" + (a.token_changed ? ", sayfa yedeğin adresine geçecek…" : "…");
+      waitForRestart(state.started, Date.now(), "backup-note", "secrets-save", base);
+    } else {
+      note.className = "hint ok";
+      note.textContent = "Yedek yüklendi. Kullanılması için eklentiyi yeniden başlat.";
+    }
+  } catch (err) {
+    note.className = "hint bad"; note.textContent = "Yüklenmedi: " + err.message;
+  }
+};
 function refusal(a, status) {
   if (!a) return "sunucu " + status;
   const title = (name) => (KEYS[name] || [name])[0];
@@ -1352,6 +1413,9 @@ function refusal(a, status) {
     case "value": return title(a.name) + " anahtarında boşluk, tırnak ya da ters bölü olamaz";
     case "aiostreams": return "AIOStreams linki " + (URL_REASONS[a.reason] || "geçersiz");
     case "own_link": return "bu SubSync'in kendi linki; AIOStreams'in linkini gir";
+    case "token": return "yedekteki kurulum linki geçersiz";
+    case "backup": return "dosya bir SubSync yedeği değil ya da daha yeni bir sürümün";
+    case "settings": return "yedekteki çeviri ayarı geçersiz";
     case "save": return "sunucu dosyaya yazamadı";
     case "off": return "bu sunucuda sayfadan değiştirilemiyor";
     default: return "istek okunamadı";

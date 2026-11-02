@@ -3,14 +3,18 @@
 //! readable by the service only) and win over the environment variables of
 //! the same meaning; removing one on the page is saved too, so the
 //! environment's value does not come back. Values never leave this module
-//! except to build the clients: the page only learns whether each is set
-//! and where it came from, and nothing here prints them.
+//! except to build the clients and in a backup the page downloads (SS-063):
+//! the page otherwise only learns whether each is set and where it came
+//! from, and nothing here prints them. A restored backup also brings its
+//! install token, which then wins over `SUBSYNC_TOKEN`, so the Stremio
+//! install link stays the same on a new server.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::settings::TranslateSettings;
 use crate::streams::{AioStreams, ManifestUrlError};
 
 /// A link or key the add-on reads at start.
@@ -72,6 +76,10 @@ pub enum Refused {
     AioStreams(ManifestUrlError),
     /// The AIOStreams field holds SubSync's own install link.
     OwnLink,
+    /// A backup's token is short or holds characters a path cannot.
+    Token,
+    /// Not a SubSync backup, or one from a later version.
+    Backup,
     /// No file to save into.
     Off,
     Save(std::io::ErrorKind),
@@ -80,6 +88,8 @@ pub enum Refused {
 /// The values in use: the page's, then the environment's.
 pub struct Secrets {
     file: Option<PathBuf>,
+    /// From a restored backup; wins over the environment's.
+    token: Option<String>,
     /// From the file; an empty value was removed on the page.
     saved: BTreeMap<Name, String>,
     env: BTreeMap<Name, String>,
@@ -102,10 +112,22 @@ impl Secrets {
             .collect();
         let (saved, error) = match file.as_deref().map(read) {
             Some(Ok(saved)) => (saved, None),
-            Some(Err(err)) => (BTreeMap::new(), Some(err)),
-            None => (BTreeMap::new(), None),
+            Some(Err(err)) => (File::default(), Some(err)),
+            None => (File::default(), None),
         };
-        (Self { file, saved, env }, error)
+        let token = saved.token.filter(|t| valid_token(t));
+        let secrets = Self {
+            file,
+            token,
+            saved: saved.values,
+            env,
+        };
+        (secrets, error)
+    }
+
+    /// The install token a restored backup brought, if any.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
     }
 
     /// The value to use, if any.
@@ -161,10 +183,81 @@ impl Secrets {
             };
             saved.insert(name, value);
         }
-        write(&file, &saved).map_err(|err| Refused::Save(err.kind()))?;
+        write(&file, self.token.as_deref(), &saved).map_err(|err| Refused::Save(err.kind()))?;
         self.saved = saved;
         Ok(())
     }
+
+    /// Everything a new server needs: `token`, every value in use (from the
+    /// page or the environment) and the saved translation choice.
+    pub fn backup(&self, token: &str, settings: Option<TranslateSettings>) -> Backup {
+        Backup {
+            kind: BACKUP_KIND.to_owned(),
+            version: BACKUP_VERSION,
+            token: token.to_owned(),
+            values: Name::ALL
+                .into_iter()
+                .filter_map(|name| Some((name, self.get(name)?.to_owned())))
+                .collect(),
+            settings,
+        }
+    }
+
+    /// Takes `backup` whole: its token, and its values in place of all
+    /// others; a name it lacks is saved removed, so the environment's does
+    /// not come back. Nothing is saved when any part is refused. The
+    /// translation choice is the caller's to save.
+    pub fn restore(&mut self, backup: &Backup) -> Result<(), Refused> {
+        let Some(file) = self.file.clone() else {
+            return Err(Refused::Off);
+        };
+        if backup.kind != BACKUP_KIND || backup.version > BACKUP_VERSION {
+            return Err(Refused::Backup);
+        }
+        if !valid_token(&backup.token) {
+            return Err(Refused::Token);
+        }
+        let mut saved = BTreeMap::new();
+        for name in Name::ALL {
+            let value = backup.values.get(&name).map_or("", |v| v.trim());
+            if !value.is_empty() {
+                check(name, value, &backup.token)?;
+            }
+            saved.insert(name, value.to_owned());
+        }
+        write(&file, Some(&backup.token), &saved).map_err(|err| Refused::Save(err.kind()))?;
+        self.token = Some(backup.token.clone());
+        self.saved = saved;
+        Ok(())
+    }
+}
+
+/// Marks a backup file as SubSync's.
+const BACKUP_KIND: &str = "subsync-backup";
+const BACKUP_VERSION: u32 = 1;
+
+/// The file the page downloads and uploads (SS-063). Holds every secret:
+/// the user keeps it like a password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Backup {
+    #[serde(rename = "subsync")]
+    kind: String,
+    version: u32,
+    pub token: String,
+    #[serde(default)]
+    values: BTreeMap<Name, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<TranslateSettings>,
+}
+
+/// An install token: long enough to guess no faster than
+/// `SUBSYNC_TOKEN`'s rule, and only characters a URL path keeps as they are.
+pub fn valid_token(token: &str) -> bool {
+    token.len() >= crate::MIN_TOKEN_LEN
+        && token.len() <= 128
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Whether `value` may be saved, or tried, for `name`.
@@ -195,29 +288,31 @@ pub enum LoadError {
 
 #[derive(Default, Serialize, Deserialize)]
 struct File {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
     #[serde(default)]
     values: BTreeMap<Name, String>,
 }
 
-fn read(path: &Path) -> Result<BTreeMap<Name, String>, LoadError> {
+fn read(path: &Path) -> Result<File, LoadError> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(File::default()),
         Err(err) => return Err(LoadError::Read(err.kind())),
     };
-    let file: File = serde_json::from_slice(&bytes).map_err(|_| LoadError::Malformed)?;
-    Ok(file.values)
+    serde_json::from_slice(&bytes).map_err(|_| LoadError::Malformed)
 }
 
 /// Writes the whole file, readable by its owner only; a crash leaves the
 /// old file or the new one.
-fn write(path: &Path, values: &BTreeMap<Name, String>) -> std::io::Result<()> {
+fn write(path: &Path, token: Option<&str>, values: &BTreeMap<Name, String>) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
     let json = serde_json::to_vec_pretty(&File {
+        token: token.map(str::to_owned),
         values: values.clone(),
     })
     .map_err(std::io::Error::other)?;
@@ -365,6 +460,93 @@ mod tests {
         );
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_backup_restores_the_token_and_every_value() {
+        let old = temp_file("backup-old");
+        let (mut secrets, _) = Secrets::load(
+            Some(old.clone()),
+            env(&[
+                ("WYZIE_API_KEY", "env-wyzie"),
+                ("SUBDL_API_KEY", "env-subdl"),
+            ]),
+        );
+        secrets
+            .change(
+                &changes(&[(Name::AioStreams, Some(LINK)), (Name::SubDl, None)]),
+                TOKEN,
+            )
+            .unwrap();
+        let backup = secrets.backup(TOKEN, None);
+        let json = serde_json::to_value(&backup).unwrap();
+        assert_eq!(json["subsync"], "subsync-backup");
+        assert_eq!(json["token"], TOKEN);
+        assert_eq!(
+            json["values"],
+            serde_json::json!({ "aiostreams": LINK, "wyzie": "env-wyzie" }),
+            "values in use, from the page or the environment; removed ones left out"
+        );
+
+        // A new server whose environment has other keys.
+        let new = temp_file("backup-new");
+        let (mut fresh, _) = Secrets::load(
+            Some(new.clone()),
+            env(&[("OPENROUTER_API_KEY", "other"), ("WYZIE_API_KEY", "other")]),
+        );
+        assert_eq!(fresh.token(), None);
+        fresh.restore(&backup).unwrap();
+        let (fresh, error) =
+            Secrets::load(Some(new.clone()), env(&[("OPENROUTER_API_KEY", "other")]));
+        assert_eq!(error, None);
+        assert_eq!(fresh.token(), Some(TOKEN));
+        assert_eq!(fresh.get(Name::AioStreams), Some(LINK));
+        assert_eq!(fresh.get(Name::Wyzie), Some("env-wyzie"));
+        assert_eq!(
+            fresh.get(Name::OpenRouter),
+            None,
+            "the backup is the whole truth"
+        );
+
+        // A change after the restore keeps the token.
+        let (mut fresh, _) = Secrets::load(Some(new.clone()), env(&[]));
+        fresh
+            .change(&changes(&[(Name::SubDl, Some("k"))]), TOKEN)
+            .unwrap();
+        let (fresh, _) = Secrets::load(Some(new.clone()), env(&[]));
+        assert_eq!(fresh.token(), Some(TOKEN));
+        for path in [old, new] {
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn a_bad_backup_is_refused_whole() {
+        let path = temp_file("backup-bad");
+        let (mut secrets, _) = Secrets::load(Some(path.clone()), env(&[]));
+        let good = secrets.backup(TOKEN, None);
+        let edited = |edit: fn(&mut serde_json::Value)| {
+            let mut json = serde_json::to_value(&good).unwrap();
+            edit(&mut json);
+            serde_json::from_value::<Backup>(json).unwrap()
+        };
+        for (backup, refused) in [
+            (edited(|j| j["token"] = "short".into()), Refused::Token),
+            (
+                edited(|j| j["token"] = format!("{TOKEN}/x").into()),
+                Refused::Token,
+            ),
+            (edited(|j| j["subsync"] = "other".into()), Refused::Backup),
+            (edited(|j| j["version"] = 2.into()), Refused::Backup),
+            (
+                edited(|j| j["values"]["subdl"] = "two words".into()),
+                Refused::Value(Name::SubDl),
+            ),
+        ] {
+            assert_eq!(secrets.restore(&backup), Err(refused));
+        }
+        assert!(!path.exists());
+        assert_eq!(secrets.token(), None);
     }
 
     #[test]

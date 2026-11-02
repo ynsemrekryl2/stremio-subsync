@@ -44,8 +44,14 @@ secrets)
 	exit 0
 	;;
 link)
-	ssh "$host" 'sudo awk -F= '\''$1 == "SUBSYNC_DOMAIN" { d = $2 } $1 == "SUBSYNC_TOKEN" { t = $2 }
-		END { print "https://" d "/" t "/manifest.json" }'\'' /etc/stremio-subsync.env' | pbcopy
+	# A token restored from a backup on the configure page wins (SS-063).
+	ssh "$host" 'sudo bash -s' <<'LINK' | pbcopy
+env_file=/etc/stremio-subsync.env
+d="$(awk -F= '$1 == "SUBSYNC_DOMAIN" { print $2 }' "$env_file")"
+t="$(sed -n 's/^ *"token": *"\([A-Za-z0-9_-]*\)".*/\1/p' /var/lib/stremio-subsync/secrets.json 2>/dev/null)"
+[ -n "$t" ] || t="$(awk -F= '$1 == "SUBSYNC_TOKEN" { print $2 }' "$env_file")"
+printf 'https://%s/%s/manifest.json' "$d" "$t"
+LINK
 	echo "install link copied to the clipboard"
 	exit 0
 	;;

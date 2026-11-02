@@ -99,20 +99,6 @@ async fn main() {
         }
         return;
     }
-    let token = std::env::var("SUBSYNC_TOKEN").unwrap_or_default();
-    if token.len() < MIN_TOKEN_LEN {
-        eprintln!("SUBSYNC_TOKEN must be set to at least {MIN_TOKEN_LEN} characters");
-        std::process::exit(2);
-    }
-    let bind: SocketAddr = std::env::var("SUBSYNC_BIND")
-        .unwrap_or_else(|_| DEFAULT_BIND.to_owned())
-        .parse()
-        .unwrap_or_else(|_| {
-            eprintln!("SUBSYNC_BIND is not a valid socket address");
-            std::process::exit(2);
-        });
-
-    let mut state = addon::AppState::new(token.clone()).expect("token checked above");
     // Links and keys from the configure page win over the environment
     // (SS-061). Only which ones are set is ever printed.
     let secrets_file = std::env::var("SUBSYNC_SECRETS_FILE")
@@ -123,6 +109,35 @@ async fn main() {
     if let Some(error) = error {
         event!("start", "secrets file ignored error={error:?}");
     }
+    // A restored backup's token wins, so the install link moves with it
+    // (SS-063).
+    let (token, token_from) = match secrets.token() {
+        Some(token) => (token.to_owned(), "backup"),
+        None => (
+            std::env::var("SUBSYNC_TOKEN").unwrap_or_default(),
+            "environment",
+        ),
+    };
+    if token.len() < MIN_TOKEN_LEN {
+        eprintln!("SUBSYNC_TOKEN must be set to at least {MIN_TOKEN_LEN} characters");
+        std::process::exit(2);
+    }
+    event!("start", "install token from {token_from}");
+    let bind: SocketAddr = std::env::var("SUBSYNC_BIND")
+        .unwrap_or_else(|_| DEFAULT_BIND.to_owned())
+        .parse()
+        .unwrap_or_else(|_| {
+            eprintln!("SUBSYNC_BIND is not a valid socket address");
+            std::process::exit(2);
+        });
+
+    let mut state = addon::AppState::new(token.clone()).expect("token checked above");
+    // The translation choice saved on the dashboard (SS-048); a backup
+    // carries it too (SS-063).
+    let settings_file = std::path::PathBuf::from(
+        std::env::var("SUBSYNC_SETTINGS_FILE").unwrap_or_else(|_| "settings.json".to_owned()),
+    );
+    state = state.with_settings_file(settings_file.clone());
     let set: Vec<_> = secrets
         .view()
         .into_iter()
@@ -288,10 +303,6 @@ async fn main() {
             }
             // A choice saved on the dashboard wins over the environment
             // (SS-048).
-            let settings_file = std::path::PathBuf::from(
-                std::env::var("SUBSYNC_SETTINGS_FILE")
-                    .unwrap_or_else(|_| "settings.json".to_owned()),
-            );
             let (chosen, from) = match settings::load(&settings_file) {
                 Ok(Some(saved)) => (saved, "dashboard"),
                 Ok(None) => (from_env, "environment"),
@@ -316,7 +327,7 @@ async fn main() {
                 "start",
                 "translation: on (model {label} from {from}, into {lang})"
             );
-            state = state.with_translations(translations.with_settings_file(settings_file));
+            state = state.with_translations(translations.with_settings_file(settings_file.clone()));
         }
         None => event!("start", "translation: off"),
     }

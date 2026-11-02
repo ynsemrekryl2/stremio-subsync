@@ -66,6 +66,7 @@ Sunucudaki dosyalar:
 | `/etc/stremio-subsync.env` | Token, alan adı, AIOStreams linki, SubDL, AltyaziDB, SubSource ve Wyzie anahtarları (yalnız root, 0600) |
 | `/etc/systemd/system/stremio-subsync.service` | Servis birimi (`deploy/stremio-subsync.service`) |
 | `/etc/caddy/Caddyfile` | HTTPS reverse proxy (`deploy/Caddyfile`) |
+| `/var/lib/stremio-subsync/secrets.json` | Configure sayfasında girilen bağlantı ve anahtarlar; yedekten yüklendiyse kurulum token'ı da. Env dosyasının önüne geçer (yalnız servis, 0600) |
 | `/var/lib/stremio-subsync/cache/` | Sunulan menülerin cache'i; deploy ve yeniden başlatmada korunur |
 | `/usr/local/bin/stremio-subsync` | Derlenmiş uygulama |
 

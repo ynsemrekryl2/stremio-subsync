@@ -71,6 +71,8 @@ pub struct AppState {
     secrets: Option<Arc<Mutex<Secrets>>>,
     /// Tries a link or key for the configure page's Test button (SS-062).
     checker: Option<Arc<dyn Checker>>,
+    /// Where the translation choice is saved, for backups (SS-063).
+    settings_file: Option<std::path::PathBuf>,
 }
 
 /// Starts the whole server again; it does not return when it works.
@@ -99,6 +101,7 @@ impl AppState {
             restart: None,
             secrets: None,
             checker: None,
+            settings_file: None,
         })
     }
 
@@ -182,6 +185,13 @@ impl AppState {
         self
     }
 
+    /// Lets a backup carry, and a restore bring back, the translation
+    /// choice saved in `path`.
+    pub fn with_settings_file(mut self, path: std::path::PathBuf) -> Self {
+        self.settings_file = Some(path);
+        self
+    }
+
     fn authorized(&self, candidate: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
@@ -214,6 +224,8 @@ pub fn router(state: AppState) -> Router {
         .route("/{token}/configure", get(dashboard))
         .route(SECRETS_ROUTE, get(secrets_json).post(change_secrets))
         .route("/{token}/secrets/test", post(test_secret))
+        .route("/{token}/backup", get(backup))
+        .route("/{token}/restore", post(restore))
         .route(EVENTS_ROUTE, get(events_json))
         .route(TRANSLATIONS_ROUTE, get(translations_json))
         .route(SETTINGS_ROUTE, get(settings_json).post(change_settings))
@@ -437,6 +449,8 @@ fn refusal(refused: secrets::Refused) -> Response {
             json!({ "refused": "aiostreams", "reason": format!("{reason:?}") }),
         ),
         secrets::Refused::OwnLink => (StatusCode::BAD_REQUEST, json!({ "refused": "own_link" })),
+        secrets::Refused::Token => (StatusCode::BAD_REQUEST, json!({ "refused": "token" })),
+        secrets::Refused::Backup => (StatusCode::BAD_REQUEST, json!({ "refused": "backup" })),
         secrets::Refused::Off => (StatusCode::BAD_REQUEST, json!({ "refused": "off" })),
         secrets::Refused::Save(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -495,6 +509,109 @@ async fn test_secret(
     let outcome = checker.check(name, value).await;
     event!("start", "key test name={name:?} outcome={outcome:?}");
     Json(outcome).into_response()
+}
+
+/// The whole setup as one file (SS-063): the install token, every link and
+/// key in use and the saved translation choice. It holds every secret, so
+/// it is only ever sent, never logged or kept elsewhere.
+async fn backup(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(secrets) = state.secrets.clone() else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    let settings = state
+        .settings_file
+        .as_deref()
+        .and_then(|path| settings::load(path).ok().flatten());
+    let Some(backup) = secrets
+        .lock()
+        .ok()
+        .map(|secrets| secrets.backup(&state.token, settings))
+    else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(body) = serde_json::to_vec_pretty(&backup) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    event!("start", "backup downloaded");
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"subsync-backup.json\"",
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Takes a backup in place of the whole setup (SS-063), then restarts. Its
+/// token becomes the install token, so the page moves to the backup's
+/// address; Stremio's install keeps working when the server's address is
+/// the old one. Nothing is saved when any part is refused.
+async fn restore(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(secrets) = state.secrets.clone() else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    let Ok(backup) = serde_json::from_slice::<secrets::Backup>(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "refused": "backup" })),
+        )
+            .into_response();
+    };
+    if backup.settings.as_ref().is_some_and(|s| s.check().is_err()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "refused": "settings" })),
+        )
+            .into_response();
+    }
+    let settings_file = state.settings_file.clone();
+    let restored = tokio::task::spawn_blocking(move || {
+        let mut secrets = secrets.lock().map_err(|_| secrets::Refused::Off)?;
+        secrets.restore(&backup)?;
+        if let (Some(chosen), Some(path)) = (&backup.settings, &settings_file) {
+            settings::save(path, chosen).map_err(|err| secrets::Refused::Save(err.kind()))?;
+        }
+        Ok(backup.token)
+    })
+    .await
+    .unwrap_or(Err(secrets::Refused::Off));
+    let restored = match restored {
+        Ok(restored) => restored,
+        Err(refused) => {
+            if let secrets::Refused::Save(kind) = refused {
+                event!("start", "backup restore failed error={kind:?}");
+            }
+            return refusal(refused);
+        }
+    };
+    let token_changed = restored != state.token;
+    event!("start", "backup restored token_changed={token_changed}");
+    let restarting = match state.restart.clone() {
+        Some(restart) => {
+            tokio::spawn(async move {
+                tokio::time::sleep(RESTART_DELAY).await;
+                restart();
+            });
+            true
+        }
+        None => false,
+    };
+    Json(json!({ "restarting": restarting, "token_changed": token_changed })).into_response()
 }
 
 /// What the dashboard's cache button also clears.
@@ -2915,6 +3032,99 @@ mod tests {
             (status, answer["refused"].clone()),
             (StatusCode::CONFLICT, json!("off"))
         );
+    }
+
+    #[tokio::test]
+    async fn a_backup_restores_on_another_server_with_its_token() {
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-backup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        const OLD: &str = "old-token-0123456789abcdef0123456789";
+        const NEW: &str = "new-token-0123456789abcdef0123456789";
+        let server = |token: &str, name: &str, env: Option<&'static str>| {
+            let (secrets, _) =
+                Secrets::load(Some(dir.join(name).join("secrets.json")), move |key| {
+                    (key == "SUBDL_API_KEY")
+                        .then(|| env.map(str::to_owned))
+                        .flatten()
+                });
+            let restarts = Arc::new(Mutex::new(0));
+            let counted = restarts.clone();
+            let app = router(
+                AppState::new(token.to_owned())
+                    .unwrap()
+                    .with_secrets(secrets)
+                    .with_settings_file(dir.join(name).join("settings.json"))
+                    .with_restart(Arc::new(move || *counted.lock().unwrap() += 1)),
+            );
+            (app, restarts)
+        };
+        let (old, _) = server(OLD, "old", Some("old-subdl"));
+        let chosen = TranslateSettings {
+            model: "vendor/model".to_owned(),
+            reasoning: "high".to_owned(),
+            clean: false,
+        };
+        settings::save(&dir.join("old").join("settings.json"), &chosen).unwrap();
+
+        let fetch = |app: &Router, uri: String| {
+            app.clone()
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        };
+        assert_eq!(
+            fetch(&old, "/wrong-token-123/backup".to_owned())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let response = fetch(&old, format!("/{OLD}/backup")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()[header::CONTENT_DISPOSITION]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment")
+        );
+        let file = response.into_body().collect().await.unwrap().to_bytes();
+        let file = String::from_utf8(file.to_vec()).unwrap();
+        assert!(file.contains(OLD) && file.contains("old-subdl") && file.contains("vendor/model"));
+        let logged: String = crate::events::since(0)
+            .events
+            .into_iter()
+            .map(|e| e.line)
+            .collect();
+        assert!(!logged.contains("old-subdl"));
+
+        // A new server with another token and nothing configured.
+        let (new, restarts) = server(NEW, "new", None);
+        let wrong = post(&new, format!("/{OLD}/restore"), &file).await;
+        assert_eq!(wrong.0, StatusCode::NOT_FOUND, "the new server's own token");
+        let (status, answer) = post(&new, format!("/{NEW}/restore"), "{}").await;
+        assert_eq!(
+            (status, answer),
+            (StatusCode::BAD_REQUEST, json!({ "refused": "backup" }))
+        );
+        let (status, answer) = post(&new, format!("/{NEW}/restore"), &file).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer, json!({ "restarting": true, "token_changed": true }));
+        tokio::time::sleep(RESTART_DELAY * 3).await;
+        assert_eq!(*restarts.lock().unwrap(), 1);
+
+        // What the restarted server reads.
+        let (restored, _) = Secrets::load(Some(dir.join("new").join("secrets.json")), |_| None);
+        assert_eq!(restored.token(), Some(OLD));
+        assert_eq!(restored.get(secrets::Name::SubDl), Some("old-subdl"));
+        assert_eq!(
+            settings::load(&dir.join("new").join("settings.json")),
+            Ok(Some(chosen))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
