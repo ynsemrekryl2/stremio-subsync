@@ -88,6 +88,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Lisans
 
-[GPL-3.0](LICENSE). Çeviri çekirdeği GPL-3.0 lisanslı Nen'den taşındı.
+[GPL-3.0 ya da sonraki sürümleri](LICENSE): kullanmak, değiştirmek ve
+dağıtmak serbest; değiştirilmiş sürümü dağıtan kaynağını da açar.
 Repoda kimsenin anahtarı yok: her kurulum kendi AIOStreams linkini ve
 anahtarlarını configure sayfasından girer.
