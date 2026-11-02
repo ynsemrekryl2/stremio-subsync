@@ -5,7 +5,8 @@ altyazıyı bulur:
 
 - Dosyanın **içindeki İngilizce altyazının zamanlarını** cetvel olarak okur.
   Filmi indirmez; dosyanın yalnız içindekiler tablosunu okur.
-- OpenSubtitles, SubDL, AltyaziDB, SubSource ve Wyzie'deki altyazıları bu
+- OpenSubtitles, The Subtitle Database, SubDL, AltyaziDB, SubSource ve
+  Wyzie'deki altyazıları (SRT, ASS, VTT; ZIP ya da RAR içinde de) bu
   cetvele kaydırır; filmin başında, ortasında ve sonunda tutanları sunar.
   Tutmayanı hiç göstermez.
 - Hiçbiri uymazsa, dosyaya uyan İngilizce altyazıyı kendi OpenRouter
@@ -51,6 +52,12 @@ Stremio'da bir video aç, altyazı menüsünde **SubSync** girdilerini seç. İl
 açılışta yanıt birkaç saniye sürebilir (en çok 15 sn), sonrakiler hazır
 gelir. Altyazı bulunamazsa menüde nedenini yazan bir girdi görünür; çeviri
 hazırlanıyorsa birkaç dakika sonra videoyu yeniden aç.
+
+Anime kataloglarının (Kitsu) bölümleri de aranır: Kitsu numarası IMDb
+numarasına, sezonuna ve bölümüne çevrilir (Fribb'in anime-lists listesiyle,
+haftada bir güncellenir). Listede IMDb karşılığı olmayan başlıklar aranmaz.
+Eski bir kurulumda Kitsu bölümlerinde SubSync görünmüyorsa eklentiyi
+Stremio'ya yeniden kur.
 
 Aynı sayfa bir panel de: her isteğin sonucu, kaynakların durumu, süren
 çeviriler ve maliyeti, cache temizleme, yeniden başlatma, çeviri modeli.

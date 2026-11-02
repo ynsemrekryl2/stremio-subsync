@@ -1,6 +1,6 @@
-//! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on),
-//! SubDL, AltyaziDB, SubSource and Wyzie (free keys) for one title and
-//! language, and one candidate's SRT bytes.
+//! Candidate subtitles (M3): OpenSubtitles v3 (Stremio's keyless add-on)
+//! and The Subtitle Database (keyless), SubDL, AltyaziDB, SubSource and
+//! Wyzie (free keys) for one title and language, and one candidate's bytes.
 //!
 //! IMDb ids, release names, download links and the source keys never reach
 //! the log: `Debug` on these types prints only kinds, counts and flags.
@@ -9,19 +9,17 @@ use reqwest::Url;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::future::Future;
-use std::io::Read;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::formats;
 use crate::rank;
 use crate::srt::{self, Cue};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// Largest list, subtitle file or archive read from a source.
 const MAX_DOWNLOAD: usize = 4 * 1024 * 1024;
-/// Largest SRT taken out of an archive.
-const MAX_SRT: u64 = 2 * 1024 * 1024;
 /// Candidates the probe downloads.
 const PROBE_DOWNLOADS: usize = 3;
 /// Candidates downloaded once more when none of the first fits (SS-040).
@@ -34,6 +32,9 @@ const ALTYAZIDB_SEARCH: &str = "https://altyazidb.com/api/v1/search";
 const ALTYAZIDB_SUBTITLE: &str = "https://altyazidb.com/api/v1/subtitle";
 const SUBSOURCE_API: &str = "https://api.subsource.net/api/v1";
 const WYZIE_SEARCH: &str = "https://sub.wyzie.io/search";
+const SUBTITLEDB_API: &str = "https://api.thesubtitledb.org";
+/// How long a source whose key was refused (401, 403) is not asked again.
+const REFUSED_FOR: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -127,6 +128,7 @@ pub enum SourceKind {
     AltyaziDb,
     SubSource,
     Wyzie,
+    SubtitleDb,
 }
 
 /// One subtitle a source offers. `Debug` shows no name and no link.
@@ -187,7 +189,8 @@ pub type DownloadFuture<'a> =
 pub trait SubtitleSource: Send + Sync {
     fn kind(&self) -> SourceKind;
     fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a>;
-    /// Bytes of one SRT file for `candidate`.
+    /// Bytes of `candidate` as the site gives them: a subtitle file or an
+    /// archive, which the probe opens (see [`crate::unpack`]).
     fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a>;
 }
 
@@ -608,8 +611,88 @@ pub fn wyzie_language(lang: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+#[derive(Deserialize)]
+struct TsdbList {
+    subtitles: Option<TsdbPage>,
+}
+
+#[derive(Deserialize)]
+struct TsdbPage {
+    #[serde(default)]
+    items: Vec<TsdbEntry>,
+}
+
+#[derive(Deserialize)]
+struct TsdbEntry {
+    #[serde(default)]
+    id: Value,
+    language: Option<String>,
+    format: Option<String>,
+    release_name: Option<String>,
+    hearing_impaired: Option<bool>,
+    /// True for a machine transcription.
+    ai_transcribed: Option<bool>,
+    #[serde(default)]
+    fps: Value,
+}
+
+/// Subtitle formats the probe reads (see [`crate::formats`]).
+fn readable_format(format: Option<&str>) -> bool {
+    format.is_none_or(|f| ["srt", "ass", "ssa", "vtt"].contains(&f.to_ascii_lowercase().as_str()))
+}
+
+/// The Subtitle Database list (filtered by title, episode and language on
+/// the server), kept to the language, readable formats and, when a release
+/// names episodes, `query`'s. Machine transcriptions are left out.
+pub fn parse_subtitledb(body: &[u8], query: &Query) -> Result<Vec<Candidate>, SourceError> {
+    let list: TsdbList = serde_json::from_slice(body).map_err(|_| SourceError::Decode)?;
+    let lang = subtitledb_language(&query.lang);
+    Ok(list
+        .subtitles
+        .map(|page| page.items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| lang.is_some() && e.language.as_deref().map(str::to_ascii_lowercase) == lang)
+        .filter(|e| readable_format(e.format.as_deref()))
+        .filter(|e| e.ai_transcribed != Some(true))
+        .filter_map(|e| {
+            let id = match &e.id {
+                Value::Number(n) => n.as_u64()?,
+                Value::String(s) => s.trim().parse().ok()?,
+                _ => return None,
+            };
+            let release = e.release_name.unwrap_or_default();
+            if !query.names_fit([release.as_str()]) {
+                return None;
+            }
+            let fps = match &e.fps {
+                Value::Number(n) => n.as_f64(),
+                Value::String(s) => s.trim().parse().ok(),
+                _ => None,
+            };
+            Some(Candidate {
+                source: SourceKind::SubtitleDb,
+                release,
+                fps_milli: fps
+                    .filter(|f| *f > 1.0 && *f < 1000.0)
+                    .map(|f| (f * 1000.0).round() as u32),
+                hearing_impaired: e.hearing_impaired,
+                link: format!("{SUBTITLEDB_API}/get/{id}"),
+            })
+        })
+        .collect())
+}
+
+/// The Subtitle Database's language code (ISO 639-1, Brazilian `pb`).
+pub fn subtitledb_language(lang: &str) -> Option<String> {
+    match lang {
+        "pob" => Some("pb".to_owned()),
+        _ => wyzie_language(lang),
+    }
+}
+
 /// `(season, episode)` pairs written in a file name: `S01E02`, `s1e2`, `1x02`.
-fn episode_marks(name: &str) -> Vec<(u32, u32)> {
+pub fn episode_marks(name: &str) -> Vec<(u32, u32)> {
     let b = name.to_ascii_lowercase().into_bytes();
     let number = |from: usize| -> Option<(u32, usize)> {
         let len = b[from.min(b.len())..]
@@ -645,53 +728,6 @@ fn episode_marks(name: &str) -> Vec<(u32, u32)> {
         }
     }
     marks
-}
-
-/// The SRT inside a SubDL or SubSource archive: for an episode, the file named for it
-/// (or the only one); for a movie, the largest.
-pub fn pick_srt(archive: &[u8], query: &Query) -> Result<Vec<u8>, SourceError> {
-    let mut zip =
-        zip::ZipArchive::new(std::io::Cursor::new(archive)).map_err(|_| SourceError::Decode)?;
-    let mut files = Vec::new();
-    for i in 0..zip.len() {
-        let Ok(file) = zip.by_index(i) else { continue };
-        // Old archives store names in a legacy code page; only ".srt" and
-        // episode marks matter here, so a lossy read is enough.
-        let name = String::from_utf8_lossy(file.name_raw()).into_owned();
-        if file.is_file()
-            && name.to_ascii_lowercase().ends_with(".srt")
-            && !name.starts_with("__MACOSX")
-        {
-            files.push((i, file.size(), episode_marks(&name)));
-        }
-    }
-    let chosen = match (query.season, query.episode) {
-        (Some(season), Some(episode)) => {
-            let named: Vec<_> = files
-                .iter()
-                .filter(|f| f.2.contains(&(season, episode)))
-                .collect();
-            match named.as_slice() {
-                [] if files.len() == 1 => files.first(),
-                named => named.iter().copied().max_by_key(|f| f.1),
-            }
-        }
-        _ => files.iter().max_by_key(|f| f.1),
-    };
-    let &(index, size, _) = chosen.ok_or(SourceError::NoSubtitle)?;
-    if size > MAX_SRT {
-        return Err(SourceError::TooLarge);
-    }
-    let mut bytes = Vec::new();
-    zip.by_index(index)
-        .map_err(|_| SourceError::Decode)?
-        .take(MAX_SRT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| SourceError::Decode)?;
-    if bytes.len() as u64 > MAX_SRT {
-        return Err(SourceError::TooLarge);
-    }
-    Ok(bytes)
 }
 
 fn client() -> Option<reqwest::Client> {
@@ -825,10 +861,10 @@ impl SubtitleSource for SubDl {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            pick_srt(&get_capped(self.client.get(url)).await?, query)
+            get_capped(self.client.get(url)).await
         })
     }
 }
@@ -959,10 +995,10 @@ impl SubtitleSource for SubSource {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            pick_srt(&get_capped(self.get(url)).await?, query)
+            get_capped(self.get(url)).await
         })
     }
 }
@@ -1012,19 +1048,126 @@ impl SubtitleSource for Wyzie {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
             let body = get_capped(self.client.get(url)).await?;
-            // An archive the server did not unpack.
-            if body.starts_with(b"PK") {
-                return pick_srt(&body, query);
-            }
             // Errors come back as JSON; a subtitle never starts with `{`.
             if body.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{') {
                 return Err(SourceError::NoSubtitle);
             }
             Ok(body)
+        })
+    }
+}
+
+/// The Subtitle Database: no key.
+pub struct SubtitleDb {
+    client: reqwest::Client,
+}
+
+impl SubtitleDb {
+    pub fn new() -> Option<Self> {
+        Some(Self { client: client()? })
+    }
+}
+
+impl SubtitleSource for SubtitleDb {
+    fn kind(&self) -> SourceKind {
+        SourceKind::SubtitleDb
+    }
+
+    fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a> {
+        Box::pin(async move {
+            let Some(language) = subtitledb_language(&query.lang) else {
+                return Ok(Vec::new());
+            };
+            let mut path = format!("{SUBTITLEDB_API}/v1/by-imdb/{}", query.imdb);
+            if let (Some(s), Some(e)) = (query.season, query.episode) {
+                path.push_str(&format!("/season/{s}/episode/{e}"));
+            }
+            let params = [("lang", language), ("limit", "100".to_owned())];
+            let url = Url::parse_with_params(&path, &params).map_err(|_| SourceError::Other)?;
+            parse_subtitledb(&get_capped(self.client.get(url)).await?, query)
+        })
+    }
+
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+        Box::pin(async move {
+            let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
+            let body = get_capped(self.client.get(url)).await?;
+            if !looks_like_subtitle(&body) {
+                return Err(SourceError::NoSubtitle);
+            }
+            Ok(body)
+        })
+    }
+}
+
+/// False for an empty body, a JSON error or an HTML page.
+fn looks_like_subtitle(body: &[u8]) -> bool {
+    let Some(start) = body.iter().position(|b| !b.is_ascii_whitespace()) else {
+        return false;
+    };
+    let head: Vec<u8> = body[start..]
+        .iter()
+        .take(15)
+        .map(u8::to_ascii_lowercase)
+        .collect();
+    !(head.starts_with(b"{") || head.starts_with(b"<!doctype html") || head.starts_with(b"<html"))
+}
+
+/// A keyed source that is not asked again for [`REFUSED_FOR`] once its key
+/// is refused: every request would fail the same way and only cost time.
+/// Saving a new key restarts the server, which forgets the refusal.
+pub struct RefusalMemory {
+    inner: Arc<dyn SubtitleSource>,
+    refused: std::sync::Mutex<Option<(Instant, SourceError)>>,
+}
+
+impl RefusalMemory {
+    pub fn wrap(inner: Arc<dyn SubtitleSource>) -> Arc<dyn SubtitleSource> {
+        Arc::new(Self {
+            inner,
+            refused: std::sync::Mutex::new(None),
+        })
+    }
+
+    fn remembered(&self) -> Option<SourceError> {
+        let guard = self.refused.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .filter(|(at, _)| at.elapsed() < REFUSED_FOR)
+            .map(|(_, err)| err)
+    }
+
+    fn note<T>(&self, result: Result<T, SourceError>) -> Result<T, SourceError> {
+        if let Err(err @ SourceError::Status(401 | 403)) = result {
+            *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), err));
+        }
+        result
+    }
+}
+
+impl SubtitleSource for RefusalMemory {
+    fn kind(&self) -> SourceKind {
+        self.inner.kind()
+    }
+
+    fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a> {
+        Box::pin(async move {
+            if let Some(err) = self.remembered() {
+                return Err(err);
+            }
+            self.note(self.inner.search(query).await)
+        })
+    }
+
+    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+        Box::pin(async move {
+            if let Some(err) = self.remembered() {
+                return Err(err);
+            }
+            self.note(self.inner.download(query, candidate).await)
         })
     }
 }
@@ -1095,7 +1238,16 @@ impl Probe {
                     continue;
                 }
             };
-            let cues = srt::parse(&srt::decode(&bytes, &self.query.lang));
+            let size = bytes.len();
+            let cues = match crate::unpack::subtitle(bytes, &self.query) {
+                Ok(file) => formats::cues(&srt::decode(&file, &self.query.lang)),
+                Err(err) => {
+                    self.report.downloads.push(Err(err));
+                    self.cues.push(None);
+                    taken += 1;
+                    continue;
+                }
+            };
             if !cues.is_empty() && self.cues.iter().flatten().any(|seen| *seen == cues) {
                 self.report.duplicates += 1;
                 continue;
@@ -1103,7 +1255,7 @@ impl Probe {
             self.report.downloads.push(Ok(SrtStats {
                 source: candidate.source,
                 score: rank::score(&candidate.release, self.filename.as_deref()),
-                bytes: bytes.len(),
+                bytes: size,
                 cues: cues.len(),
                 first_ms: cues.first().map(|c| c.start_ms),
                 last_end_ms: cues.iter().map(|c| c.end_ms).max(),
@@ -1124,8 +1276,10 @@ pub async fn probe(
     let started = Instant::now();
     let mut searches = Vec::new();
     let mut found: Vec<(usize, Candidate)> = Vec::new();
-    for (i, source) in sources.iter().enumerate() {
-        let result = source.search(query).await;
+    // All sources are asked at once: the slowest, not the sum, is the wait.
+    let results =
+        futures_util::future::join_all(sources.iter().map(|source| source.search(query))).await;
+    for (i, (source, result)) in sources.iter().zip(results).enumerate() {
         searches.push((source.kind(), result.as_ref().map(Vec::len).map_err(|e| *e)));
         found.extend(result.unwrap_or_default().into_iter().map(|c| (i, c)));
     }
@@ -1158,7 +1312,6 @@ pub async fn probe(
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::io::Write;
 
     fn movie() -> Query {
         Query::new("movie", "tt0133093", "tur").unwrap()
@@ -1446,47 +1599,128 @@ mod tests {
     }
 
     #[test]
+    fn subtitledb_keeps_language_readable_formats_and_episode_but_not_machine() {
+        let body = json!({ "subtitles": { "items": [
+            { "id": 11, "language": "tr", "format": "srt",
+              "release_name": "Show.S01E02.1080p.WEB-DL", "hearing_impaired": true, "fps": 23.976 },
+            { "id": "12", "language": "TR", "format": "ass", "release_name": "Show.S01E02.720p",
+              "fps": "25" },
+            { "id": 13, "language": "tr", "format": "sub", "release_name": "Show.S01E02" },
+            { "id": 14, "language": "tr", "release_name": "Show.S01E03" },
+            { "id": 15, "language": "en", "release_name": "Show.S01E02" },
+            { "id": 16, "language": "tr", "ai_transcribed": true },
+            { "id": "../x", "language": "tr" },
+            { "language": "tr" }
+        ]}})
+        .to_string();
+        let found = parse_subtitledb(body.as_bytes(), &episode()).unwrap();
+        let links: Vec<&str> = found.iter().map(|c| c.link.as_str()).collect();
+        assert_eq!(
+            links,
+            [
+                "https://api.thesubtitledb.org/get/11",
+                "https://api.thesubtitledb.org/get/12"
+            ]
+        );
+        assert_eq!(found[0].source, SourceKind::SubtitleDb);
+        assert_eq!(found[0].release, "Show.S01E02.1080p.WEB-DL");
+        assert_eq!(found[0].fps_milli, Some(23_976));
+        assert_eq!(found[0].hearing_impaired, Some(true));
+        assert_eq!(found[1].fps_milli, Some(25_000));
+        assert_eq!(
+            parse_subtitledb(br#"{"subtitles":null}"#, &episode()),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            parse_subtitledb(b"<html>", &episode()),
+            Err(SourceError::Decode)
+        );
+        assert_eq!(subtitledb_language("tur").as_deref(), Some("tr"));
+        assert_eq!(subtitledb_language("pob").as_deref(), Some("pb"));
+    }
+
+    #[test]
+    fn subtitledb_download_refuses_pages_and_errors() {
+        assert!(looks_like_subtitle(
+            b"1\n00:00:01,000 --> 00:00:02,000\nHi\n"
+        ));
+        assert!(looks_like_subtitle(b"PK\x03\x04"));
+        assert!(looks_like_subtitle(b"WEBVTT\n"));
+        for bad in [
+            &b""[..],
+            b"  \n",
+            b"{\"error\":1}",
+            b"<!DOCTYPE html><p>",
+            b"\n<html>",
+        ] {
+            assert!(!looks_like_subtitle(bad), "{bad:?}");
+        }
+    }
+
+    /// Counts searches; refuses the key while `status` says so.
+    struct Keyed {
+        status: std::sync::Mutex<u16>,
+        asked: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SubtitleSource for Keyed {
+        fn kind(&self) -> SourceKind {
+            SourceKind::SubDl
+        }
+
+        fn search<'a>(&'a self, _query: &'a Query) -> SearchFuture<'a> {
+            Box::pin(async move {
+                self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                match *self.status.lock().unwrap() {
+                    200 => Ok(Vec::new()),
+                    code => Err(SourceError::Status(code)),
+                }
+            })
+        }
+
+        fn download<'a>(&'a self, _q: &'a Query, _c: &'a Candidate) -> DownloadFuture<'a> {
+            Box::pin(async move { Err(SourceError::Other) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_key_is_not_asked_again_but_other_errors_are() {
+        let keyed = Arc::new(Keyed {
+            status: std::sync::Mutex::new(429),
+            asked: Default::default(),
+        });
+        let source = RefusalMemory::wrap(keyed.clone());
+        let asked = || keyed.asked.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(source.kind(), SourceKind::SubDl);
+        // A full quota passes on in time; it is asked each time.
+        for _ in 0..2 {
+            assert_eq!(source.search(&movie()).await, Err(SourceError::Status(429)));
+        }
+        assert_eq!(asked(), 2);
+        *keyed.status.lock().unwrap() = 401;
+        for _ in 0..3 {
+            assert_eq!(source.search(&movie()).await, Err(SourceError::Status(401)));
+        }
+        assert_eq!(asked(), 3, "asked once, then remembered");
+        // Still remembered when the site would answer again.
+        *keyed.status.lock().unwrap() = 200;
+        assert_eq!(source.search(&movie()).await, Err(SourceError::Status(401)));
+        assert_eq!(
+            source
+                .download(&movie(), &candidate(SourceKind::SubDl, "x", "y"))
+                .await,
+            Err(SourceError::Status(401))
+        );
+        assert_eq!(asked(), 3);
+    }
+
+    #[test]
     fn episode_marks_read_common_forms() {
         assert_eq!(episode_marks("Show.S01E02.720p.srt"), vec![(1, 2)]);
         assert_eq!(episode_marks("show s1e10 x264"), vec![(1, 10)]);
         assert_eq!(episode_marks("Show 2x05 - Title.srt"), vec![(2, 5)]);
         assert_eq!(episode_marks("Movie.1920x1080.x264.srt"), vec![]);
         assert_eq!(episode_marks("Show.S01.Complete.srt"), vec![]);
-    }
-
-    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        for (name, body) in files {
-            out.start_file(*name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            out.write_all(body).unwrap();
-        }
-        out.finish().unwrap().into_inner()
-    }
-
-    #[test]
-    fn pick_srt_takes_the_episode_or_largest() {
-        let pack = zip_of(&[
-            ("Show.S01E01.srt", b"one"),
-            ("Show.S01E02.srt", b"two"),
-            ("Show.S01E02.HI.srt", b"two, longer"),
-            ("__MACOSX/Show.S01E02.srt", b"junk junk junk junk"),
-            ("readme.txt", b"hello hello hello hello"),
-        ]);
-        assert_eq!(pick_srt(&pack, &episode()).unwrap(), b"two, longer");
-
-        let single = zip_of(&[("tr.srt", b"only")]);
-        assert_eq!(pick_srt(&single, &episode()).unwrap(), b"only");
-
-        let other = zip_of(&[("Show.S01E01.srt", b"one"), ("Show.S01E03.srt", b"three")]);
-        assert_eq!(pick_srt(&other, &episode()), Err(SourceError::NoSubtitle));
-
-        let movie_zip = zip_of(&[("cd.srt", b"short"), ("full.srt", b"much longer")]);
-        assert_eq!(pick_srt(&movie_zip, &movie()).unwrap(), b"much longer");
-
-        assert_eq!(pick_srt(b"not a zip", &movie()), Err(SourceError::Decode));
-        let none = zip_of(&[("notes.txt", b"x")]);
-        assert_eq!(pick_srt(&none, &movie()), Err(SourceError::NoSubtitle));
     }
 
     struct FakeSource {
@@ -1511,6 +1745,17 @@ mod tests {
             Box::pin(async move {
                 match candidate.link.as_str() {
                     "bad" => Err(SourceError::Status(404)),
+                    // A RAR with an ASS file in it.
+                    "rar" => {
+                        let mut rar = rars::Builder::new(rars::ArchiveVersion::Rar50);
+                        let ass = "[Script Info]\n\n[Events]\nFormat: Layer, Start, End, Style, \
+                            Name, MarginL, MarginR, MarginV, Effect, Text\n\
+                            Dialogue: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,{\\i1}Packed{\\i0}\n";
+                        rar.add_bytes(b"Movie.ass".to_vec(), ass.as_bytes().to_vec(), None, None)
+                            .unwrap();
+                        Ok(rar.to_bytes().unwrap())
+                    }
+                    "broken" => Ok(b"Rar!\x1a\x07\x01\x00broken".to_vec()),
                     // The same lines as "dup", stored another way.
                     "copy" => Ok(b"\xEF\xBB\xBF1\r\n00:00:01,000 --> 00:00:02,000\r\nA\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,500\r\nB\r\n".to_vec()),
                     other if other.starts_with("new") => {
@@ -1604,6 +1849,26 @@ mod tests {
         assert_eq!(lines(&probe), vec!["A"]);
         assert_eq!(probe.report.duplicates, 5);
         assert!(probe.has_more(), "the last one is left for later");
+    }
+
+    #[tokio::test]
+    async fn probe_opens_archives_and_reads_other_formats() {
+        let sources: Vec<Arc<dyn SubtitleSource>> = vec![Arc::new(FakeSource {
+            kind: SourceKind::SubtitleDb,
+            found: Ok(vec![
+                candidate(SourceKind::SubtitleDb, "Movie.2020.1080p", "rar"),
+                candidate(SourceKind::SubtitleDb, "Movie.2020.720p", "broken"),
+            ]),
+        })];
+        let probe = probe(&sources, &movie(), Some("Movie.2020.1080p.mkv")).await;
+        let first = probe.report.downloads[0].as_ref().unwrap();
+        assert_eq!(
+            (first.source, first.cues, first.first_ms),
+            (SourceKind::SubtitleDb, 1, Some(5_000))
+        );
+        assert_eq!(probe.cues[0].as_ref().unwrap()[0].text, "<i>Packed</i>");
+        assert_eq!(probe.report.downloads[1], Err(SourceError::Decode));
+        assert!(probe.cues[1].is_none());
     }
 
     #[tokio::test]

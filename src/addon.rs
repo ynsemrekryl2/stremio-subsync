@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 use crate::align;
+use crate::anime::AnimeIds;
 use crate::checks::Checker;
 use crate::dump::{self, Dump};
 use crate::events::{self, event};
@@ -73,6 +74,8 @@ pub struct AppState {
     checker: Option<Arc<dyn Checker>>,
     /// Where the translation choice is saved, for backups (SS-063).
     settings_file: Option<std::path::PathBuf>,
+    /// Kitsu ids as IMDb ones, for anime catalogs.
+    anime: Option<Arc<AnimeIds>>,
 }
 
 /// Starts the whole server again; it does not return when it works.
@@ -102,7 +105,35 @@ impl AppState {
             secrets: None,
             checker: None,
             settings_file: None,
+            anime: None,
         })
+    }
+
+    /// Answers `kitsu:` ids too, searching the sources under the IMDb id
+    /// `anime` maps them to.
+    pub fn with_anime_ids(mut self, anime: Arc<AnimeIds>) -> Self {
+        self.anime = Some(anime);
+        self
+    }
+
+    /// The source query for a request's type and id in `lang`: an IMDb id
+    /// as it is, a Kitsu id through the anime map.
+    fn query(&self, kind: &str, id: &str, lang: &str) -> Option<Query> {
+        if id.starts_with("kitsu:") {
+            let (kind, id) = self.anime.as_ref()?.resolve(id)?;
+            return Query::new(kind, &id, lang);
+        }
+        Query::new(kind, id, lang)
+    }
+
+    /// Why a request has no source query: the anime map is still being
+    /// fetched, the title is not in it, or no source is on.
+    fn no_query(&self, id: &str) -> Notice {
+        match &self.anime {
+            Some(anime) if id.starts_with("kitsu:") && anime.len() == 0 => Notice::NotReady,
+            Some(_) if id.starts_with("kitsu:") => Notice::NoCandidates,
+            _ => Notice::Failed,
+        }
     }
 
     /// Enables the K2 probe against this stream list source.
@@ -742,7 +773,7 @@ pub fn manifest_json() -> Value {
         "description": "Altyazıları oynatılan dosyanın gömülü İngilizce izine göre hizalar.",
         "resources": ["subtitles"],
         "types": ["movie", "series"],
-        "idPrefixes": ["tt"],
+        "idPrefixes": ["tt", "kitsu"],
         "catalogs": [],
         "behaviorHints": { "configurable": true, "configurationRequired": false }
     })
@@ -792,7 +823,8 @@ async fn respond(
         return StatusCode::NOT_FOUND.into_response();
     }
     let id = id.strip_suffix(".json").unwrap_or(id);
-    if !matches!(kind, "movie" | "series") || !id.starts_with("tt") {
+    let known_id = id.starts_with("tt") || (state.anime.is_some() && id.starts_with("kitsu:"));
+    if !matches!(kind, "movie" | "series") || !known_id {
         return StatusCode::NOT_FOUND.into_response();
     }
     // Only field presence is logged; ids and filenames reveal what is watched.
@@ -1151,7 +1183,7 @@ async fn build_menu(
     id: String,
     hints: PlaybackHints,
 ) -> Result<Built, Notice> {
-    let query = Query::new(&kind, &id, &state.lang);
+    let query = state.query(&kind, &id, &state.lang);
     let m3 = match query {
         Some(query) if !state.subtitle_sources.is_empty() => {
             let sources = state.subtitle_sources.clone();
@@ -1192,7 +1224,8 @@ async fn build_menu(
     };
     let mut probe = match m3 {
         Some(m3) => m3.await.map_err(|_| Notice::Failed)?,
-        None => return Err(Notice::Failed),
+        None if state.subtitle_sources.is_empty() => return Err(Notice::Failed),
+        None => return Err(state.no_query(&id)),
     };
     let rulers = Arc::new(rulers);
     let wanted = align_candidates(
@@ -1227,7 +1260,7 @@ async fn fallback(
     let Some(lang) = state.fallback_lang.clone().filter(|_| !state.label_mode) else {
         return Vec::new();
     };
-    let Some(query) = Query::new(kind, id, &lang) else {
+    let Some(query) = state.query(kind, id, &lang) else {
         return Vec::new();
     };
     let mut probe = sources::probe(&state.subtitle_sources, &query, filename).await;
@@ -1464,6 +1497,7 @@ mod tests {
         let body = body.unwrap();
         assert_eq!(body["resources"], json!(["subtitles"]));
         assert_eq!(body["types"], json!(["movie", "series"]));
+        assert_eq!(body["idPrefixes"], json!(["tt", "kitsu"]));
         // Stremio shows a Configure button opening `/{token}/configure`.
         assert_eq!(body["behaviorHints"]["configurable"], true);
     }
@@ -1668,6 +1702,51 @@ mod tests {
         assert!(srt.contains("AIOStreams listesinde bulunamadı"), "{srt}");
         // The reason lasts a day: the next open is answered from memory.
         assert_eq!(call(&app, uri).await.1, body);
+    }
+
+    #[tokio::test]
+    async fn kitsu_ids_go_to_aiostreams_as_they_are() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_stream_source(Arc::new(SignalSource(std::sync::Mutex::new(Some(tx)))))
+                .with_anime_ids(crate::anime::tests::loaded()),
+        );
+        let uri = format!("/{TOKEN}/subtitles/series/kitsu:8671:3/filename=A.mkv.json");
+        assert_eq!(call(&app, uri).await.0, StatusCode::OK);
+        let called = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(called, "series/kitsu:8671:3");
+    }
+
+    #[test]
+    fn kitsu_ids_are_searched_under_their_imdb_id() {
+        let state = AppState::new(TOKEN.to_owned()).unwrap();
+        assert_eq!(state.query("series", "kitsu:8671:3", "tur"), None);
+        assert_eq!(state.no_query("kitsu:8671:3"), Notice::Failed);
+        let state = state.with_anime_ids(crate::anime::tests::loaded());
+        let query = state.query("series", "kitsu:8671:3", "tur").unwrap();
+        assert_eq!(
+            (query.imdb.as_str(), query.season, query.episode),
+            ("tt2560140", Some(2), Some(3))
+        );
+        // A film is a movie whatever type the catalog gives it.
+        let film = state.query("series", "kitsu:142:1", "tur").unwrap();
+        assert_eq!((film.imdb.as_str(), film.episode), ("tt0119698", None));
+        assert_eq!(
+            state.query("series", "tt0944947:1:2", "tur"),
+            Query::new("series", "tt0944947:1:2", "tur")
+        );
+        assert_eq!(state.query("series", "kitsu:999:1", "tur"), None);
+        assert_eq!(state.no_query("kitsu:999:1"), Notice::NoCandidates);
+        let empty = AppState::new(TOKEN.to_owned())
+            .unwrap()
+            .with_anime_ids(Arc::new(AnimeIds::default()));
+        assert_eq!(empty.no_query("kitsu:8671:3"), Notice::NotReady);
+        assert_eq!(empty.no_query("tt1"), Notice::Failed);
     }
 
     /// All metadata is in the head; the only later read can be the block probe.

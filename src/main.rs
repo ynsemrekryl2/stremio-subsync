@@ -1,11 +1,13 @@
 mod addon;
 mod align;
+mod anime;
 mod blocks;
 mod checks;
 mod clean;
 mod dump;
 mod events;
 mod extra;
+mod formats;
 mod label;
 mod menu;
 mod mkv;
@@ -24,13 +26,14 @@ mod streams;
 mod synth;
 mod translate;
 mod translations;
+mod unpack;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use events::event;
 use secrets::{Name, Secrets};
-use sources::SubtitleSource;
+use sources::{RefusalMemory, SubtitleSource};
 
 /// Minimum length for the secret path token. The install link is the only
 /// thing protecting the server, so short tokens are refused.
@@ -211,6 +214,7 @@ async fn main() {
     let checker = Arc::new(checks::Live::new(lang.clone()));
     // Translation needs the English fallback, so the sources (SS-026).
     let mut translate_into = None;
+    let mut sources_on = false;
     // Candidate search and download. On by default since M5;
     // `SUBSYNC_SOURCES_PROBE=0` turns it off.
     if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() != Ok("0") {
@@ -218,26 +222,30 @@ async fn main() {
         if let Some(source) = sources::OpenSubtitlesV3::new() {
             found.push(Arc::new(source));
         }
-        // The key is never printed; only which sources are on.
+        if let Some(source) = sources::SubtitleDb::new() {
+            found.push(Arc::new(source));
+        }
+        // The key is never printed; only which sources are on. A refused key
+        // is not tried again for a while.
         if let Some(key) = secret(Name::SubDl)
             && let Some(source) = sources::SubDl::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::AltyaziDb)
             && let Some(source) = sources::AltyaziDb::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::SubSource)
             && let Some(source) = sources::SubSource::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::Wyzie)
             && let Some(source) = sources::Wyzie::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
         event!("start", "sources probe: on (lang {lang}, {kinds:?})");
@@ -248,6 +256,7 @@ async fn main() {
             translate_into = Some(lang.clone());
         }
         state = state.with_subtitle_sources(found, lang);
+        sources_on = true;
     } else {
         event!("start", "sources probe: off");
     }
@@ -279,6 +288,16 @@ async fn main() {
             Some(std::path::PathBuf::from(dir))
         }
     };
+    // Kitsu ids (anime catalogs) searched under their IMDb id; the map is
+    // kept in the cache directory. `SUBSYNC_ANIME=0` turns it off.
+    if sources_on && std::env::var("SUBSYNC_ANIME").as_deref() != Ok("0") {
+        let anime = Arc::new(anime::AnimeIds::default());
+        tokio::spawn(anime::keep_fresh(anime.clone(), cache_dir.clone()));
+        event!("start", "anime ids: on (kitsu)");
+        state = state.with_anime_ids(anime);
+    } else {
+        event!("start", "anime ids: off");
+    }
     // The fitting English subtitle, translated when nothing in the wanted
     // language fits (SS-026). The key is never printed.
     let key = secret(Name::OpenRouter).unwrap_or_default();
