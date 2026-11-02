@@ -1,3 +1,4 @@
+# Written by stremio-subsync (deploy/Caddyfile); subsync uninstall removes it.
 {
 	# Request URIs carry the install token. Access logs stay off (no `log`
 	# directive below) and the error loggers, which print the URI, are dropped.

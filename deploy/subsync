@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# The SubSync server's own command (SS-066); install.sh puts it in
+# /usr/local/bin. Runs as root (asks sudo itself).
+#
+#   subsync                  status: version, service, HTTPS, which keys are set
+#   subsync link             the configure page's and Stremio's install links
+#   subsync update           the latest release (runs install.sh again)
+#   subsync logs             follow the service log (no token, link or key in it)
+#   subsync restart          restart the add-on
+#   subsync backup [file]    the whole setup as one file (holds every secret)
+#   subsync restore <file>   put a backup in place of the whole setup
+#   subsync uninstall        remove the service; --purge also the token and keys
+set -euo pipefail
+
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+repo=ynsemrekryl2/stremio-subsync
+ref="${SUBSYNC_REF:-main}"
+env_file=/etc/stremio-subsync.env
+state=/var/lib/stremio-subsync
+local_url=http://127.0.0.1:7001
+
+fail() {
+	printf 'Hata: %s\n' "$*" >&2
+	exit 1
+}
+setting() { awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print }' "$env_file" 2>/dev/null; }
+# A token restored from a backup wins over the env file's, as in the add-on.
+token() {
+	local t
+	t="$(sed -n 's/^ *"token": *"\([A-Za-z0-9_-]*\)".*/\1/p' "$state/secrets.json" 2>/dev/null || true)"
+	[ -n "$t" ] || t="$(setting SUBSYNC_TOKEN)"
+	[ -n "$t" ] || fail "kurulum bulunamadı ($env_file yok); önce install.sh"
+	printf '%s' "$t"
+}
+domain() { setting SUBSYNC_DOMAIN; }
+mark() { if [ "$1" = ok ]; then printf '\033[32m✓\033[0m'; else printf '\033[31m✗\033[0m'; fi; }
+
+status() {
+	local version latest service https keys
+	# Any of these may fail; status still shows the rest.
+	version="$(/usr/local/bin/stremio-subsync --version 2>/dev/null | awk '{ print $2 }' || true)"
+	# The release page's redirect names the tag; the API's rate limit is not hit.
+	latest="$(curl -fsS -o /dev/null --max-time 10 -w '%{redirect_url}' "https://github.com/$repo/releases/latest" \
+		2>/dev/null | sed -n 's#.*/tag/v##p' || true)"
+	printf 'Sürüm      %s' "${version:-?}"
+	if [ -n "$latest" ] && [ "$latest" != "$version" ]; then
+		printf '  (yenisi var: %s → subsync update)' "$latest"
+	elif [ -n "$latest" ]; then
+		printf '  (en son sürüm)'
+	fi
+	echo
+	service="$(systemctl is-active stremio-subsync || true)"
+	printf 'Servis     %s %s\n' "$(mark "$([ "$service" = active ] && echo ok)")" "$service"
+	https="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$(domain)/$(token)/manifest.json" || true)"
+	printf 'HTTPS      %s https://%s %s\n' "$(mark "$([ "$https" = 200 ] && echo ok)")" "$(domain)" \
+		"$([ "$https" = 200 ] && echo "açılıyor" || echo "açılmıyor (HTTP ${https:-yok}); journalctl -u caddy -n 30")"
+	keys="$(curl -fsS --max-time 5 "$local_url/$(token)/secrets.json" 2>/dev/null || true)"
+	if [ -n "$keys" ]; then
+		printf 'Anahtarlar '
+		for name in aiostreams subdl altyazidb subsource wyzie openrouter; do
+			if grep -q "\"name\":\"$name\",\"set\":true" <<<"$keys"; then
+				printf '%s %s  ' "$(mark ok)" "$name"
+			else
+				printf '· %s  ' "$name"
+			fi
+		done
+		echo
+		grep -q '"name":"aiostreams","set":true' <<<"$keys" ||
+			echo "           AIOStreams linki yok: altyazı üretilmez. Configure sayfasından gir (subsync link)."
+	fi
+	echo
+	echo "Son olaylar:"
+	journalctl -u stremio-subsync -n 5 --no-pager -o cat 2>/dev/null | sed 's/^/  /' || true
+	echo
+	echo "Komutlar: subsync link · update · logs · restart · backup · restore <dosya> · uninstall"
+}
+
+# Waits for a restarted add-on to answer under the current token.
+wait_up() {
+	for _ in $(seq 30); do
+		curl -fsS -o /dev/null --max-time 2 "$local_url/$(token)/manifest.json" 2>/dev/null && return 0
+		sleep 1
+	done
+	fail "eklenti açılmadı; nedeni: journalctl -u stremio-subsync -n 30"
+}
+
+case "${1:-status}" in
+status) status ;;
+link)
+	cat <<EOF
+Configure sayfası (anahtarlar, ayarlar, Stremio'ya kurulum):
+  https://$(domain)/$(token)/configure
+Stremio kurulum linki:
+  https://$(domain)/$(token)/manifest.json
+Bu linkler kurulumun şifresidir; kimseyle paylaşma.
+EOF
+	;;
+update)
+	curl -fsSL "https://raw.githubusercontent.com/$repo/$ref/install.sh" | bash
+	;;
+logs) exec journalctl -u stremio-subsync -f -n 50 -o cat ;;
+restart)
+	systemctl restart stremio-subsync
+	wait_up
+	echo "yeniden başladı"
+	;;
+backup)
+	file="${2:-/root/subsync-backup-$(date +%F).json}"
+	umask 077
+	curl -fsS -o "$file" "$local_url/$(token)/backup" || fail "yedek alınamadı (eklenti açık mı? subsync)"
+	cat <<EOF
+Yedek: $file
+Kurulum linkini ve bütün anahtarları taşır: şifre yöneticinde sakla, kimseyle paylaşma.
+Bilgisayarına almak için (kendi makinende): scp <sunucu>:$file .
+EOF
+	;;
+restore)
+	file="${2:-}"
+	[ -f "$file" ] || fail "kullanım: subsync restore <yedek dosyası>"
+	answer="$(curl -sS -X POST -H 'Content-Type: application/json' --data-binary @"$file" \
+		"$local_url/$(token)/restore")" || fail "eklentiye ulaşılamadı"
+	grep -q '"restarting"' <<<"$answer" || fail "yedek yüklenmedi: $answer"
+	sleep 1
+	wait_up
+	echo "Yedek yüklendi ve eklenti yeniden başladı."
+	"$0" link
+	;;
+uninstall)
+	purge="${2:-}"
+	printf 'SubSync bu sunucudan kaldırılsın mı%s? Onay için "kaldır" yaz: ' \
+		"$([ "$purge" = --purge ] && echo ", token ve anahtarlarla birlikte")"
+	{ read -r reply </dev/tty; } 2>/dev/null || read -r reply || true
+	[ "$reply" = "kaldır" ] || fail "vazgeçildi"
+	systemctl disable --now stremio-subsync 2>/dev/null || true
+	rm -f /etc/systemd/system/stremio-subsync.service /usr/local/bin/stremio-subsync
+	systemctl daemon-reload
+	if grep -qF "# Written by stremio-subsync" /etc/caddy/Caddyfile 2>/dev/null; then
+		mv /etc/caddy/Caddyfile /etc/caddy/Caddyfile.subsync-removed
+		[ -f /etc/caddy/Caddyfile.before-subsync ] && mv /etc/caddy/Caddyfile.before-subsync /etc/caddy/Caddyfile
+		systemctl stop caddy 2>/dev/null || true
+		[ -f /etc/caddy/Caddyfile ] && systemctl start caddy 2>/dev/null || true
+	fi
+	if [ "$purge" = --purge ]; then
+		rm -rf "$env_file" /var/lib/private/stremio-subsync "$state"
+		echo "Token, anahtarlar ve cache silindi."
+	else
+		echo "Token, anahtarlar ve cache kaldı ($env_file, $state); tekrar kurulunca aynı link çalışır."
+	fi
+	rm -f /usr/local/bin/subsync
+	echo "SubSync kaldırıldı."
+	;;
+help | -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) fail "bilinmeyen komut: $1 (subsync help)" ;;
+esac
