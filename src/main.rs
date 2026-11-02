@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use events::event;
 use secrets::{Name, Secrets};
-use sources::SubtitleSource;
+use sources::{RefusalMemory, SubtitleSource};
 
 /// Minimum length for the secret path token. The install link is the only
 /// thing protecting the server, so short tokens are refused.
@@ -220,26 +220,30 @@ async fn main() {
         if let Some(source) = sources::OpenSubtitlesV3::new() {
             found.push(Arc::new(source));
         }
-        // The key is never printed; only which sources are on.
+        if let Some(source) = sources::SubtitleDb::new() {
+            found.push(Arc::new(source));
+        }
+        // The key is never printed; only which sources are on. A refused key
+        // is not tried again for a while.
         if let Some(key) = secret(Name::SubDl)
             && let Some(source) = sources::SubDl::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::AltyaziDb)
             && let Some(source) = sources::AltyaziDb::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::SubSource)
             && let Some(source) = sources::SubSource::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         if let Some(key) = secret(Name::Wyzie)
             && let Some(source) = sources::Wyzie::new(key)
         {
-            found.push(Arc::new(source));
+            found.push(RefusalMemory::wrap(Arc::new(source)));
         }
         let kinds: Vec<_> = found.iter().map(|s| s.kind()).collect();
         event!("start", "sources probe: on (lang {lang}, {kinds:?})");

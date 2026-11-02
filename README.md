@@ -5,7 +5,8 @@ altyazıyı bulur:
 
 - Dosyanın **içindeki İngilizce altyazının zamanlarını** cetvel olarak okur.
   Filmi indirmez; dosyanın yalnız içindekiler tablosunu okur.
-- OpenSubtitles, SubDL, AltyaziDB, SubSource ve Wyzie'deki altyazıları bu
+- OpenSubtitles, The Subtitle Database, SubDL, AltyaziDB, SubSource ve
+  Wyzie'deki altyazıları (SRT, ASS, VTT; ZIP ya da RAR içinde de) bu
   cetvele kaydırır; filmin başında, ortasında ve sonunda tutanları sunar.
   Tutmayanı hiç göstermez.
 - Hiçbiri uymazsa, dosyaya uyan İngilizce altyazıyı kendi OpenRouter

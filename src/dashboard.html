@@ -363,7 +363,8 @@ dl.terms dd { margin: 0; color: var(--muted); }
       <dd>Metin altyazı (SRT, ASS) doğrudan cetvel olur. PGS resim biçimindedir; metin altyazı yoksa
         onun zamanları cetvel olarak kullanılır.</dd>
       <dt>Aday</dt>
-      <dd>OpenSubtitles, SubDL, AltyaziDB, SubSource ya da Wyzie'de bulunan, hedef dildeki altyazı. Dosya adına en çok benzeyen 3'ü indirilir;
+      <dd>OpenSubtitles, The Subtitle Database, SubDL, AltyaziDB, SubSource ya da Wyzie'de bulunan, hedef dildeki
+        altyazı (SRT, ASS ya da VTT; ZIP, RAR ya da gzip arşivinde de olabilir). Dosya adına en çok benzeyen 3'ü indirilir;
         hiçbiri uymazsa sıradaki 3'ü de denenir. Önceki bir indirmeyle aynı satırları taşıyan kopya sayılmaz,
         yerine sıradaki indirilir.</dd>
       <dt>Hizalama, kabul</dt>
@@ -434,9 +435,10 @@ const EFFORTS = { default: "modelin varsayılanı", none: "yok", minimal: "en az
 const REFUSED = { model: "model adı «firma/ad» biçiminde olmalı", reasoning: "düşünme düzeyi geçersiz",
   unbuilt: "bu modelle istemci kurulamadı", body: "istek okunamadı", save: "ayar sunucuda dosyaya yazılamadı",
   off: "çeviri kapalı" };
-const SOURCES = { OpenSubtitles: "OpenSubtitles", SubDl: "SubDL", AltyaziDb: "AltyaziDB", SubSource: "SubSource", Wyzie: "Wyzie" };
+const SOURCES = { OpenSubtitles: "OpenSubtitles", SubtitleDb: "The Subtitle Database", SubDl: "SubDL", AltyaziDb: "AltyaziDB",
+  SubSource: "SubSource", Wyzie: "Wyzie" };
 const SOURCE_ERRORS = { Timeout: "zaman aşımı", Connect: "bağlanamadı", Decode: "cevap okunamadı",
-  TooLarge: "dosya çok büyük", NoSubtitle: "arşivde uygun SRT yok", Other: "hata" };
+  TooLarge: "dosya çok büyük", NoSubtitle: "uygun altyazı dosyası yok", Other: "hata" };
 const WINDOWS = ["başta", "ortada", "sonda"];
 /** The stage a probe line comes after, for lines that do not open a stage. */
 const AFTER = { m5: "k2", m4: "m3", dump: "k2", m3more: "m3", m3fb: "m3", m5fb: "m3fb" };
