@@ -24,6 +24,9 @@ const MAX_DOWNLOAD: usize = 4 * 1024 * 1024;
 const PROBE_DOWNLOADS: usize = 3;
 /// Candidates downloaded once more when none of the first fits (SS-040).
 const MORE_DOWNLOADS: usize = 3;
+/// Two downloads with the same number of lines, each starting and ending
+/// this close to its pair, are copies of one timing (SS-071).
+const SAME_TIMES_MS: u64 = 50;
 
 const OPENSUBTITLES_V3: &str = "https://opensubtitles-v3.strem.io/";
 const SUBDL_API: &str = "https://api.subdl.com/api/v1/subtitles";
@@ -1193,6 +1196,9 @@ pub struct SourcesProbe {
     pub downloads: Vec<Result<SrtStats, SourceError>>,
     /// Downloads left out because an earlier one had the same lines (SS-055).
     pub duplicates: usize,
+    /// Downloads with the same times as an earlier one but other text: tried,
+    /// but they took no slot (SS-071).
+    pub timing_copies: usize,
 }
 
 /// One M3 probe: the report and the cues of each download (`None` where it
@@ -1201,6 +1207,11 @@ pub struct SourcesProbe {
 pub struct Probe {
     pub report: SourcesProbe,
     pub cues: Vec<Option<Vec<Cue>>>,
+    /// How many of the first round's downloads the rule before SS-071, when
+    /// a timing copy took a slot, would have made too (they lead `cues`).
+    /// The second round runs only when none of these fits, as it did then,
+    /// so every candidate that rule tried is still tried.
+    pub first_slots: usize,
     sources: Vec<Arc<dyn SubtitleSource>>,
     query: Query,
     filename: Option<String>,
@@ -1222,48 +1233,82 @@ impl Probe {
     /// Downloads ranked candidates in order until `want` new ones are read
     /// or failed. One with the same lines (times and text) as an earlier
     /// download is left out and the next one taken in its place: sources
-    /// share files, and a copy would only take a slot (SS-055). Fetches at
-    /// most twice `want`, so a run of copies cannot spend the quota.
-    async fn take(&mut self, want: usize) {
+    /// share files, and a copy would only take a slot (SS-055). One with the
+    /// same times but other text (the same translation uploaded elsewhere,
+    /// re-encoded or touched up) is kept and tried, but the next one is
+    /// taken too (SS-071). Fetches at most twice `want`, so a run of copies
+    /// cannot spend the quota.
+    ///
+    /// Returns how many downloads the rule before SS-071 would have kept by
+    /// the time it stopped: the same up to there, as it took the same
+    /// candidates in the same order and counted a timing copy as a slot.
+    async fn take(&mut self, want: usize) -> usize {
         let (mut taken, mut fetched) = (0, 0);
+        // Slots as counted before SS-071, and where that rule stopped.
+        let (mut slots, mut old_end) = (0, None);
         while taken < want && fetched < 2 * want && !self.rest.is_empty() {
             let (i, candidate) = self.rest.remove(0);
             fetched += 1;
-            let bytes = match self.sources[i].download(&self.query, &candidate).await {
-                Ok(bytes) => bytes,
+            let read = match self.sources[i].download(&self.query, &candidate).await {
+                Ok(bytes) => {
+                    let size = bytes.len();
+                    crate::unpack::subtitle(bytes, &self.query)
+                        .map(|file| (size, formats::cues(&srt::decode(&file, &self.query.lang))))
+                }
+                Err(err) => Err(err),
+            };
+            match read {
                 Err(err) => {
                     self.report.downloads.push(Err(err));
                     self.cues.push(None);
                     taken += 1;
+                }
+                Ok((_, cues))
+                    if !cues.is_empty() && self.cues.iter().flatten().any(|seen| *seen == cues) =>
+                {
+                    self.report.duplicates += 1;
                     continue;
                 }
-            };
-            let size = bytes.len();
-            let cues = match crate::unpack::subtitle(bytes, &self.query) {
-                Ok(file) => formats::cues(&srt::decode(&file, &self.query.lang)),
-                Err(err) => {
-                    self.report.downloads.push(Err(err));
-                    self.cues.push(None);
-                    taken += 1;
-                    continue;
+                Ok((size, cues)) => {
+                    if self
+                        .cues
+                        .iter()
+                        .flatten()
+                        .any(|seen| same_times(seen, &cues))
+                    {
+                        self.report.timing_copies += 1;
+                    } else {
+                        taken += 1;
+                    }
+                    self.report.downloads.push(Ok(SrtStats {
+                        source: candidate.source,
+                        score: rank::score(&candidate.release, self.filename.as_deref()),
+                        bytes: size,
+                        cues: cues.len(),
+                        first_ms: cues.first().map(|c| c.start_ms),
+                        last_end_ms: cues.iter().map(|c| c.end_ms).max(),
+                    }));
+                    self.cues.push(Some(cues));
                 }
-            };
-            if !cues.is_empty() && self.cues.iter().flatten().any(|seen| *seen == cues) {
-                self.report.duplicates += 1;
-                continue;
             }
-            self.report.downloads.push(Ok(SrtStats {
-                source: candidate.source,
-                score: rank::score(&candidate.release, self.filename.as_deref()),
-                bytes: size,
-                cues: cues.len(),
-                first_ms: cues.first().map(|c| c.start_ms),
-                last_end_ms: cues.iter().map(|c| c.end_ms).max(),
-            }));
-            self.cues.push(Some(cues));
-            taken += 1;
+            slots += 1;
+            if slots == want {
+                old_end.get_or_insert(self.cues.len());
+            }
         }
+        old_end.unwrap_or(self.cues.len())
     }
+}
+
+/// Whether two downloads carry one timing: as many lines, each starting and
+/// ending within `SAME_TIMES_MS` of its pair (SS-071).
+fn same_times(a: &[Cue], b: &[Cue]) -> bool {
+    !a.is_empty()
+        && a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x.start_ms.abs_diff(y.start_ms) <= SAME_TIMES_MS
+                && x.end_ms.abs_diff(y.end_ms) <= SAME_TIMES_MS
+        })
 }
 
 /// Searches every source, ranks the candidates against `filename` and
@@ -1296,14 +1341,16 @@ pub async fn probe(
             top_scores,
             downloads: Vec::new(),
             duplicates: 0,
+            timing_copies: 0,
         },
         cues: Vec::new(),
+        first_slots: 0,
         sources: sources.to_vec(),
         query: query.clone(),
         filename: filename.map(str::to_owned),
         rest: found,
     };
-    probe.take(PROBE_DOWNLOADS).await;
+    probe.first_slots = probe.take(PROBE_DOWNLOADS).await;
     probe.report.elapsed_ms = started.elapsed().as_millis();
     probe
 }
@@ -1758,16 +1805,21 @@ mod tests {
                     "broken" => Ok(b"Rar!\x1a\x07\x01\x00broken".to_vec()),
                     // The same lines as "dup", stored another way.
                     "copy" => Ok(b"\xEF\xBB\xBF1\r\n00:00:01,000 --> 00:00:02,000\r\nA\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,500\r\nB\r\n".to_vec()),
+                    // Each "new…" its own line at its own time.
                     other if other.starts_with("new") => {
-                        Ok(format!("1\n00:00:01,000 --> 00:00:02,000\n{other}\n").into_bytes())
+                        let s = 10 + other[3..].parse::<u32>().unwrap_or(0) % 40;
+                        Ok(format!("1\n00:00:{s:02},000 --> 00:00:{s:02},500\n{other}\n")
+                            .into_bytes())
                     }
                     "dup" => Ok(
                         b"1\n00:00:01,000 --> 00:00:02,000\nA\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n"
                             .to_vec(),
                     ),
-                    // Each other candidate its own text, the same times.
+                    // Each other candidate its own text and times, or it
+                    // would be a timing copy of the first (SS-071).
                     _ => Ok(format!(
-                        "1\n00:00:01,000 --> 00:00:02,000\n{}\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n",
+                        "1\n00:00:01,{0:03} --> 00:00:02,000\n{1}\n\n2\n00:00:03,000 --> 00:00:04,500\nB\n",
+                        candidate.release.bytes().map(usize::from).sum::<usize>() * 97 % 1000,
                         candidate.release
                     )
                     .into_bytes()),
@@ -1851,6 +1903,119 @@ mod tests {
         assert!(probe.has_more(), "the last one is left for later");
     }
 
+    /// Ranked files given as (times, text) ids, `None` for a failed
+    /// download; logs what is fetched.
+    struct TimedSource {
+        files: Vec<Option<(u32, u32)>>,
+        fetched: std::sync::Mutex<Vec<usize>>,
+    }
+
+    impl SubtitleSource for TimedSource {
+        fn kind(&self) -> SourceKind {
+            SourceKind::OpenSubtitles
+        }
+
+        fn search<'a>(&'a self, _query: &'a Query) -> SearchFuture<'a> {
+            let found = (0..self.files.len())
+                .map(|i| candidate(SourceKind::OpenSubtitles, "Movie.2020", &i.to_string()))
+                .collect();
+            Box::pin(async { Ok(found) })
+        }
+
+        fn download<'a>(
+            &'a self,
+            _query: &'a Query,
+            candidate: &'a Candidate,
+        ) -> DownloadFuture<'a> {
+            let i: usize = candidate.link.parse().unwrap();
+            self.fetched.lock().unwrap().push(i);
+            let file = self.files[i].map(|(times, text)| {
+                let s = 10 + times;
+                format!("1\n00:00:{s:02},000 --> 00:00:{s:02},500\nx{text}\n\n2\n00:01:{s:02},000 --> 00:01:{s:02},500\ny\n")
+                    .into_bytes()
+            });
+            Box::pin(async move { file.ok_or(SourceError::Status(404)) })
+        }
+    }
+
+    /// The rule before SS-071 (a timing copy took a slot): where a round of
+    /// `want` slots starting at `from` stops.
+    fn old_round(
+        files: &[Option<(u32, u32)>],
+        from: usize,
+        want: usize,
+        seen: &mut Vec<(u32, u32)>,
+    ) -> usize {
+        let (mut taken, mut fetched, mut at) = (0, 0, from);
+        while taken < want && fetched < 2 * want && at < files.len() {
+            let file = files[at];
+            at += 1;
+            fetched += 1;
+            match file {
+                Some(lines) if seen.contains(&lines) => {}
+                Some(lines) => {
+                    seen.push(lines);
+                    taken += 1;
+                }
+                None => taken += 1,
+            }
+        }
+        at
+    }
+
+    #[tokio::test]
+    async fn timing_copies_never_leave_out_a_candidate_the_old_rule_tried() {
+        // Every ranking of 7 files, each a new timing, a timing copy of the
+        // first (other text), an exact copy of the first, or a failure.
+        const PLACES: u32 = 7;
+        for code in 0..4u32.pow(PLACES) {
+            let mut files = Vec::new();
+            let mut first = None;
+            for place in 0..PLACES {
+                let fresh = (place + 1, place + 1);
+                let file = match (code / 4u32.pow(place) % 4, first) {
+                    (1, Some((times, _))) => Some((times, fresh.1)),
+                    (2, Some(lines)) => Some(lines),
+                    (3, _) => None,
+                    _ => Some(fresh),
+                };
+                if first.is_none() {
+                    first = file;
+                }
+                files.push(file);
+            }
+            let mut seen = Vec::new();
+            let old_first = old_round(&files, 0, PROBE_DOWNLOADS, &mut seen);
+            let old_second = old_round(&files, old_first, MORE_DOWNLOADS, &mut seen);
+            // What the old first round kept: all but its exact copies.
+            let mut kept = Vec::new();
+            for file in &files[..old_first] {
+                if file.is_none() || !kept.contains(file) {
+                    kept.push(*file);
+                }
+            }
+
+            let source = Arc::new(TimedSource {
+                files: files.clone(),
+                fetched: Default::default(),
+            });
+            let sources: Vec<Arc<dyn SubtitleSource>> = vec![source.clone()];
+            let mut probe = probe(&sources, &movie(), None).await;
+            let fetched = |source: &TimedSource| source.fetched.lock().unwrap().clone();
+            let first_round = fetched(&source);
+            assert_eq!(
+                first_round,
+                (0..first_round.len()).collect::<Vec<_>>(),
+                "{files:?}"
+            );
+            assert!(first_round.len() >= old_first, "{files:?}");
+            assert_eq!(probe.first_slots, kept.len(), "{files:?}");
+            assert!(probe.report.downloads.len() >= probe.first_slots);
+            probe.download_more().await;
+            assert!(fetched(&source).len() >= old_second, "{files:?}");
+        }
+    }
+
     #[tokio::test]
     async fn probe_opens_archives_and_reads_other_formats() {
         let sources: Vec<Arc<dyn SubtitleSource>> = vec![Arc::new(FakeSource {
@@ -1916,8 +2081,14 @@ mod tests {
         assert!(outcome.top_scores.windows(2).all(|w| w[0] >= w[1]));
         let first = outcome.downloads[0].as_ref().unwrap();
         assert_eq!(
-            (first.source, first.cues, first.first_ms, first.last_end_ms),
-            (SourceKind::SubDl, 2, Some(1_000), Some(4_500))
+            (first.source, first.cues, first.last_end_ms),
+            (SourceKind::SubDl, 2, Some(4_500))
+        );
+        // The fake moves each candidate's first line by up to a second.
+        assert!(
+            first
+                .first_ms
+                .is_some_and(|ms| (1_000..2_000).contains(&ms))
         );
         assert_eq!(outcome.downloads[1], Err(SourceError::Status(404)));
         assert!(outcome.top_scores[2] < 0, "CAM release ranks last");

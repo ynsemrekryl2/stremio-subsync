@@ -615,9 +615,11 @@ function candidates(line) {
   const parts = searches.map((m) => SOURCES[m.src] + " " + (m.n !== null ? m.n : sourceError(m.err, m.code)));
   const failed = searches.length && searches.every((m) => m.n === null);
   const copies = Number((line.match(/duplicates: (\d+)/) || [])[1] || 0);
+  const sameTimes = Number((line.match(/timing_copies: (\d+)/) || [])[1] || 0);
   return { found, read, failed, text: (failed ? "kaynaklara ulaşılamadı" : found + " bulundu") +
     (parts.length ? " (" + parts.join(" · ") + ")" : "") + (read ? ", " + read + " indirildi" : "") +
-    (copies ? ", " + copies + " kopya atlandı" : "") };
+    (copies ? ", " + copies + " kopya atlandı" : "") +
+    (sameTimes ? ", " + sameTimes + " aynı zamanlı kopya hak saymadı" : "") };
 }
 
 /** One `m4` trial: candidate index, accepted, fix and why not. */
@@ -744,8 +746,10 @@ function track(ev) {
     if (req) req.dl = req.dl.concat(downloadSources(line));
     const read = (line.match(/Ok\(SrtStats/g) || []).length;
     const copies = Number((line.match(/duplicates=(\d+)/) || [])[1] || 0);
+    const sameTimes = Number((line.match(/timing_copies=(\d+)/) || [])[1] || 0);
     if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi" +
-      (copies ? " (" + copies + " kopya atlandı)" : "");
+      (copies ? " (" + copies + " kopya atlandı)" : "") +
+      (sameTimes ? " (" + sameTimes + " aynı zamanlı kopya hak saymadı)" : "");
   } else if (stage === "m3fb") {
     sourceHealth(line, ev.at_ms);
     if (req) { req.inSpare = true; req.dlSpare = downloadSources(line); }
