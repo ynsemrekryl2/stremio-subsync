@@ -8,6 +8,11 @@
 # Links and keys entered on the configure page: local only, secret.
 /secrets.json
 
+# Private notes (their own repository) and the link to their CLAUDE.md.
+/notes/
+/CLAUDE.md
+/AGENTS.md
+
 # Worktrees and preserved local runtime data.
 /.claude/
 /.local/

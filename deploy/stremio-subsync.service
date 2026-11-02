@@ -4,8 +4,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# Holds the token, the AIOStreams link and API keys (root-only, 0600).
-# Never copy them into this unit; deploy/env.sh writes them.
+# Holds the install token and the domain (root-only, 0600); install.sh
+# writes it. Never copy them into this unit.
 EnvironmentFile=/etc/stremio-subsync.env
 ExecStart=/usr/local/bin/stremio-subsync
 # Answered menus survive restarts and deploys here. With DynamicUser this is

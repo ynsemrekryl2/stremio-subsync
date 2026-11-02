@@ -91,8 +91,8 @@ pub fn lines(times: &[u64], phase: Phase) -> Vec<Event> {
 
 /// Rulers from English PGS tracks for a file without an English text track:
 /// `Even` lines (show, then clear), which matched the text ruler in every
-/// file checked against one (`docs/spikes/m5-pgs-ruler.md`). Non-forced
-/// tracks come first; short tracks are left out.
+/// file checked against one. Non-forced tracks come first; short tracks
+/// are left out.
 pub fn rulers(tracks: &[PgsTrack]) -> Vec<(u64, Vec<Event>)> {
     let mut out: Vec<(bool, u64, Vec<Event>)> = tracks
         .iter()

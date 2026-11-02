@@ -135,7 +135,7 @@ fi
 
 step "5/6 Servis ve HTTPS"
 install -m 644 "$tmp/stremio-subsync.service" /etc/systemd/system/
-# Ours (marked, or from deploy/setup.sh before the mark) or the package's
+# Ours (marked, or from an install before the mark) or the package's
 # default page is replaced as it is.
 if [ -f "$caddyfile" ] && ! grep -qF "$marker" "$caddyfile" && grep -qv '^\s*\(#.*\)\?$' "$caddyfile" &&
 	! grep -q '/usr/share/caddy' "$caddyfile" && ! grep -q 'reverse_proxy 127.0.0.1:7001' "$caddyfile"; then

@@ -17,14 +17,17 @@ arkasında).
 ## Gerekenler
 
 - Stremio ve bir **AIOStreams** kurulumu: onun `manifest.json` linki.
-- Bir **Ubuntu ya da Debian sunucu**, 80 ve 443 portları açık. Ücretsiz yol:
-  [Oracle Always Free](docs/oracle.md).
+- Bir **Ubuntu 22.04+ ya da Debian 12+ sunucu** (Intel ya da ARM), 80 ve 443
+  portları dışarıya açık. Ücretsiz yol: Oracle Cloud Always Free.
 - İsteğe bağlı anahtarlar (SubDL, AltyaziDB, SubSource, Wyzie ücretsiz;
   OpenRouter ücretli). Hepsi kurulumdan sonra sayfadan girilir.
 
 ## Kurulum (5 adım)
 
-1. **Sunucu aç.** Oracle için adım adım: [docs/oracle.md](docs/oracle.md).
+1. **Sunucu aç** ve 80, 443 portlarını dışarıya aç. Oracle Always Free'de:
+   Compute → Create instance, Canonical Ubuntu 24.04, VM.Standard.A1.Flex;
+   sonra sunucunun ağında Security List → Add Ingress Rules: kaynak
+   `0.0.0.0/0`, TCP, port 80; aynısı 443 için.
 2. **Sunucuya bağlan ve kur:**
 
    ```bash
@@ -62,17 +65,24 @@ Stremio'da eklentinin **Configure** düğmesi de bu sayfayı açar.
 | Bir anahtar değişti / bitti | Configure sayfasında yenisini yapıştır, **Dene**, **Kaydet** |
 | Yeni sürüme geçmek | Sunucuda `subsync update` |
 | Sunucu silindi, yenisini kurdum | Kurulum satırı, sonra configure sayfasında **Yedekten yükle**. IP aynıysa Stremio'da bir şey yapma; değiştiyse yeni linkle Stremio'ya yeniden kur |
-| HTTPS açılmıyor | Sağlayıcının panelinde 80 ve 443 kapalıdır ([Oracle](docs/oracle.md#2-80-ve-443ü-aç)); sonra `sudo systemctl restart caddy` |
+| HTTPS açılmıyor | Sağlayıcının panelinde 80 ve 443 kapalıdır (1. adım); açınca `sudo systemctl restart caddy` |
 | Kaldırmak | `subsync uninstall` (token ve anahtarlar kalır; `--purge` hepsini siler) |
 
 Sunucu komutları: `subsync` (durum) · `link` · `update` · `logs` · `restart`
 · `backup` · `restore <dosya>` · `uninstall`.
 
-## Daha fazlası
+## Geliştirme
 
-- [Ayarlar ve sunucudaki dosyalar](docs/config.md)
-- [Geliştirme: Mac'te çalıştırma, kaynaktan deploy, testler](docs/development.md)
-- [Nasıl çalışır](docs/plan.md) · [Kararlar](docs/decisions.md) · [İş listesi](TASKS.md)
+Rust; `cargo run` için `SUBSYNC_TOKEN` (en az 32 karakter) yeter, gerisi
+`http://127.0.0.1:7001/<token>/configure` sayfasından girilir. Testler ağ
+kullanmaz:
+
+```bash
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
+`v*` etiketi GitHub Actions'ta Intel ve ARM Linux sürümünü yayınlar;
+sunucular `subsync update` ile alır.
 
 ## Lisans
 
