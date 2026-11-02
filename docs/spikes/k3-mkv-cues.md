@@ -9,7 +9,7 @@ Real-Debrid: **evet**. Ayrıntı ve ham satırlar K2 notunda
 (`docs/spikes/k2-aiostreams-match.md`, "Range okuma sonuçları"). Okumalar
 oynatmayla aynı ev IP'sinden yapıldı.
 
-**VPS IP'sinden (2026-10-30, SS-008): evet.** Oracle sunucusu (eu-turin-1)
+**VPS IP'sinden (2026-10-30, SS-008): evet.** Oracle sunucusu
 Stremio oynatması evden sürerken aynı filmi okudu: AIOStreams 14 stream,
 `both: 1` eşleşme (0,5 sn); dosyanın Tracks/Cues'u ve iki PGS izinin cetveli
 (2087 ve 2044 olay) okundu; 4 deneme (2 aday × 2 iz) 40–45 ms; istekten

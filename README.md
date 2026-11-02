@@ -16,7 +16,8 @@ OpenSubtitles (ve anahtar varsa SubDL) adaylarını hizalar, baş / orta / son
 testini geçenleri kaydırılmış olarak Stremio'ya sunar ve sonucu cache'ler.
 İlk açılışta yanıt birkaç saniye sürebilir (en çok 15 sn); sonraki açılışlar
 cache'ten gelir. Altyazı üretilemezse menüde nedeni yazan tek bir "SubSync: …"
-girdisi görünür (örneğin "İngilizce iz yok"). VPS kurulumu henüz yapılmadı (SS-006).
+girdisi görünür (örneğin "İngilizce iz yok"). Kalıcı kurulum bir VPS'te HTTPS arkasında çalışıyor
+([`docs/deploy.md`](docs/deploy.md)); bağlantılar ve anahtarlar eklentinin configure sayfasından girilir.
 Plan: [`docs/plan.md`](docs/plan.md) · Kararlar: [`docs/decisions.md`](docs/decisions.md)
 · İş listesi: [`TASKS.md`](TASKS.md)
 
@@ -84,3 +85,9 @@ cargo fmt --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+## Lisans
+
+[GPL-3.0](LICENSE). Çeviri çekirdeği GPL-3.0 lisanslı Nen'den taşındı.
+Repoda kimsenin anahtarı yok: her kurulum kendi AIOStreams linkini ve
+anahtarlarını configure sayfasından girer.
