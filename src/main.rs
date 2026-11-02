@@ -14,6 +14,7 @@ mod pgs;
 mod range;
 mod rank;
 mod ruler;
+mod secrets;
 mod settings;
 mod sources;
 mod srt;
@@ -27,6 +28,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use events::event;
+use secrets::{Name, Secrets};
 use sources::SubtitleSource;
 
 /// Minimum length for the secret path token. The install link is the only
@@ -110,9 +112,29 @@ async fn main() {
         });
 
     let mut state = addon::AppState::new(token.clone()).expect("token checked above");
+    // Links and keys from the configure page win over the environment
+    // (SS-061). Only which ones are set is ever printed.
+    let secrets_file = std::env::var("SUBSYNC_SECRETS_FILE")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .unwrap_or_else(|| "secrets.json".to_owned());
+    let (secrets, error) = Secrets::load(Some(secrets_file.into()), |key| std::env::var(key).ok());
+    if let Some(error) = error {
+        event!("start", "secrets file ignored error={error:?}");
+    }
+    let set: Vec<_> = secrets
+        .view()
+        .into_iter()
+        .filter(|e| e.set)
+        .map(|e| (e.name, e.from))
+        .collect();
+    event!("start", "links and keys set={set:?}");
+    let secret = |name| secrets.get(name).map(str::to_owned);
     // The manifest link embeds the AIOStreams configuration; it is never printed.
-    match std::env::var("SUBSYNC_AIOSTREAMS_URL") {
-        Ok(raw) if !raw.trim().is_empty() => {
+    match secret(Name::AioStreams) {
+        Some(raw) => {
+            // A bad link from the environment stops the server as before; one
+            // from the page cannot be saved bad, so the page stays reachable.
             if raw.contains(token.as_str()) {
                 eprintln!(
                     "SUBSYNC_AIOSTREAMS_URL refused: this is SubSync's own install link, \
@@ -157,7 +179,7 @@ async fn main() {
                 event!("start", "range probe: off");
             }
         }
-        _ => event!("start", "aiostreams probe: off"),
+        None => event!("start", "aiostreams probe: off"),
     }
     let lang = std::env::var("SUBSYNC_LANG").unwrap_or_else(|_| "tur".to_owned());
     if lang.len() != 3 || !lang.bytes().all(|b| b.is_ascii_lowercase()) {
@@ -174,27 +196,23 @@ async fn main() {
             found.push(Arc::new(source));
         }
         // The key is never printed; only which sources are on.
-        if let Ok(key) = std::env::var("SUBDL_API_KEY")
-            && !key.trim().is_empty()
-            && let Some(source) = sources::SubDl::new(key.trim().to_owned())
+        if let Some(key) = secret(Name::SubDl)
+            && let Some(source) = sources::SubDl::new(key)
         {
             found.push(Arc::new(source));
         }
-        if let Ok(key) = std::env::var("ALTYAZIDB_API_KEY")
-            && !key.trim().is_empty()
-            && let Some(source) = sources::AltyaziDb::new(key.trim().to_owned())
+        if let Some(key) = secret(Name::AltyaziDb)
+            && let Some(source) = sources::AltyaziDb::new(key)
         {
             found.push(Arc::new(source));
         }
-        if let Ok(key) = std::env::var("SUBSOURCE_API_KEY")
-            && !key.trim().is_empty()
-            && let Some(source) = sources::SubSource::new(key.trim().to_owned())
+        if let Some(key) = secret(Name::SubSource)
+            && let Some(source) = sources::SubSource::new(key)
         {
             found.push(Arc::new(source));
         }
-        if let Ok(key) = std::env::var("WYZIE_API_KEY")
-            && !key.trim().is_empty()
-            && let Some(source) = sources::Wyzie::new(key.trim().to_owned())
+        if let Some(key) = secret(Name::Wyzie)
+            && let Some(source) = sources::Wyzie::new(key)
         {
             found.push(Arc::new(source));
         }
@@ -240,8 +258,8 @@ async fn main() {
     };
     // The fitting English subtitle, translated when nothing in the wanted
     // language fits (SS-026). The key is never printed.
-    let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
-    match translate_into.filter(|_| !key.trim().is_empty() && !label_mode) {
+    let key = secret(Name::OpenRouter).unwrap_or_default();
+    match translate_into.filter(|_| !key.is_empty() && !label_mode) {
         Some(lang) => {
             let from_env = settings::TranslateSettings::from_env(
                 std::env::var("SUBSYNC_TRANSLATE_MODEL").ok(),
@@ -279,7 +297,6 @@ async fn main() {
                     (from_env, "environment")
                 }
             };
-            let key = key.trim().to_owned();
             let build: translations::Build = Box::new(move |chosen| {
                 let client = openrouter::OpenRouter::new(key.clone(), &chosen.model)?
                     .with_reasoning(chosen.effort())?;
@@ -300,7 +317,7 @@ async fn main() {
         }
         None => event!("start", "translation: off"),
     }
-    state = state.with_restart(Arc::new(restart));
+    state = state.with_secrets(secrets).with_restart(Arc::new(restart));
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .unwrap_or_else(|err| {

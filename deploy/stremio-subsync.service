@@ -14,6 +14,9 @@ StateDirectory=stremio-subsync
 Environment=SUBSYNC_CACHE_DIR=%S/stremio-subsync/cache
 # The translation model and effort chosen on the dashboard (SS-048).
 Environment=SUBSYNC_SETTINGS_FILE=%S/stremio-subsync/settings.json
+# Links and keys entered on the configure page (SS-061); they win over the
+# env file. Owner-only, like the env file.
+Environment=SUBSYNC_SECRETS_FILE=%S/stremio-subsync/secrets.json
 # The server shuts down gracefully on Ctrl-C only.
 KillSignal=SIGINT
 Restart=on-failure

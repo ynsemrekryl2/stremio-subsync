@@ -5,6 +5,8 @@
 /cache
 # Translation settings chosen on the dashboard: local only.
 /settings.json
+# Links and keys entered on the configure page: local only, secret.
+/secrets.json
 
 # Worktrees and preserved local runtime data.
 /.claude/

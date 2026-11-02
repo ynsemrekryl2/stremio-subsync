@@ -38,6 +38,7 @@ p { margin: 0; }
 .pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--chip); }
 .pill.ok { color: var(--ok); background: var(--ok-bg); } .pill.bad { color: var(--bad); background: var(--bad-bg); }
 .muted { color: var(--muted); }
+a { color: var(--accent); }
 section, details.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
 .sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-bottom: 4px; }
 .sec-note { font-size: 13px; color: var(--muted); margin-bottom: 10px; max-width: 75ch; }
@@ -145,8 +146,31 @@ dl.terms dd { margin: 0; color: var(--muted); }
 .row .line { white-space: pre-wrap; word-break: break-word; cursor: pointer; }
 .row .line.cut { max-height: 3em; overflow: hidden; }
 .area { color: var(--accent); }
+.keys { display: grid; gap: 10px; }
+.key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 4px 16px;
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.key .about { display: grid; gap: 3px; align-content: start; }
+.key .about .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.key .about small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.key .field { display: grid; gap: 6px; align-content: start; }
+.key input[type="password"] { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; min-width: 0; width: 100%; }
+.key label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.key label[hidden] { display: none; }
+.key label input { margin: 0; }
+.key.need { border-color: var(--warn); }
+.install { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.install a, .install button, #setup .actions button { font: inherit; color: var(--text); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; text-decoration: none; }
+.install a.primary, #setup .actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+#setup .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#setup .actions button:disabled { opacity: .45; cursor: default; }
+.banner { border: 1px solid var(--warn); background: var(--warn-bg); color: var(--text); border-radius: 6px;
+  padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.banner[hidden] { display: none; }
 @media (max-width: 640px) {
   .form { grid-template-columns: 1fr; }
+  .key { grid-template-columns: 1fr; }
   dl.steps { grid-template-columns: 76px 1fr; gap: 3px 8px; }
   dl.terms { grid-template-columns: 1fr; gap: 0; }
   dl.terms dd { margin-bottom: 8px; }
@@ -170,6 +194,27 @@ dl.terms dd { margin: 0; color: var(--muted); }
       <span id="missed"></span>
     </div>
   </header>
+
+  <details class="box" id="setup">
+    <summary>Kurulum <small id="setup-sum">bağlantılar, anahtarlar ve Stremio'ya kurulum</small></summary>
+    <p class="banner" id="setup-need" hidden>Altyazı üretmek için önce <b>AIOStreams linki</b> gerekiyor:
+      oynatılan dosya onunla bulunur. Aşağıya girip kaydet.</p>
+    <p class="sec-note">Bu sayfanın adresi kurulum linkinin gizli parçasını taşır; kimseyle paylaşma.
+      Kaydedilen değerler sunucuda yalnız eklentinin okuyabildiği bir dosyada durur ve buraya bir daha gösterilmez;
+      yalnız «kayıtlı» ya da «yok» görünür. Boş bıraktığın alan değişmez.</p>
+    <div class="install">
+      <a class="primary" id="install-app">Stremio'ya kur</a>
+      <a id="install-web" target="_blank" rel="noreferrer">Stremio Web'de kur</a>
+      <button type="button" id="copy-link">Kurulum linkini kopyala</button>
+    </div>
+    <form id="secrets-form">
+      <div class="keys" id="keys"><div class="empty">Yükleniyor…</div></div>
+      <div class="actions">
+        <button type="submit" class="primary" id="secrets-save" disabled>Kaydet</button>
+      </div>
+    </form>
+    <p class="hint" id="setup-note"></p>
+  </details>
 
   <section>
     <div class="sec-head"><h2>Özet</h2><span class="muted" id="summary-note">sunucu açıldığından beri</span></div>
@@ -369,6 +414,26 @@ const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(
   counts: { requests: 0, cached: 0, found: 0, fallback: 0, missing: 0 },
   funnel: { probed: 0, matched: 0, read: 0, ruler: 0, candidates: 0, accepted: 0 } };
 const $ = (id) => document.getElementById(id);
+/** What each link and key is for, where it comes from, what it costs (SS-061). */
+const KEYS = {
+  aiostreams: ["AIOStreams linki", "Zorunlu",
+    "AIOStreams yapılandırma sayfasında kurulum için verilen, <code>manifest.json</code> ile biten link. Oynatılan dosya " +
+    "bununla bulunur ve içindeki İngilizce altyazının zamanları okunur; yoksa altyazı üretilmez.", ""],
+  subdl: ["SubDL", "Ücretsiz", "subdl.com hesabının API anahtarı. Yoksa SubDL aranmaz.", "https://subdl.com"],
+  altyazidb: ["AltyaziDB", "Ücretsiz", "Üye olunca verilen API anahtarı; yalnız Türkçe ve İngilizce. Yoksa AltyaziDB aranmaz.",
+    "https://altyazidb.com"],
+  subsource: ["SubSource", "Ücretsiz", "Hesap panelinin API sekmesindeki anahtar; günde 7 200 istek. Yoksa SubSource aranmaz.",
+    "https://subsource.net"],
+  wyzie: ["Wyzie Subs", "Ücretsiz", "store.wyzie.io/redeem'den e-posta doğrulamasıyla alınan anahtar; günde 1 000 istek. " +
+    "Yoksa Wyzie aranmaz.", "https://store.wyzie.io/redeem"],
+  openrouter: ["OpenRouter", "Ücretli",
+    "Aranan dilde uyan altyazı yoksa, dosyaya uyan İngilizce altyazı bu anahtarla çevrilir (film başına birkaç sent, " +
+    "ücreti senin hesabından düşer). Yoksa çeviri kapalı.", "https://openrouter.ai"],
+};
+const URL_REASONS = { Empty: "boş", ControlChars: "görünmeyen karakter içeriyor, yeniden kopyala",
+  ManyLinks: "birden çok manifest.json linki var", NotAUrl: "link değil, eksik ya da fazla karakter var",
+  Scheme: "https:// ile başlamalı", NotManifest: "manifest.json ile bitmeli", Client: "sunucu bağlantı kuramadı" };
+const ORIGINS = { page: "bu sayfadan", environment: "sunucunun ortam değişkeninden" };
 
 function time(ms) {
   return new Date(ms).toLocaleTimeString("tr-TR", { hour12: false });
@@ -1125,7 +1190,7 @@ $("restart").onclick = async () => {
     $("restart").disabled = false;
   }
 };
-async function waitForRestart(before, since) {
+async function waitForRestart(before, since, note = "maint-note", button = "restart") {
   try {
     const res = await fetch("events.json?after=" + Number.MAX_SAFE_INTEGER, { cache: "no-store" });
     if (res.ok && (await res.json()).started_ms !== before) { location.reload(); return; }
@@ -1133,12 +1198,125 @@ async function waitForRestart(before, since) {
     // Down while it restarts.
   }
   if (Date.now() - since > 60000) {
-    $("maint-note").className = "hint bad";
-    $("maint-note").textContent = "Sunucu bir dakikada geri dönmedi; sunucunun log'una bakın.";
-    $("restart").disabled = false;
+    $(note).className = "hint bad";
+    $(note).textContent = "Sunucu bir dakikada geri dönmedi; sunucunun log'una bakın.";
+    $(button).disabled = false;
     return;
   }
-  setTimeout(() => waitForRestart(before, since), 1000);
+  setTimeout(() => waitForRestart(before, since, note, button), 1000);
+}
+
+/** The install link is this page's address with manifest.json at the end. */
+function installLink() {
+  return location.origin + location.pathname.replace(/\/(configure|dashboard)\/?$/, "/manifest.json");
+}
+$("install-app").href = installLink().replace(/^https?:/, "stremio:");
+$("install-web").href = "https://web.stremio.com/#/addons?addon=" + encodeURIComponent(installLink());
+$("copy-link").onclick = async () => {
+  const note = $("setup-note");
+  try {
+    await navigator.clipboard.writeText(installLink());
+    note.className = "hint ok"; note.textContent = "Kurulum linki panoya kopyalandı.";
+  } catch (err) {
+    note.className = "hint bad"; note.textContent = "Kopyalanamadı; adres çubuğundaki linkin sonunu manifest.json yap.";
+  }
+};
+
+/** Whether each link and key is set; the values never come back (SS-061). */
+async function loadSecrets() {
+  try {
+    const res = await fetch("secrets.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const view = await res.json();
+    if (!view) { $("keys").replaceChildren(el("div", "empty", "Bu sunucuda bağlantılar sayfadan değiştirilemiyor.")); return; }
+    renderSecrets(view);
+  } catch (err) {
+    setTimeout(loadSecrets, 5000);
+  }
+}
+function renderSecrets(view) {
+  state.secrets = view;
+  const rows = view.entries.map((e) => {
+    const [title, price, about, site] = KEYS[e.name] || [e.name, "", "", ""];
+    const row = el("div", "key" + (e.name === "aiostreams" && !e.set ? " need" : ""));
+    const info = el("div", "about"), top = el("div", "top");
+    top.append(el("b", "", title), el("span", "chip" + (price === "Ücretli" ? " warn" : price === "Zorunlu" ? " info" : ""), price),
+      el("span", "chip" + (e.set ? " ok" : ""), e.set ? "kayıtlı · " + ORIGINS[e.from] : "yok"));
+    const desc = el("small"); desc.innerHTML = about;
+    if (site) { const a = el("a", "", site.replace(/^https:\/\//, "")); a.href = site; a.target = "_blank"; a.rel = "noreferrer";
+      desc.append(" ", a); }
+    info.append(top, desc);
+    const field = el("div", "field");
+    const input = Object.assign(el("input"), { type: "password", autocomplete: "off", spellcheck: false,
+      placeholder: e.set ? "değiştirmek için yenisini yapıştır" : (e.name === "aiostreams" ? "https://…/manifest.json" : "anahtarı yapıştır") });
+    input.dataset.name = e.name; input.setAttribute("aria-label", title);
+    const remove = Object.assign(el("input"), { type: "checkbox" }); remove.dataset.remove = e.name;
+    const removeRow = el("label"); removeRow.append(remove, e.name === "aiostreams" ? "Linki kaldır" : "Anahtarı kaldır");
+    removeRow.hidden = !e.set;
+    input.oninput = remove.onchange = secretsChanged;
+    field.append(input, removeRow);
+    row.append(info, field);
+    return row;
+  });
+  $("keys").replaceChildren(...rows);
+  const link = view.entries.find((e) => e.name === "aiostreams");
+  const missing = !link || !link.set;
+  $("setup-need").hidden = !missing;
+  $("setup-sum").textContent = missing ? "AIOStreams linki eksik" : "bağlantılar, anahtarlar ve Stremio'ya kurulum";
+  if (missing || /\/configure\/?$/.test(location.pathname)) $("setup").open = true;
+  secretsChanged();
+}
+function secretChanges() {
+  const changes = {};
+  for (const input of document.querySelectorAll("#keys input[data-name]")) {
+    if (input.value.trim()) changes[input.dataset.name] = input.value.trim();
+  }
+  for (const box of document.querySelectorAll("#keys input[data-remove]")) {
+    if (box.checked && !(box.dataset.remove in changes)) changes[box.dataset.remove] = null;
+  }
+  return changes;
+}
+function secretsChanged() {
+  $("secrets-save").disabled = !Object.keys(secretChanges()).length;
+  $("secrets-save").textContent = state.secrets && state.secrets.restart ? "Kaydet ve yeniden başlat" : "Kaydet";
+}
+$("secrets-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const note = $("setup-note"), changes = secretChanges();
+  if (changes.aiostreams === null && !confirm("AIOStreams linki kaldırılsın mı? Linksiz altyazı üretilmez.")) return;
+  $("secrets-save").disabled = true;
+  try {
+    const res = await fetch("secrets.json", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes) });
+    const a = await res.json().catch(() => null);
+    if (!res.ok || !a) throw new Error(refusal(a, res.status));
+    for (const input of document.querySelectorAll("#keys input[data-name]")) input.value = "";
+    if (a.view) renderSecrets(a.view);
+    if (a.restarting) {
+      note.className = "hint muted";
+      note.textContent = "Kaydedildi; eklenti yeni ayarlarla yeniden başlıyor…";
+      waitForRestart(state.started, Date.now(), "setup-note", "secrets-save");
+    } else {
+      note.className = "hint ok";
+      note.textContent = "Kaydedildi. Kullanılması için eklentiyi yeniden başlat.";
+    }
+  } catch (err) {
+    note.className = "hint bad";
+    note.textContent = "Kaydedilmedi: " + err.message;
+    secretsChanged();
+  }
+};
+function refusal(a, status) {
+  if (!a) return "sunucu " + status;
+  const title = (name) => (KEYS[name] || [name])[0];
+  switch (a.refused) {
+    case "value": return title(a.name) + " anahtarında boşluk, tırnak ya da ters bölü olamaz";
+    case "aiostreams": return "AIOStreams linki " + (URL_REASONS[a.reason] || "geçersiz");
+    case "own_link": return "bu SubSync'in kendi linki; AIOStreams'in linkini gir";
+    case "save": return "sunucu dosyaya yazamadı";
+    case "off": return "bu sunucuda sayfadan değiştirilemiyor";
+    default: return "istek okunamadı";
+  }
 }
 
 $("pause").onclick = () => {
@@ -1161,6 +1339,7 @@ renderCounts();
 poll();
 pollTranslations();
 loadSettings();
+loadSecrets();
 </script>
 </body>
 </html>

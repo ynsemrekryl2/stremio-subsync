@@ -28,6 +28,7 @@ use crate::mp4::Container;
 use crate::pgs;
 use crate::range::RangeReader;
 use crate::ruler::Event;
+use crate::secrets::{self, Secrets};
 use crate::settings::{self, TranslateSettings};
 use crate::sources::{self, Query, SubtitleSource};
 use crate::srt;
@@ -65,6 +66,8 @@ pub struct AppState {
     probing: Mutex<HashMap<String, Shared<BoxFuture<'static, ()>>>>,
     /// Starts the server again, for the dashboard's button (SS-059).
     restart: Option<Restart>,
+    /// The links and keys the configure page shows and changes (SS-061).
+    secrets: Option<Arc<Mutex<Secrets>>>,
 }
 
 /// Starts the whole server again; it does not return when it works.
@@ -91,6 +94,7 @@ impl AppState {
             translations: None,
             probing: Mutex::new(HashMap::new()),
             restart: None,
+            secrets: None,
         })
     }
 
@@ -161,6 +165,13 @@ impl AppState {
         self
     }
 
+    /// Lets the configure page show and change the links and keys; a
+    /// change restarts the server so the new ones are used.
+    pub fn with_secrets(mut self, secrets: Secrets) -> Self {
+        self.secrets = Some(Arc::new(Mutex::new(secrets)));
+        self
+    }
+
     fn authorized(&self, candidate: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
@@ -189,6 +200,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/{token}/sub/{entry}/{file}", get(menu_srt))
         .route("/{token}/dashboard", get(dashboard))
+        // Stremio's Configure button opens this next to the manifest.
+        .route("/{token}/configure", get(dashboard))
+        .route(SECRETS_ROUTE, get(secrets_json).post(change_secrets))
         .route(EVENTS_ROUTE, get(events_json))
         .route(TRANSLATIONS_ROUTE, get(translations_json))
         .route(SETTINGS_ROUTE, get(settings_json).post(change_settings))
@@ -202,6 +216,7 @@ pub fn router(state: AppState) -> Router {
 const EVENTS_ROUTE: &str = "/{token}/events.json";
 const TRANSLATIONS_ROUTE: &str = "/{token}/translations.json";
 const SETTINGS_ROUTE: &str = "/{token}/settings.json";
+const SECRETS_ROUTE: &str = "/{token}/secrets.json";
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 
 /// Live view of recent log lines (SS-029), behind the same token.
@@ -319,6 +334,95 @@ async fn change_settings(
         }
     };
     (status, Json(json!({ "refused": refused }))).into_response()
+}
+
+/// Whether each link and key is set and where from, never the values
+/// (SS-061); `restart` says if saving restarts the server to use them.
+#[derive(Serialize)]
+struct SecretsView {
+    entries: Vec<secrets::Entry>,
+    restart: bool,
+}
+
+fn secrets_view(state: &AppState) -> Option<SecretsView> {
+    let secrets = state.secrets.as_ref()?.lock().ok()?;
+    Some(SecretsView {
+        entries: secrets.view(),
+        restart: state.restart.is_some(),
+    })
+}
+
+/// `null` when the page cannot change them.
+async fn secrets_json(State(state): State<Arc<AppState>>, Path(token): Path<String>) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(secrets_view(&state)),
+    )
+        .into_response()
+}
+
+/// Saves new links and keys (`{"subdl": "…", "wyzie": null}`: a value sets,
+/// `null` removes, a name left out stays), then restarts the server so they
+/// are used. The body is read only after the token check. Only the names
+/// changed are logged.
+async fn change_secrets(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(secrets) = state.secrets.clone() else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    let Ok(changes) =
+        serde_json::from_slice::<std::collections::BTreeMap<secrets::Name, Option<String>>>(&body)
+    else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "refused": "body" }))).into_response();
+    };
+    let install = state.token.clone();
+    let names: Vec<_> = changes.keys().copied().collect();
+    let saved = tokio::task::spawn_blocking(move || {
+        let mut secrets = secrets.lock().map_err(|_| secrets::Refused::Off)?;
+        secrets.change(&changes, &install)
+    })
+    .await
+    .unwrap_or(Err(secrets::Refused::Off));
+    let mut status = StatusCode::BAD_REQUEST;
+    let refused = match saved {
+        Ok(()) => None,
+        Err(secrets::Refused::Value(name)) => Some(json!({ "refused": "value", "name": name })),
+        Err(secrets::Refused::AioStreams(reason)) => {
+            Some(json!({ "refused": "aiostreams", "reason": format!("{reason:?}") }))
+        }
+        Err(secrets::Refused::OwnLink) => Some(json!({ "refused": "own_link" })),
+        Err(secrets::Refused::Off) => Some(json!({ "refused": "off" })),
+        Err(secrets::Refused::Save(kind)) => {
+            event!("start", "links and keys save failed error={kind:?}");
+            status = StatusCode::INTERNAL_SERVER_ERROR;
+            Some(json!({ "refused": "save" }))
+        }
+    };
+    if let Some(refused) = refused {
+        return (status, Json(refused)).into_response();
+    }
+    event!("start", "links and keys changed names={names:?}");
+    let restarting = match state.restart.clone() {
+        Some(restart) if !names.is_empty() => {
+            tokio::spawn(async move {
+                tokio::time::sleep(RESTART_DELAY).await;
+                restart();
+            });
+            true
+        }
+        _ => false,
+    };
+    let view = secrets_view(&state);
+    Json(json!({ "view": view, "restarting": restarting })).into_response()
 }
 
 /// What the dashboard's cache button also clears.
@@ -451,7 +555,7 @@ pub fn manifest_json() -> Value {
         "types": ["movie", "series"],
         "idPrefixes": ["tt"],
         "catalogs": [],
-        "behaviorHints": { "configurable": false, "configurationRequired": false }
+        "behaviorHints": { "configurable": true, "configurationRequired": false }
     })
 }
 
@@ -1171,6 +1275,8 @@ mod tests {
         let body = body.unwrap();
         assert_eq!(body["resources"], json!(["subtitles"]));
         assert_eq!(body["types"], json!(["movie", "series"]));
+        // Stremio shows a Configure button opening `/{token}/configure`.
+        assert_eq!(body["behaviorHints"]["configurable"], true);
     }
 
     #[tokio::test]
@@ -2542,6 +2648,116 @@ mod tests {
         let (status, answer) = post(&self::app(), format!("/{TOKEN}/restart"), "").await;
         assert_eq!(status, StatusCode::CONFLICT, "no way to restart");
         assert_eq!(answer["refused"], "off");
+    }
+
+    #[tokio::test]
+    async fn configure_page_saves_keys_without_showing_them() {
+        let dir = std::env::temp_dir().join(format!(
+            "subsync-configure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let file = dir.join("secrets.json");
+        let restarts = Arc::new(Mutex::new(0));
+        let counted = restarts.clone();
+        let (secrets, _) = Secrets::load(Some(file.clone()), |key| {
+            (key == "SUBDL_API_KEY").then(|| "env-key".to_owned())
+        });
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_secrets(secrets)
+                .with_restart(Arc::new(move || *counted.lock().unwrap() += 1)),
+        );
+        let send = |uri: String| {
+            app.clone()
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        };
+        let page = send(format!("/{TOKEN}/configure")).await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        for wrong in [
+            "/wrong-token-123/configure",
+            "/wrong-token-123/secrets.json",
+        ] {
+            assert_eq!(
+                send(wrong.to_owned()).await.unwrap().status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        let wrong = post(
+            &app,
+            "/wrong-token-123/secrets.json".to_owned(),
+            r#"{"subdl":"x"}"#,
+        )
+        .await;
+        assert_eq!(wrong.0, StatusCode::NOT_FOUND);
+
+        let uri = format!("/{TOKEN}/secrets.json");
+        let read = |response: Response| async {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        };
+        let view = read(send(uri.clone()).await.unwrap()).await;
+        assert!(
+            view.contains(r#"{"name":"subdl","set":true,"from":"environment"}"#),
+            "{view}"
+        );
+        assert!(view.contains(r#""restart":true"#));
+        assert!(!view.contains("env-key"));
+
+        let body = r#"{"openrouter":"sk-or-secret","aiostreams":"https://aio.test/abc/manifest.json","subdl":null}"#;
+        let (status, answer) = post(&app, uri.clone(), body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["restarting"], true);
+        let shown = answer.to_string();
+        assert!(
+            !shown.contains("sk-or-secret") && !shown.contains("aio.test"),
+            "{shown}"
+        );
+        let entries = answer["view"]["entries"].as_array().unwrap();
+        let of = |name: &str| entries.iter().find(|e| e["name"] == name).unwrap().clone();
+        assert_eq!(of("openrouter")["from"], "page");
+        assert_eq!(of("subdl")["set"], false, "removed on the page");
+        assert_eq!(of("wyzie")["set"], false);
+        tokio::time::sleep(RESTART_DELAY * 3).await;
+        assert_eq!(*restarts.lock().unwrap(), 1, "restarted to use them");
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(saved.contains("sk-or-secret"));
+
+        // A refusal names the field, never the value, and saves nothing.
+        for (body, refused) in [
+            (
+                r#"{"wyzie":"two words"}"#,
+                json!({ "refused": "value", "name": "wyzie" }),
+            ),
+            (
+                r#"{"aiostreams":"https://aio.test/abc/configure"}"#,
+                json!({ "refused": "aiostreams", "reason": "NotManifest" }),
+            ),
+            (
+                &format!(r#"{{"aiostreams":"https://subs.test/{TOKEN}/manifest.json"}}"#),
+                json!({ "refused": "own_link" }),
+            ),
+            (r#"{"unknown":"x"}"#, json!({ "refused": "body" })),
+        ] {
+            let (status, answer) = post(&app, uri.clone(), body).await;
+            assert_eq!(
+                (status, answer),
+                (StatusCode::BAD_REQUEST, refused),
+                "{body}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+
+        let (status, answer) = post(&self::app(), uri, r#"{"subdl":"x"}"#).await;
+        assert_eq!(
+            (status, answer["refused"].clone()),
+            (StatusCode::CONFLICT, json!("off"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
