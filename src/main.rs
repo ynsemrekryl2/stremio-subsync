@@ -1,5 +1,6 @@
 mod addon;
 mod align;
+mod anime;
 mod blocks;
 mod checks;
 mod clean;
@@ -213,6 +214,7 @@ async fn main() {
     let checker = Arc::new(checks::Live::new(lang.clone()));
     // Translation needs the English fallback, so the sources (SS-026).
     let mut translate_into = None;
+    let mut sources_on = false;
     // Candidate search and download. On by default since M5;
     // `SUBSYNC_SOURCES_PROBE=0` turns it off.
     if std::env::var("SUBSYNC_SOURCES_PROBE").as_deref() != Ok("0") {
@@ -254,6 +256,7 @@ async fn main() {
             translate_into = Some(lang.clone());
         }
         state = state.with_subtitle_sources(found, lang);
+        sources_on = true;
     } else {
         event!("start", "sources probe: off");
     }
@@ -285,6 +288,16 @@ async fn main() {
             Some(std::path::PathBuf::from(dir))
         }
     };
+    // Kitsu ids (anime catalogs) searched under their IMDb id; the map is
+    // kept in the cache directory. `SUBSYNC_ANIME=0` turns it off.
+    if sources_on && std::env::var("SUBSYNC_ANIME").as_deref() != Ok("0") {
+        let anime = Arc::new(anime::AnimeIds::default());
+        tokio::spawn(anime::keep_fresh(anime.clone(), cache_dir.clone()));
+        event!("start", "anime ids: on (kitsu)");
+        state = state.with_anime_ids(anime);
+    } else {
+        event!("start", "anime ids: off");
+    }
     // The fitting English subtitle, translated when nothing in the wanted
     // language fits (SS-026). The key is never printed.
     let key = secret(Name::OpenRouter).unwrap_or_default();
