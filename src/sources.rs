@@ -9,19 +9,17 @@ use reqwest::Url;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::future::Future;
-use std::io::Read;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::formats;
 use crate::rank;
 use crate::srt::{self, Cue};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 /// Largest list, subtitle file or archive read from a source.
 const MAX_DOWNLOAD: usize = 4 * 1024 * 1024;
-/// Largest SRT taken out of an archive.
-const MAX_SRT: u64 = 2 * 1024 * 1024;
 /// Candidates the probe downloads.
 const PROBE_DOWNLOADS: usize = 3;
 /// Candidates downloaded once more when none of the first fits (SS-040).
@@ -187,7 +185,8 @@ pub type DownloadFuture<'a> =
 pub trait SubtitleSource: Send + Sync {
     fn kind(&self) -> SourceKind;
     fn search<'a>(&'a self, query: &'a Query) -> SearchFuture<'a>;
-    /// Bytes of one SRT file for `candidate`.
+    /// Bytes of `candidate` as the site gives them: a subtitle file or an
+    /// archive, which the probe opens (see [`crate::unpack`]).
     fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a>;
 }
 
@@ -609,7 +608,7 @@ pub fn wyzie_language(lang: &str) -> Option<String> {
 }
 
 /// `(season, episode)` pairs written in a file name: `S01E02`, `s1e2`, `1x02`.
-fn episode_marks(name: &str) -> Vec<(u32, u32)> {
+pub fn episode_marks(name: &str) -> Vec<(u32, u32)> {
     let b = name.to_ascii_lowercase().into_bytes();
     let number = |from: usize| -> Option<(u32, usize)> {
         let len = b[from.min(b.len())..]
@@ -645,53 +644,6 @@ fn episode_marks(name: &str) -> Vec<(u32, u32)> {
         }
     }
     marks
-}
-
-/// The SRT inside a SubDL or SubSource archive: for an episode, the file named for it
-/// (or the only one); for a movie, the largest.
-pub fn pick_srt(archive: &[u8], query: &Query) -> Result<Vec<u8>, SourceError> {
-    let mut zip =
-        zip::ZipArchive::new(std::io::Cursor::new(archive)).map_err(|_| SourceError::Decode)?;
-    let mut files = Vec::new();
-    for i in 0..zip.len() {
-        let Ok(file) = zip.by_index(i) else { continue };
-        // Old archives store names in a legacy code page; only ".srt" and
-        // episode marks matter here, so a lossy read is enough.
-        let name = String::from_utf8_lossy(file.name_raw()).into_owned();
-        if file.is_file()
-            && name.to_ascii_lowercase().ends_with(".srt")
-            && !name.starts_with("__MACOSX")
-        {
-            files.push((i, file.size(), episode_marks(&name)));
-        }
-    }
-    let chosen = match (query.season, query.episode) {
-        (Some(season), Some(episode)) => {
-            let named: Vec<_> = files
-                .iter()
-                .filter(|f| f.2.contains(&(season, episode)))
-                .collect();
-            match named.as_slice() {
-                [] if files.len() == 1 => files.first(),
-                named => named.iter().copied().max_by_key(|f| f.1),
-            }
-        }
-        _ => files.iter().max_by_key(|f| f.1),
-    };
-    let &(index, size, _) = chosen.ok_or(SourceError::NoSubtitle)?;
-    if size > MAX_SRT {
-        return Err(SourceError::TooLarge);
-    }
-    let mut bytes = Vec::new();
-    zip.by_index(index)
-        .map_err(|_| SourceError::Decode)?
-        .take(MAX_SRT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| SourceError::Decode)?;
-    if bytes.len() as u64 > MAX_SRT {
-        return Err(SourceError::TooLarge);
-    }
-    Ok(bytes)
 }
 
 fn client() -> Option<reqwest::Client> {
@@ -825,10 +777,10 @@ impl SubtitleSource for SubDl {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            pick_srt(&get_capped(self.client.get(url)).await?, query)
+            get_capped(self.client.get(url)).await
         })
     }
 }
@@ -959,10 +911,10 @@ impl SubtitleSource for SubSource {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
-            pick_srt(&get_capped(self.get(url)).await?, query)
+            get_capped(self.get(url)).await
         })
     }
 }
@@ -1012,14 +964,10 @@ impl SubtitleSource for Wyzie {
         })
     }
 
-    fn download<'a>(&'a self, query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
+    fn download<'a>(&'a self, _query: &'a Query, candidate: &'a Candidate) -> DownloadFuture<'a> {
         Box::pin(async move {
             let url = Url::parse(&candidate.link).map_err(|_| SourceError::Other)?;
             let body = get_capped(self.client.get(url)).await?;
-            // An archive the server did not unpack.
-            if body.starts_with(b"PK") {
-                return pick_srt(&body, query);
-            }
             // Errors come back as JSON; a subtitle never starts with `{`.
             if body.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'{') {
                 return Err(SourceError::NoSubtitle);
@@ -1095,7 +1043,16 @@ impl Probe {
                     continue;
                 }
             };
-            let cues = srt::parse(&srt::decode(&bytes, &self.query.lang));
+            let size = bytes.len();
+            let cues = match crate::unpack::subtitle(bytes, &self.query) {
+                Ok(file) => formats::cues(&srt::decode(&file, &self.query.lang)),
+                Err(err) => {
+                    self.report.downloads.push(Err(err));
+                    self.cues.push(None);
+                    taken += 1;
+                    continue;
+                }
+            };
             if !cues.is_empty() && self.cues.iter().flatten().any(|seen| *seen == cues) {
                 self.report.duplicates += 1;
                 continue;
@@ -1103,7 +1060,7 @@ impl Probe {
             self.report.downloads.push(Ok(SrtStats {
                 source: candidate.source,
                 score: rank::score(&candidate.release, self.filename.as_deref()),
-                bytes: bytes.len(),
+                bytes: size,
                 cues: cues.len(),
                 first_ms: cues.first().map(|c| c.start_ms),
                 last_end_ms: cues.iter().map(|c| c.end_ms).max(),
@@ -1158,7 +1115,6 @@ pub async fn probe(
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::io::Write;
 
     fn movie() -> Query {
         Query::new("movie", "tt0133093", "tur").unwrap()
@@ -1452,41 +1408,6 @@ mod tests {
         assert_eq!(episode_marks("Show 2x05 - Title.srt"), vec![(2, 5)]);
         assert_eq!(episode_marks("Movie.1920x1080.x264.srt"), vec![]);
         assert_eq!(episode_marks("Show.S01.Complete.srt"), vec![]);
-    }
-
-    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        for (name, body) in files {
-            out.start_file(*name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            out.write_all(body).unwrap();
-        }
-        out.finish().unwrap().into_inner()
-    }
-
-    #[test]
-    fn pick_srt_takes_the_episode_or_largest() {
-        let pack = zip_of(&[
-            ("Show.S01E01.srt", b"one"),
-            ("Show.S01E02.srt", b"two"),
-            ("Show.S01E02.HI.srt", b"two, longer"),
-            ("__MACOSX/Show.S01E02.srt", b"junk junk junk junk"),
-            ("readme.txt", b"hello hello hello hello"),
-        ]);
-        assert_eq!(pick_srt(&pack, &episode()).unwrap(), b"two, longer");
-
-        let single = zip_of(&[("tr.srt", b"only")]);
-        assert_eq!(pick_srt(&single, &episode()).unwrap(), b"only");
-
-        let other = zip_of(&[("Show.S01E01.srt", b"one"), ("Show.S01E03.srt", b"three")]);
-        assert_eq!(pick_srt(&other, &episode()), Err(SourceError::NoSubtitle));
-
-        let movie_zip = zip_of(&[("cd.srt", b"short"), ("full.srt", b"much longer")]);
-        assert_eq!(pick_srt(&movie_zip, &movie()).unwrap(), b"much longer");
-
-        assert_eq!(pick_srt(b"not a zip", &movie()), Err(SourceError::Decode));
-        let none = zip_of(&[("notes.txt", b"x")]);
-        assert_eq!(pick_srt(&none, &movie()), Err(SourceError::NoSubtitle));
     }
 
     struct FakeSource {

@@ -6,6 +6,7 @@ mod clean;
 mod dump;
 mod events;
 mod extra;
+mod formats;
 mod label;
 mod menu;
 mod mkv;
@@ -24,6 +25,7 @@ mod streams;
 mod synth;
 mod translate;
 mod translations;
+mod unpack;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
