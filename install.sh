@@ -73,7 +73,12 @@ curl -fsSL -o "$tmp/$asset.sha256" "$from/$asset.sha256" || fail "sağlama dosya
 (cd "$tmp" && sha256sum -c --quiet "$asset.sha256") || fail "indirilen program bozuk: sağlama tutmadı"
 chmod 755 "$tmp/$asset"
 new="$("$tmp/$asset" --version)" || fail "program bu makinede çalışmadı (glibc 2.35 ya da yenisi gerekir)"
-old="$(/usr/local/bin/stremio-subsync --version 2>/dev/null || echo "yok")"
+if [ -x /usr/local/bin/stremio-subsync ]; then
+	# Builds before 0.2.0 have no --version.
+	old="$(/usr/local/bin/stremio-subsync --version 2>/dev/null | grep '^stremio-subsync ' || echo "önceki sürüm")"
+else
+	old="yok"
+fi
 for file in deploy/stremio-subsync.service deploy/Caddyfile deploy/subsync; do
 	curl -fsSL -o "$tmp/${file#deploy/}" "$raw/$file" || fail "$file indirilemedi"
 done
@@ -130,8 +135,10 @@ fi
 
 step "5/6 Servis ve HTTPS"
 install -m 644 "$tmp/stremio-subsync.service" /etc/systemd/system/
+# Ours (marked, or from deploy/setup.sh before the mark) or the package's
+# default page is replaced as it is.
 if [ -f "$caddyfile" ] && ! grep -qF "$marker" "$caddyfile" && grep -qv '^\s*\(#.*\)\?$' "$caddyfile" &&
-	! grep -q '/usr/share/caddy' "$caddyfile"; then
+	! grep -q '/usr/share/caddy' "$caddyfile" && ! grep -q 'reverse_proxy 127.0.0.1:7001' "$caddyfile"; then
 	# Someone else's site config: keep a copy rather than lose it.
 	cp "$caddyfile" "$caddyfile.before-subsync"
 	echo "önceki Caddyfile $caddyfile.before-subsync olarak saklandı"
@@ -154,7 +161,7 @@ token() {
 }
 local_ok=""
 for _ in $(seq 30); do
-	if curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:7001/$(token)/manifest.json"; then
+	if curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:7001/$(token)/manifest.json"; then
 		local_ok=1
 		break
 	fi
