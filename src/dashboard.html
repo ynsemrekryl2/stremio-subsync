@@ -42,27 +42,6 @@ a { color: var(--accent); }
 section, details.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
 .sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-bottom: 4px; }
 .sec-note { font-size: 13px; color: var(--muted); margin-bottom: 10px; max-width: 75ch; }
-.cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-@media (max-width: 980px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 520px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-.card b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.card .name { font-weight: 600; font-size: 13px; }
-.card .desc { color: var(--muted); font-size: 12px; line-height: 1.35; margin-top: 2px; }
-.card.ok b { color: var(--ok); } .card.warn b { color: var(--warn); } .card.bad b { color: var(--bad); }
-.funnel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 10px; font-size: 13px; }
-.funnel .n { font-weight: 600; font-variant-numeric: tabular-nums; }
-.funnel .arrow { color: var(--muted); }
-.sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
-.src { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; align-content: start; }
-.src .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.src .name { font-weight: 600; }
-.src .nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.src .nums b { display: block; font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.src .nums small { color: var(--muted); font-size: 11px; }
-.src .nums .spare { color: var(--muted); font-size: 12px; font-weight: 400; }
-.src .note { font-size: 12px; color: var(--muted); line-height: 1.35; }
-.src .note.bad { color: var(--bad); }
 .requests, .jobs { display: grid; gap: 10px; }
 .req { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 6px; }
 .req.ok { border-left-color: var(--ok); } .req.warn { border-left-color: var(--warn); }
@@ -248,33 +227,6 @@ dl.terms dd { margin: 0; color: var(--muted); }
     <p class="hint" id="backup-note"></p>
   </details>
 
-  <section>
-    <div class="sec-head"><h2>Özet</h2><span class="muted" id="summary-note">sunucu açıldığından beri</span></div>
-    <div class="cards">
-      <div class="card"><b id="c-requests">0</b><div class="name">Altyazı isteği</div>
-        <div class="desc">Stremio her oynatmada altyazı listesini bir kez ister.</div></div>
-      <div class="card ok"><b id="c-found">0</b><div class="name">Altyazı sunuldu</div>
-        <div class="desc">Menüde hedef dilde, bu dosyaya oturtulmuş altyazı vardı.</div></div>
-      <div class="card warn"><b id="c-fallback">0</b><div class="name">Yedekle sunuldu</div>
-        <div class="desc">Hedef dilde uyan yoktu; İngilizce yedek (ve çevirisi) kondu.</div></div>
-      <div class="card bad"><b id="c-missing">0</b><div class="name">Sunulamadı</div>
-        <div class="desc">Menüde yalnız nedenini söyleyen bir girdi vardı.</div></div>
-      <div class="card"><b id="c-cached">0</b><div class="name">Cache'ten</div>
-        <div class="desc">Önceki cevap verildi; dosya ve kaynaklar yeniden okunmadı.</div></div>
-      <div class="card"><b id="c-translated">0</b><div class="name">Biten çeviri</div>
-        <div class="desc">Sonuna kadar çevrilen İngilizce yedek.</div></div>
-    </div>
-    <div class="funnel" id="funnel" title="Yeni işlenen isteklerde her adımı geçen sayısı"></div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h2>Kaynaklar</h2><span class="muted">sunucu açıldığından beri</span></div>
-    <p class="sec-note">Her altyazı kaynağında kaç arama yapıldı, kaç aday bulundu, kaçı indirildi ve kaçı dosyaya uydu.
-      İngilizce yedek aramaları da sayılır; onlardan uyanlar ayrıca «+İng.» diye yazar. Anahtarlı kaynaklarda
-      «anahtar reddedildi» ya da «kota doldu» görürseniz anahtarı ya da günlük kotayı kontrol edin.</p>
-    <div id="sources" class="sources"><div class="empty">Bağlanıyor…</div></div>
-  </section>
-
   <section id="jobs-section">
     <div class="sec-head"><h2>Çeviriler</h2><span id="jobs-note" class="muted"></span></div>
     <p class="sec-note">Hedef dilde uyan altyazı bulunamadığında, dosyaya oturan İngilizce altyazı çevrilir.
@@ -444,9 +396,7 @@ const WINDOWS = ["başta", "ortada", "sonda"];
 const AFTER = { m5: "k2", m4: "m3", dump: "k2", m3more: "m3", m3fb: "m3", m5fb: "m3fb" };
 const state = { after: 0, started: 0, events: [], requests: [], hidden: new Set(["http"]),
   paused: false, filter: "", translations: undefined, settings: null, models: new Map(),
-  sourcesOn: null, bySource: new Map(),
-  counts: { requests: 0, cached: 0, found: 0, fallback: 0, missing: 0 },
-  funnel: { probed: 0, matched: 0, read: 0, ruler: 0, candidates: 0, accepted: 0 } };
+  sourcesOn: null };
 const $ = (id) => document.getElementById(id);
 /** What each link and key is for, where it comes from, what it costs (SS-061). */
 const KEYS = {
@@ -597,26 +547,6 @@ function downloadSources(line) {
   return [...list.matchAll(/Ok\(SrtStats \{ source: (\w+)|Err\(/g)].map((m) => m[1] || null);
 }
 
-function sourceStats(src) {
-  if (!state.bySource.has(src)) state.bySource.set(src,
-    { searches: 0, failed: 0, found: 0, downloaded: 0, ok: 0, okSpare: 0, lastFailed: false, error: null });
-  return state.bySource.get(src);
-}
-
-/** Counts a probe line's searches and downloads per source; the sources of
- *  its downloads, in order. */
-function countSources(line, at) {
-  for (const s of searchesOf(line)) {
-    const st = sourceStats(s.src);
-    st.searches++;
-    st.lastFailed = s.n === null;
-    if (s.n === null) { st.failed++; st.error = { at, text: sourceError(s.err, s.code) }; } else st.found += s.n;
-  }
-  const sources = downloadSources(line);
-  for (const src of sources) if (src) sourceStats(src).downloaded++;
-  return sources;
-}
-
 /** Source searches and downloads of an `m3` line, as one sentence. */
 function candidates(line) {
   const searches = searchesOf(line);
@@ -681,13 +611,12 @@ function alignment(round, sources) {
 /** Folds one event into the request it belongs to. Lines carry no request
  *  id, so each one goes to the latest request still waiting for that stage. */
 function track(ev) {
-  const line = ev.line, c = state.counts, f = state.funnel;
+  const line = ev.line;
   if (ev.area === "request") {
-    c.requests++;
     const kind = (line.match(/kind=(\w+)/) || [])[1] || "?";
     state.requests.unshift({ at: ev.at_ms, kind, label: ev.label || "",
       hints: { name: /has_filename: true/.test(line), size: /has_video_size: true/.test(line) },
-      steps: {}, seen: new Set(), main: [], spare: [], dl: [], dlSpare: [], fitted: new Set() });
+      steps: {}, seen: new Set(), main: [], spare: [], dl: [], dlSpare: [] });
     state.requests.length = Math.min(state.requests.length, MAX_REQUESTS);
     return;
   }
@@ -706,55 +635,45 @@ function track(ev) {
   if (stage === "served") {
     const from = (line.match(/from=(\w+)/) || [])[1];
     const offered = Number((line.match(/offered=(\d+)/) || [])[1] || 0);
-    if (from === "memory" || from === "disk") c.cached++;
     if (!req) return;
     req.served = { from, offered, early: from === "probes" && !req.menu };
     // Answered without probes: no later probe line is this request's.
     if (from !== "probes") for (const done of ["k2", "m3", "menu"]) req.seen.add(done);
   } else if (stage === "k2") {
-    f.probed++;
     if (/NoHints/.test(line)) return set("file", "Stremio dosya adı ve boyutu göndermedi", "bad");
     if (/Failed/.test(line) && !/Matched/.test(line)) return set("file", "AIOStreams listesi okunamadı", "bad");
     const by = (line.match(/matched_by: Some\((\w+)\)/) || [])[1];
     const streams = (line.match(/streams: (\d+)/) || [])[1];
     if (!by) return set("file", Number(streams) ? "listedeki " + streams + " dosyanın hiçbirinde ad ya da boyut tutmadı"
       : "AIOStreams listesi boş geldi", "bad");
-    f.matched++;
     set("file", "bulundu, " + (by === "Both" ? "ad ve boyut tuttu" : "boyut tuttu, ad farklı") +
       (streams ? " (" + streams + " dosya arasında)" : ""), "ok");
     const file = fileState(line);
     set("container", file[0], file[1]);
     if (!file[2] || !req) return;
-    f.read++;
     req.tracks = tracksOf(line).concat(mp4TracksOf(line));
     const rulers = rulerPairs((line.match(/rulers: \[([^\]]*)\]/) || [])[1]);
     if (rulers.length) {
-      f.ruler++;
       set("ruler", "İngilizce metin altyazıdan, " + num(rulers[0][1]) + " satır" +
         (rulers.length > 1 ? " (+" + (rulers.length - 1) + " iz daha)" : ""), "ok");
     } else if (/mkv: Some/.test(line) && !/cues: Read/.test(line)) set("ruler", "dosyanın dizini okunamadı", "bad");
   } else if (stage === "m5") {
     const rulers = rulerPairs(line);
-    if (rulers.length) f.ruler++;
     set("ruler", rulers.length ? "İngilizce PGS (resim) altyazıdan, " + num(rulers[0][1]) + " satır" : "PGS'ten çıkmadı",
       rulers.length ? "ok" : "bad");
   } else if (stage === "m3") {
-    const sources = countSources(line, ev.at_ms);
-    if (req) req.dl = sources;
+    if (req) req.dl = downloadSources(line);
     const found = candidates(line);
-    if (found.found) f.candidates++;
     set("candidates", found.text, found.found ? "ok" : "bad");
   } else if (stage === "m3more") {
     // None of the first downloads fitted; the next ranked ones (SS-040).
-    const sources = countSources(line, ev.at_ms);
-    if (req) req.dl = req.dl.concat(sources);
+    if (req) req.dl = req.dl.concat(downloadSources(line));
     const read = (line.match(/Ok\(SrtStats/g) || []).length;
     const copies = Number((line.match(/duplicates=(\d+)/) || [])[1] || 0);
     if (req && req.steps.candidates) req.steps.candidates[0] += " · ilk indirilenler uymadı, " + read + " tane daha indirildi" +
       (copies ? " (" + copies + " kopya atlandı)" : "");
   } else if (stage === "m3fb") {
-    const sources = countSources(line, ev.at_ms);
-    if (req) { req.inSpare = true; req.dlSpare = sources; }
+    if (req) { req.inSpare = true; req.dlSpare = downloadSources(line); }
     const found = candidates(line);
     set("spare", "İngilizce aday: " + found.text, found.found ? "info" : "bad");
   } else if (stage === "m5fb") {
@@ -764,22 +683,11 @@ function track(ev) {
     if (!req) return;
     const t = trial(line);
     (req.inSpare ? req.spare : req.main).push(t);
-    // A candidate is tried against each ruler; count it once.
-    const key = (req.inSpare ? "s" : "m") + t.candidate;
-    const src = (req.inSpare ? req.dlSpare : req.dl)[t.candidate];
-    if (t.ok && src && !req.fitted.has(key)) {
-      req.fitted.add(key);
-      sourceStats(src)[req.inSpare ? "okSpare" : "ok"]++;
-    }
   } else if (stage === "menu") {
     const notice = (line.match(/notice=Some\((\w+)\)/) || [])[1];
     const entries = Number((line.match(/entries=(\d+)/) || [])[1] || 0);
     if (!req) return;
     req.menu = { notice, entries };
-    // A notice with more entries after it: the English fallback, and its
-    // translation when one is on (SS-026).
-    if (!notice) { c.found++; } else if (entries > 1) { c.fallback++; } else { c.missing++; }
-    if (!notice) f.accepted++;
   }
 }
 
@@ -813,53 +721,12 @@ function outcomeOf(r, m, s) {
   return { kind: "wait", head: "İşleniyor…", why: "" };
 }
 
-function renderCounts() {
-  const c = state.counts;
-  for (const key of Object.keys(c)) $("c-" + key).textContent = c[key];
-  const jobs = (state.translations && state.translations.jobs) || [];
-  $("c-translated").textContent = jobs.filter((j) => j.phase === "done").length;
-  const f = state.funnel;
-  const box = $("funnel");
-  if (!f.probed) { box.replaceChildren(el("span", "muted", "Yeni işlenen istek olunca adım adım kaçının geçtiği burada görünür.")); return; }
-  const stages = [[f.probed, "dosya arandı"], [f.matched, "bulundu"], [f.read, "okundu"], [f.ruler, "cetvel çıktı"],
-    [f.candidates, "aday bulundu"], [f.accepted, "altyazı sunuldu"]];
-  box.replaceChildren(el("span", "muted", "Yeni işlenenlerde:"), ...stages.flatMap(([n, name], i) => {
-    const item = el("span", "");
-    item.append(el("span", "n", n), " " + name);
-    return i ? [el("span", "arrow", "→"), item] : [item];
-  }));
-}
-
+/** The sources the server has on, in the header line. */
 function renderSources() {
   const on = state.sourcesOn;
   if (on === null) return;
   $("sources-on").textContent = on.length ? "Kaynaklar: " + on.map((k) => SOURCES[k] || k).join(", ")
     : "Altyazı kaynağı kapalı";
-  const kinds = [...new Set([...on, ...state.bySource.keys()])];
-  const box = $("sources");
-  if (!kinds.length) { box.replaceChildren(el("div", "empty", "Sunucuda açık altyazı kaynağı yok.")); return; }
-  box.replaceChildren(...kinds.map((kind) => {
-    const st = state.bySource.get(kind) || { searches: 0, failed: 0, found: 0, downloaded: 0, ok: 0, okSpare: 0 };
-    const card = el("div", "src");
-    const top = el("div", "top");
-    const isOn = on.includes(kind);
-    top.append(el("span", "name", SOURCES[kind] || kind),
-      el("span", "chip " + (!isOn ? "" : st.lastFailed ? "bad" : "ok"), !isOn ? "kapalı" : st.lastFailed ? "son arama hatalı" : "açık"));
-    const nums = el("div", "nums");
-    const cell = (n, name, extra) => {
-      const c = el("div", "");
-      const b = el("b", "", String(n));
-      if (extra) b.append(" ", el("span", "spare", extra));
-      c.append(b, el("small", "", name));
-      return c;
-    };
-    nums.append(cell(st.searches, "arama"), cell(st.found, "aday"), cell(st.downloaded, "indirme"),
-      cell(st.ok, "uydu", st.okSpare ? "+" + st.okSpare + " İng." : ""));
-    card.append(top, nums);
-    if (st.failed) card.append(el("p", "note bad", st.failed + " aramada hata · son: " + st.error.text + ", " + time(st.error.at)));
-    else if (!st.searches) card.append(el("p", "note", "Henüz aranmadı."));
-    return card;
-  }));
 }
 
 function percent(job) {
@@ -1066,7 +933,7 @@ async function pollTranslations() {
     const res = await fetch("translations.json", { cache: "no-store" });
     if (!res.ok) throw new Error(res.status);
     state.translations = await res.json();
-    renderJobs(); renderCounts(); renderRequests();
+    renderJobs(); renderRequests();
   } catch (err) {
     // The events poll shows the connection state.
   }
@@ -1091,8 +958,8 @@ async function poll() {
     const on = page.sources || [];
     const sourcesChanged = !state.sourcesOn || on.join() !== state.sourcesOn.join();
     state.sourcesOn = on;
-    if (page.events.length || sourcesChanged) renderSources();
-    if (page.events.length) { renderCounts(); renderRequests(); renderTools(); if (!state.paused) renderLog(); }
+    if (sourcesChanged) renderSources();
+    if (page.events.length) { renderRequests(); renderTools(); if (!state.paused) renderLog(); }
   } catch (err) {
     $("conn").textContent = "bağlantı yok"; $("conn").className = "pill bad";
   }
@@ -1440,7 +1307,6 @@ for (const id of ["glossary", "log-box"]) {
     if (id === "log-box") renderLog();
   });
 }
-renderCounts();
 poll();
 pollTranslations();
 loadSettings();
