@@ -1,90 +1,78 @@
-# stremio-subsync
+# SubSync — senkronu doğrulanmış altyazı (Stremio eklentisi)
 
-Kişisel kullanım için bir Stremio altyazı add-on'u. Oynatılan dosyanın
-**içindeki İngilizce metin altyazısını** cetvel olarak kullanır, dış
-kaynaklardan bulunan altyazıları bu cetvele kaydırır ve yalnız filmin başında,
-ortasında ve sonunda aynı kaydırmayla tutanları sunar.
+Stremio'da oynattığın dosyaya **tam oturan** Türkçe (ya da seçtiğin dilde)
+altyazıyı bulur:
 
-Ses analizi yapmaz. Filmi indirmez veya proxy'lemez; dosyanın yalnız
-içindekiler tablosunu HTTP Range ile okur. Blok okuma denemesi ayrıca
-açılır (SS-028); otomatik çeviri henüz uygulanmadı.
+- Dosyanın **içindeki İngilizce altyazının zamanlarını** cetvel olarak okur.
+  Filmi indirmez; dosyanın yalnız içindekiler tablosunu okur.
+- OpenSubtitles, SubDL, AltyaziDB, SubSource ve Wyzie'deki altyazıları bu
+  cetvele kaydırır; filmin başında, ortasında ve sonunda tutanları sunar.
+  Tutmayanı hiç göstermez.
+- Hiçbiri uymazsa, dosyaya uyan İngilizce altyazıyı kendi OpenRouter
+  anahtarınla çevirir (isteğe bağlı, film başına birkaç sent).
 
-## Durum
+Dosyayı bulmak için **AIOStreams** kullanır (Real-Debrid, TorBox vb. onun
+arkasında).
 
-Çalışıyor (yerel): oynatılan MKV'nin İngilizce altyazısından cetvel çıkarır,
-OpenSubtitles (ve anahtar varsa SubDL) adaylarını hizalar, baş / orta / son
-testini geçenleri kaydırılmış olarak Stremio'ya sunar ve sonucu cache'ler.
-İlk açılışta yanıt birkaç saniye sürebilir (en çok 15 sn); sonraki açılışlar
-cache'ten gelir. Altyazı üretilemezse menüde nedeni yazan tek bir "SubSync: …"
-girdisi görünür (örneğin "İngilizce iz yok"). Kalıcı kurulum bir VPS'te HTTPS arkasında çalışıyor
-([`docs/deploy.md`](docs/deploy.md)); bağlantılar ve anahtarlar eklentinin configure sayfasından girilir.
-Plan: [`docs/plan.md`](docs/plan.md) · Kararlar: [`docs/decisions.md`](docs/decisions.md)
-· İş listesi: [`TASKS.md`](TASKS.md)
+## Gerekenler
 
-## Çalıştırma
+- Stremio ve bir **AIOStreams** kurulumu: onun `manifest.json` linki.
+- Bir **Ubuntu ya da Debian sunucu**, 80 ve 443 portları açık. Ücretsiz yol:
+  [Oracle Always Free](docs/oracle.md).
+- İsteğe bağlı anahtarlar (SubDL, AltyaziDB, SubSource, Wyzie ücretsiz;
+  OpenRouter ücretli). Hepsi kurulumdan sonra sayfadan girilir.
 
-Yerelde (macOS) tek komut; Finder'da `scripts/SubSync.command`'a çift
-tıklamak da aynısını yapar:
+## Kurulum (5 adım)
 
-```bash
-scripts/dev.sh
-```
+1. **Sunucu aç.** Oracle için adım adım: [docs/oracle.md](docs/oracle.md).
+2. **Sunucuya bağlan ve kur:**
 
-İlk çalıştırmada token üretilir, AIOStreams linki (gizli girişle) sorulur,
-ikisi macOS Anahtar Zinciri'ne kaydedilir ve kurulum linki panoya kopyalanır.
-Sonraki açılışlar hiçbir şey sormaz; kurulum linki aynı kalır, eklentiyi
-yeniden kurmak gerekmez. `scripts/dev.sh link` linki yeniden panoya kopyalar,
-`scripts/dev.sh dashboard` olay panelini açar, `scripts/dev.sh subdl` SubDL
-anahtarını, `scripts/dev.sh altyazidb` AltyaziDB anahtarını,
-`scripts/dev.sh subsource` SubSource anahtarını, `scripts/dev.sh wyzie` Wyzie
-anahtarını gizli girişle
-Anahtar Zinciri'ne kaydeder (sonraki açılışlar onu kullanır), `scripts/dev.sh forget` sırları siler (sonraki açılışta yeni token). Ek `SUBSYNC_*` değişkenleri
-geçer, örneğin `SUBSYNC_DUMP_DIR=dumps scripts/dev.sh`.
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ynsemrekryl2/stremio-subsync/main/install.sh | sudo bash
+   ```
 
-Elle çalıştırmak için:
+   Hiçbir şey sormaz: programı indirir, HTTPS'i ve servisi kurar, sonunda
+   **configure sayfasının linkini** verir.
+3. **Configure sayfasını aç.** AIOStreams linkini (zorunlu) ve istediğin
+   anahtarları gir; her birini **Dene** ile sına, **Kaydet**.
+4. **Stremio'ya kur** düğmesine bas. Eklenti Stremio hesabına eklenir; aynı
+   hesaptaki TV'lerde de görünür.
+5. **Yedeği indir** ve şifre yöneticine koy. Sunucu giderse yenisinde
+   "Yedekten yükle" ile her şey geri gelir.
 
-```bash
-export SUBSYNC_TOKEN="$(openssl rand -hex 24)"   # en az 32 karakter
-cargo run
-```
+Configure sayfasının linki kurulumun şifresidir; kimseyle paylaşma.
 
-Stremio'ya kurulacak link:
+## Kullanım
 
-```
-http://127.0.0.1:7001/<SUBSYNC_TOKEN>/manifest.json
-```
+Stremio'da bir video aç, altyazı menüsünde **SubSync** girdilerini seç. İlk
+açılışta yanıt birkaç saniye sürebilir (en çok 15 sn), sonrakiler hazır
+gelir. Altyazı bulunamazsa menüde nedenini yazan bir girdi görünür; çeviri
+hazırlanıyorsa birkaç dakika sonra videoyu yeniden aç.
 
-| Değişken | Varsayılan | Açıklama |
-|---|---|---|
-| `SUBSYNC_TOKEN` | — (zorunlu) | Kurulum linkindeki gizli parça. Linki bilen sunucuyu kullanır. |
-| `SUBSYNC_BIND` | `127.0.0.1:7001` | Dinlenen adres. VPS'te HTTPS reverse proxy'nin arkasında kalır. 7000 kullanılmaz: macOS'ta AirPlay Alıcısı tutar. |
-| `SUBSYNC_LANG` | `tur` | Aranan altyazı dili (ISO 639-2, OpenSubtitles adlarıyla: `tur`, `eng`, `pob`). Bu dilde uyan altyazı yoksa aynı kaynaklarda İngilizce aranır; uyan varsa menüde nedenin yanında `eng` girdisi olarak sunulur (`eng` iken kapalı). |
-| `SUBSYNC_AIOSTREAMS_URL` | — | AIOStreams manifest linki; oynatılan dosyayı bulmak için. Yoksa cetvel çıkmaz, altyazı sunulmaz. Loglanmaz. |
-| `SUBSYNC_RANGE_PROBE` | açık | `0` ise dosyadan cetvel okunmaz (altyazı da sunulmaz). |
-| `SUBSYNC_SOURCES_PROBE` | açık | `0` ise aday altyazı aranmaz. Açıkken en iyi 3 aday indirilir. |
-| `SUBSYNC_BLOCK_PROBE` | kapalı | `1` ise cetvel izinin bloklarını arka planda ölçer (SS-028); metin saklanmaz. Gerçek okuma maliyeti henüz doğrulanmadı. |
-| `SUBSYNC_CACHE_DIR` | `cache` | Sunulan altyazılar burada saklanır (kabul 30 gün, "uygun yok" 1 gün). Dosya adı istek özetidir; kimlik veya dosya adı içermez. `off` ise yalnız bellek. |
-| `SUBDL_API_KEY` | — | SubDL'in ücretsiz anahtarı; yoksa yalnız OpenSubtitles kullanılır. Loglanmaz. `scripts/dev.sh` bunu Anahtar Zinciri'nden alır (`scripts/dev.sh subdl`). |
-| `ALTYAZIDB_API_KEY` | — | AltyaziDB'nin ücretsiz anahtarı (üye olunca); yoksa AltyaziDB aranmaz. Yalnız `tr` ve `en`. Loglanmaz. `scripts/dev.sh altyazidb` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
-| `SUBSOURCE_API_KEY` | — | SubSource'un ücretsiz anahtarı (hesap panelinin API sekmesinden); yoksa SubSource aranmaz. Arama başına 2 istek (başlık + liste), ücretsiz kota günde 7 200. Loglanmaz. `scripts/dev.sh subsource` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
-| `WYZIE_API_KEY` | — | Wyzie Subs'ın ücretsiz anahtarı (store.wyzie.io/redeem, e-posta doğrulamalı); yoksa Wyzie aranmaz. Ücretsiz anahtarla charlie ve lima kaynakları; yapay zekâ çevirileri aday sayılmaz. Ücretsiz kota günde 1 000 istek (arama ve her indirme 1). Loglanmaz. `scripts/dev.sh wyzie` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
-| `OPENROUTER_API_KEY` | — | Hedef dilde uyan altyazı yoksa uyan İngilizce altyazı bu anahtarla çevrilir ve menüde "Türkçe çeviri" girdisi olur (SS-026). Yoksa çeviri kapalı. Loglanmaz. `scripts/dev.sh openrouter` ile Anahtar Zinciri'ne; `deploy/deploy.sh` sunucuya taşır. |
-| `SUBSYNC_TRANSLATE_MODEL` | `openai/gpt-6-luna` | Çeviri modeli (OpenRouter kimliği). Panelden seçilen model bunun önüne geçer (SS-048). |
-| `SUBSYNC_TRANSLATE_REASONING` | `low` | Çeviri modelinin düşünme düzeyi (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; hangisini kabul ettiği modele bağlı). `default` ise alan gönderilmez, modelin kendi varsayılanı geçer (GPT-6 Luna'da `medium`; düşünmeyen modeller için). `low`, Luna'da `medium`'dan ~1,7 kat hızlı ve ~%25 ucuz, kalite farkı görülmedi (SS-046). Başka düzey başka çeviri sayılır (cache ayrı). |
-| `SUBSYNC_SETTINGS_FILE` | `settings.json` | Panelde seçilen çeviri modeli ve düşünme düzeyi burada saklanır; yeniden başlatma ve deploy sonrası kalır, ortam değişkenlerinin önüne geçer. Anahtar içermez. Dosya silinirse yeniden ortam değişkenleri geçer (SS-048). |
-| `SUBSYNC_SECRETS_FILE` | `secrets.json` | Configure sayfasında (`/<token>/configure`, Stremio'da eklentinin Configure düğmesi) girilen AIOStreams linki ve anahtarlar burada saklanır (yalnız sahibi okur). Sayfada kaydedilen ya da kaldırılan, yukarıdaki ortam değişkenlerinin önüne geçer; kaydedince eklenti kendini yeniden başlatır. Değerler sayfaya geri gönderilmez ve loglanmaz (SS-061). |
-| `SUBSYNC_DUMP_DIR` | — | Verilirse hizalanan her isteğin zamanları (yalnız sayılar) buraya JSON olarak yazılır; `cargo run -- calibrate <dizin>` bunları yeniden hizalar. |
-| `SUBSYNC_LABEL_MODE` | kapalı | `1` ise indirilen her aday Stremio'nun altyazı menüsünde "SubSync 2 ✓ +1.60s · 7530" gibi görünür: sıra, kabul/ret, kaydırma, dump eki. Kaydırması olan her adayın bir de `yerel` sürümü gelir (SS-021: kayma filmin içinde değişiyorsa satırları çevresine göre ayrıca kaydırır). Etiketleme için; istek 15 sn'ye kadar bekleyebilir. |
+Aynı sayfa bir panel de: her isteğin sonucu, kaynakların durumu, süren
+çeviriler ve maliyeti, cache temizleme, yeniden başlatma, çeviri modeli.
+Stremio'da eklentinin **Configure** düğmesi de bu sayfayı açar.
 
-Sunucu kurulumu: [`docs/deploy.md`](docs/deploy.md)
+## Bir şey olursa
 
-## Test
+| Durum | Ne yap |
+|---|---|
+| Linki kaybettim | Sunucuda `subsync link` |
+| Altyazı gelmiyor | Panelde "Son istekler" nedenini yazar; sunucuda `subsync` durumu gösterir |
+| Bir anahtar değişti / bitti | Configure sayfasında yenisini yapıştır, **Dene**, **Kaydet** |
+| Yeni sürüme geçmek | Sunucuda `subsync update` |
+| Sunucu silindi, yenisini kurdum | Kurulum satırı, sonra configure sayfasında **Yedekten yükle**. IP aynıysa Stremio'da bir şey yapma; değiştiyse yeni linkle Stremio'ya yeniden kur |
+| HTTPS açılmıyor | Sağlayıcının panelinde 80 ve 443 kapalıdır ([Oracle](docs/oracle.md#2-80-ve-443ü-aç)); sonra `sudo systemctl restart caddy` |
+| Kaldırmak | `subsync uninstall` (token ve anahtarlar kalır; `--purge` hepsini siler) |
 
-```bash
-cargo fmt --check
-cargo test
-cargo clippy --all-targets -- -D warnings
-```
+Sunucu komutları: `subsync` (durum) · `link` · `update` · `logs` · `restart`
+· `backup` · `restore <dosya>` · `uninstall`.
+
+## Daha fazlası
+
+- [Ayarlar ve sunucudaki dosyalar](docs/config.md)
+- [Geliştirme: Mac'te çalıştırma, kaynaktan deploy, testler](docs/development.md)
+- [Nasıl çalışır](docs/plan.md) · [Kararlar](docs/decisions.md) · [İş listesi](TASKS.md)
 
 ## Lisans
 
