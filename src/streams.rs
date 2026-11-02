@@ -375,6 +375,36 @@ fn classify(err: &reqwest::Error) -> FetchError {
     }
 }
 
+impl AioStreams {
+    /// Reads the add-on's own manifest (SS-062): whether the link answers
+    /// and serves streams. Asks for no title, so no debrid lookup runs.
+    pub async fn check_manifest(&self) -> Result<bool, FetchError> {
+        let url = self
+            .base
+            .join("manifest.json")
+            .map_err(|_| FetchError::Other)?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| classify(&err))?;
+        let body = response.bytes().await.map_err(|err| classify(&err))?;
+        serves_streams(&body)
+    }
+}
+
+/// Whether a Stremio manifest lists the `stream` resource, by name or as
+/// `{"name": "stream", …}`.
+pub fn serves_streams(body: &[u8]) -> Result<bool, FetchError> {
+    let manifest: Value = serde_json::from_slice(body).map_err(|_| FetchError::Decode)?;
+    let resources = manifest["resources"].as_array().ok_or(FetchError::Decode)?;
+    Ok(resources
+        .iter()
+        .any(|r| r.as_str() == Some("stream") || r["name"].as_str() == Some("stream")))
+}
+
 impl StreamSource for AioStreams {
     fn fetch<'a>(&'a self, kind: &'a str, id: &'a str) -> FetchFuture<'a> {
         Box::pin(async move {
@@ -402,6 +432,19 @@ mod tests {
     use serde_json::json;
 
     const HOST: &str = "aio.test";
+
+    #[test]
+    fn manifest_check_looks_for_the_stream_resource() {
+        let serves = |v: Value| serves_streams(v.to_string().as_bytes());
+        assert_eq!(serves(json!({ "resources": ["stream", "meta"] })), Ok(true));
+        assert_eq!(
+            serves(json!({ "resources": [{ "name": "stream", "types": ["movie"] }] })),
+            Ok(true)
+        );
+        assert_eq!(serves(json!({ "resources": ["subtitles"] })), Ok(false));
+        assert_eq!(serves(json!({ "name": "x" })), Err(FetchError::Decode));
+        assert_eq!(serves_streams(b"<html>"), Err(FetchError::Decode));
+    }
 
     fn streams(value: Value) -> Vec<Stream> {
         parse_stream_list(value.to_string().as_bytes()).unwrap()

@@ -167,7 +167,8 @@ impl Secrets {
     }
 }
 
-fn check(name: Name, value: &str, token: &str) -> Result<(), Refused> {
+/// Whether `value` may be saved, or tried, for `name`.
+pub fn check(name: Name, value: &str, token: &str) -> Result<(), Refused> {
     if name == Name::AioStreams {
         if value.contains(token) {
             return Err(Refused::OwnLink);

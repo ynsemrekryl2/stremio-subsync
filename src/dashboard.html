@@ -159,6 +159,11 @@ dl.terms dd { margin: 0; color: var(--muted); }
 .key label[hidden] { display: none; }
 .key label input { margin: 0; }
 .key.need { border-color: var(--warn); }
+.key .try { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; }
+.key .try button { font: inherit; font-size: 13px; color: var(--text); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.key .try button:disabled { opacity: .45; cursor: default; }
+.key .try .ok { color: var(--ok); } .key .try .bad { color: var(--bad); }
 .install { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
 .install a, .install button, #setup .actions button { font: inherit; color: var(--text); background: var(--chip);
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; text-decoration: none; }
@@ -434,6 +439,18 @@ const URL_REASONS = { Empty: "boş", ControlChars: "görünmeyen karakter içeri
   ManyLinks: "birden çok manifest.json linki var", NotAUrl: "link değil, eksik ya da fazla karakter var",
   Scheme: "https:// ile başlamalı", NotManifest: "manifest.json ile bitmeli", Client: "sunucu bağlantı kuramadı" };
 const ORIGINS = { page: "bu sayfadan", environment: "sunucunun ortam değişkeninden" };
+/** What a Test showed (SS-062): [ok, text]. */
+function tried(name, a) {
+  switch (a.result) {
+    case "works": return [true, "Çalışıyor" + (a.found == null ? "." : " (deneme aramasında " + a.found + " altyazı).")];
+    case "invalid": return [false, name === "aiostreams" ? "Link reddedildi: yanlış ya da artık geçerli değil."
+      : "Anahtar geçersiz ya da pasif."];
+    case "quota": return [false, "Günlük kota dolmuş; yarın yeniden dene."];
+    case "unreachable": return [false, "Servise ulaşılamadı (zaman aşımı ya da bağlantı yok); biraz sonra yeniden dene."];
+    case "no_streams": return [false, "Bu link bir akış eklentisinin değil; AIOStreams'in manifest linkini gir."];
+    default: return [false, "Beklenmeyen cevap" + (a.status ? " (HTTP " + a.status + ")." : ".")];
+  }
+}
 
 function time(ms) {
   return new Date(ms).toLocaleTimeString("tr-TR", { hour12: false });
@@ -1253,8 +1270,30 @@ function renderSecrets(view) {
     const remove = Object.assign(el("input"), { type: "checkbox" }); remove.dataset.remove = e.name;
     const removeRow = el("label"); removeRow.append(remove, e.name === "aiostreams" ? "Linki kaldır" : "Anahtarı kaldır");
     removeRow.hidden = !e.set;
-    input.oninput = remove.onchange = secretsChanged;
-    field.append(input, removeRow);
+    const test = el("button", "", "Dene"); test.type = "button";
+    test.title = e.name === "aiostreams" || e.name === "openrouter" ? "Kaydetmeden dener; ücret ya da kota harcamaz."
+      : "Kaydetmeden bir deneme araması yapar; günlük kotadan 1 arama düşer.";
+    const result = el("span");
+    const canTry = () => { test.disabled = !input.value.trim() && !e.set; };
+    test.onclick = async () => {
+      test.disabled = true; result.className = "muted"; result.textContent = "Deneniyor…";
+      try {
+        const typed = input.value.trim();
+        const res = await fetch("secrets/test", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(typed ? { name: e.name, value: typed } : { name: e.name }) });
+        const a = await res.json().catch(() => null);
+        if (!res.ok || !a) throw new Error(a && a.refused === "not_set" ? "kayıtlı değer yok; önce yapıştır" : refusal(a, res.status));
+        const [ok, text] = tried(e.name, a);
+        result.className = ok ? "ok" : "bad"; result.textContent = (ok ? "✓ " : "✗ ") + text;
+      } catch (err) {
+        result.className = "bad"; result.textContent = "✗ Denenemedi: " + err.message;
+      } finally { canTry(); }
+    };
+    const tryRow = el("div", "try"); tryRow.append(test, result);
+    input.oninput = () => { canTry(); result.textContent = ""; secretsChanged(); };
+    remove.onchange = secretsChanged;
+    canTry();
+    field.append(input, tryRow, removeRow);
     row.append(info, field);
     return row;
   });

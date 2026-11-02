@@ -1,6 +1,7 @@
 mod addon;
 mod align;
 mod blocks;
+mod checks;
 mod clean;
 mod dump;
 mod events;
@@ -186,6 +187,8 @@ async fn main() {
         eprintln!("SUBSYNC_LANG must be a three-letter ISO 639-2 code such as tur");
         std::process::exit(2);
     }
+    // The configure page's Test button searches in the language used.
+    let checker = Arc::new(checks::Live::new(lang.clone()));
     // Translation needs the English fallback, so the sources (SS-026).
     let mut translate_into = None;
     // Candidate search and download. On by default since M5;
@@ -317,7 +320,10 @@ async fn main() {
         }
         None => event!("start", "translation: off"),
     }
-    state = state.with_secrets(secrets).with_restart(Arc::new(restart));
+    state = state
+        .with_secrets(secrets)
+        .with_checker(checker)
+        .with_restart(Arc::new(restart));
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .unwrap_or_else(|err| {

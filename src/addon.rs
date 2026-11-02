@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 use crate::align;
+use crate::checks::Checker;
 use crate::dump::{self, Dump};
 use crate::events::{self, event};
 use crate::extra::PlaybackHints;
@@ -68,6 +69,8 @@ pub struct AppState {
     restart: Option<Restart>,
     /// The links and keys the configure page shows and changes (SS-061).
     secrets: Option<Arc<Mutex<Secrets>>>,
+    /// Tries a link or key for the configure page's Test button (SS-062).
+    checker: Option<Arc<dyn Checker>>,
 }
 
 /// Starts the whole server again; it does not return when it works.
@@ -95,6 +98,7 @@ impl AppState {
             probing: Mutex::new(HashMap::new()),
             restart: None,
             secrets: None,
+            checker: None,
         })
     }
 
@@ -172,6 +176,12 @@ impl AppState {
         self
     }
 
+    /// Lets the configure page try a link or key before saving it.
+    pub fn with_checker(mut self, checker: Arc<dyn Checker>) -> Self {
+        self.checker = Some(checker);
+        self
+    }
+
     fn authorized(&self, candidate: &str) -> bool {
         constant_time_eq(self.token.as_bytes(), candidate.as_bytes())
     }
@@ -203,6 +213,7 @@ pub fn router(state: AppState) -> Router {
         // Stremio's Configure button opens this next to the manifest.
         .route("/{token}/configure", get(dashboard))
         .route(SECRETS_ROUTE, get(secrets_json).post(change_secrets))
+        .route("/{token}/secrets/test", post(test_secret))
         .route(EVENTS_ROUTE, get(events_json))
         .route(TRANSLATIONS_ROUTE, get(translations_json))
         .route(SETTINGS_ROUTE, get(settings_json).post(change_settings))
@@ -392,23 +403,11 @@ async fn change_secrets(
     })
     .await
     .unwrap_or(Err(secrets::Refused::Off));
-    let mut status = StatusCode::BAD_REQUEST;
-    let refused = match saved {
-        Ok(()) => None,
-        Err(secrets::Refused::Value(name)) => Some(json!({ "refused": "value", "name": name })),
-        Err(secrets::Refused::AioStreams(reason)) => {
-            Some(json!({ "refused": "aiostreams", "reason": format!("{reason:?}") }))
-        }
-        Err(secrets::Refused::OwnLink) => Some(json!({ "refused": "own_link" })),
-        Err(secrets::Refused::Off) => Some(json!({ "refused": "off" })),
-        Err(secrets::Refused::Save(kind)) => {
+    if let Err(refused) = saved {
+        if let secrets::Refused::Save(kind) = refused {
             event!("start", "links and keys save failed error={kind:?}");
-            status = StatusCode::INTERNAL_SERVER_ERROR;
-            Some(json!({ "refused": "save" }))
         }
-    };
-    if let Some(refused) = refused {
-        return (status, Json(refused)).into_response();
+        return refusal(refused);
     }
     event!("start", "links and keys changed names={names:?}");
     let restarting = match state.restart.clone() {
@@ -423,6 +422,79 @@ async fn change_secrets(
     };
     let view = secrets_view(&state);
     Json(json!({ "view": view, "restarting": restarting })).into_response()
+}
+
+/// Why a link or key was not saved or tried, for the page: the field and
+/// the reason, never the value.
+fn refusal(refused: secrets::Refused) -> Response {
+    let (status, body) = match refused {
+        secrets::Refused::Value(name) => (
+            StatusCode::BAD_REQUEST,
+            json!({ "refused": "value", "name": name }),
+        ),
+        secrets::Refused::AioStreams(reason) => (
+            StatusCode::BAD_REQUEST,
+            json!({ "refused": "aiostreams", "reason": format!("{reason:?}") }),
+        ),
+        secrets::Refused::OwnLink => (StatusCode::BAD_REQUEST, json!({ "refused": "own_link" })),
+        secrets::Refused::Off => (StatusCode::BAD_REQUEST, json!({ "refused": "off" })),
+        secrets::Refused::Save(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "refused": "save" }),
+        ),
+    };
+    (status, Json(body)).into_response()
+}
+
+/// One link or key to try: the typed `value`, or the one in use when it is
+/// left out.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestRequest {
+    name: secrets::Name,
+    #[serde(default)]
+    value: Option<String>,
+}
+
+/// Tries a link or key without saving it (SS-062) and answers what it
+/// showed. Only the name and the outcome are logged.
+async fn test_secret(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !state.authorized(&token) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(checker) = state.checker.clone() else {
+        return (StatusCode::CONFLICT, Json(json!({ "refused": "off" }))).into_response();
+    };
+    let Ok(TestRequest { name, value }) = serde_json::from_slice(&body) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "refused": "body" }))).into_response();
+    };
+    let value = match value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(typed) => match secrets::check(name, typed, &state.token) {
+            Ok(()) => typed.to_owned(),
+            Err(refused) => return refusal(refused),
+        },
+        None => {
+            let in_use = state
+                .secrets
+                .as_ref()
+                .and_then(|s| s.lock().ok()?.get(name).map(str::to_owned));
+            let Some(in_use) = in_use else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "refused": "not_set" })),
+                )
+                    .into_response();
+            };
+            in_use
+        }
+    };
+    let outcome = checker.check(name, value).await;
+    event!("start", "key test name={name:?} outcome={outcome:?}");
+    Json(outcome).into_response()
 }
 
 /// What the dashboard's cache button also clears.
@@ -2758,6 +2830,91 @@ mod tests {
             (StatusCode::CONFLICT, json!("off"))
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Answers `Invalid` for the value "bad", `Works` otherwise; keeps what
+    /// it was asked.
+    struct FakeChecker(Mutex<Vec<(secrets::Name, String)>>);
+
+    impl Checker for FakeChecker {
+        fn check(&self, name: secrets::Name, value: String) -> crate::checks::CheckFuture {
+            let outcome = if value == "bad" {
+                crate::checks::Outcome::Invalid
+            } else {
+                crate::checks::Outcome::Works { found: Some(2) }
+            };
+            self.0.lock().unwrap().push((name, value));
+            Box::pin(async move { outcome })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_button_tries_the_typed_or_saved_value() {
+        let checker = Arc::new(FakeChecker(Mutex::new(Vec::new())));
+        let (secrets, _) = Secrets::load(None, |key| {
+            (key == "WYZIE_API_KEY").then(|| "in-use".to_owned())
+        });
+        let app = router(
+            AppState::new(TOKEN.to_owned())
+                .unwrap()
+                .with_secrets(secrets)
+                .with_checker(checker.clone()),
+        );
+        let uri = format!("/{TOKEN}/secrets/test");
+        let wrong = post(
+            &app,
+            "/wrong-token-123/secrets/test".to_owned(),
+            r#"{"name":"subdl","value":"x"}"#,
+        )
+        .await;
+        assert_eq!(wrong.0, StatusCode::NOT_FOUND);
+
+        let (status, answer) = post(&app, uri.clone(), r#"{"name":"subdl","value":" bad "}"#).await;
+        assert_eq!(
+            (status, answer),
+            (StatusCode::OK, json!({ "result": "invalid" }))
+        );
+        let (status, answer) = post(&app, uri.clone(), r#"{"name":"wyzie"}"#).await;
+        assert_eq!(
+            (status, answer),
+            (StatusCode::OK, json!({ "result": "works", "found": 2 }))
+        );
+        let (status, answer) =
+            post(&app, uri.clone(), r#"{"name":"openrouter","value":null}"#).await;
+        assert_eq!(
+            (status, answer),
+            (StatusCode::BAD_REQUEST, json!({ "refused": "not_set" }))
+        );
+        let (status, answer) = post(
+            &app,
+            uri.clone(),
+            r#"{"name":"aiostreams","value":"https://aio.test/abc/configure"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(answer["refused"], "aiostreams");
+        let (status, _) = post(&app, uri.clone(), r#"{"name":"subdl","key":"x"}"#).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            *checker.0.lock().unwrap(),
+            vec![
+                (secrets::Name::SubDl, "bad".to_owned()),
+                (secrets::Name::Wyzie, "in-use".to_owned())
+            ],
+            "only checked values reach the service"
+        );
+        let logged: String = crate::events::since(0)
+            .events
+            .into_iter()
+            .map(|e| e.line)
+            .collect();
+        assert!(!logged.contains("in-use"));
+
+        let (status, answer) = post(&self::app(), uri, r#"{"name":"subdl","value":"x"}"#).await;
+        assert_eq!(
+            (status, answer["refused"].clone()),
+            (StatusCode::CONFLICT, json!("off"))
+        );
     }
 
     #[test]
