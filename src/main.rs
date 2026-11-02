@@ -49,6 +49,11 @@ async fn main() {
     // no server.
     let mut args = std::env::args().skip(1);
     let command = args.next();
+    // `stremio-subsync --version`: what an update compares (SS-065).
+    if matches!(command.as_deref(), Some("--version" | "version")) {
+        println!("stremio-subsync {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if command.as_deref() == Some("mp4-check") {
         let (Some(file), srt) = (args.next(), args.next()) else {
             eprintln!("usage: mp4-check <file> [reference.srt]");

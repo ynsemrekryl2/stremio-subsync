@@ -1,0 +1,62 @@
+# A `v*` tag builds the server for 64-bit Intel and ARM Linux and publishes
+# both as a GitHub release (SS-065). The install script downloads
+# releases/latest/download/stremio-subsync-$(uname -m)-linux.
+# Built on Ubuntu 22.04, so any Linux with glibc 2.35 or later runs it.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain rust-toolchain.toml pins
+        run: |
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
+            --profile minimal --component clippy,rustfmt
+      - run: cargo build --release --locked
+      - name: Check the version matches the tag
+        run: |
+          got="$(target/release/stremio-subsync --version)"
+          want="stremio-subsync ${GITHUB_REF_NAME#v}"
+          [ "$got" = "$want" ] || { echo "binary says '$got', tag wants '$want'" >&2; exit 1; }
+      - name: Name the binary for its architecture
+        run: |
+          mkdir dist
+          name="stremio-subsync-${{ matrix.arch }}-linux"
+          cp target/release/stremio-subsync "dist/$name"
+          (cd dist && sha256sum "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
