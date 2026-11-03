@@ -1281,7 +1281,9 @@ async fn fallback(
 /// entries in `lang` (in labeling mode, every one, marked), or why there is
 /// nothing to align. When none of the first downloads fits, the next few
 /// ranked candidates are downloaded and tried too (SS-040); not in labeling
-/// mode, which shows every candidate anyway. Timings of every download are
+/// mode, which shows every candidate anyway. "The first downloads" are the
+/// ones the rule before SS-071 made, so a fit among the extra ones a timing
+/// copy let in does not skip candidates that rule would have tried. Timings of every download are
 /// dumped under `dump_dir`, if given.
 async fn align_candidates(
     probe: &mut sources::Probe,
@@ -1306,19 +1308,25 @@ async fn align_candidates(
     }
     if label_mode {
         let dump_name = write_dump(dump_dir, kind, rulers.clone(), probe).await;
-        return align_round(probe, rulers, lang, Some(dump_name), 0).await;
+        return Ok(align_round(probe, rulers, lang, Some(dump_name), 0)
+            .await?
+            .0);
     }
-    let mut entries = align_round(probe, rulers.clone(), lang.clone(), None, 0).await?;
-    if entries.is_empty() && probe.has_more() {
-        let (tried, copies) = (probe.cues.len(), probe.report.duplicates);
+    let (mut entries, fitted) = align_round(probe, rulers.clone(), lang.clone(), None, 0).await?;
+    if !fitted.iter().any(|&c| c < probe.first_slots) && probe.has_more() {
+        let tried = probe.cues.len();
+        let (copies, timing_copies) = (probe.report.duplicates, probe.report.timing_copies);
         probe.download_more().await;
         event!(
             "m3",
-            "m3 more downloads={:?} duplicates={}",
+            "m3 more downloads={:?} duplicates={} timing_copies={}",
             &probe.report.downloads[tried..],
-            probe.report.duplicates - copies
+            probe.report.duplicates - copies,
+            probe.report.timing_copies - timing_copies
         );
-        entries = align_round(probe, rulers.clone(), lang, None, tried).await?;
+        entries = align_round(probe, rulers.clone(), lang, None, tried)
+            .await?
+            .0;
     }
     write_dump(dump_dir, kind, rulers, probe).await;
     Ok(entries)
@@ -1326,15 +1334,16 @@ async fn align_candidates(
 
 /// Every download of `probe` laid over the ruler: the accepted ones as menu
 /// entries, or in labeling mode (`label` holds the dump's name, if one was
-/// written) every one, marked. Trials of downloads before `logged` were
-/// logged by an earlier round and are not logged again.
+/// written) every one, marked; and the indices of the downloads that fit.
+/// Trials of downloads before `logged` were logged by an earlier round and
+/// are not logged again.
 async fn align_round(
     probe: &sources::Probe,
     rulers: Arc<Vec<(u64, Vec<Event>)>>,
     lang: String,
     label: Option<Option<String>>,
     logged: usize,
-) -> Result<Vec<menu::MenuEntry>, Notice> {
+) -> Result<(Vec<menu::MenuEntry>, Vec<usize>), Notice> {
     let cues = probe.cues.clone();
     // Alignment and the menu are CPU work; keep them off the async workers.
     let (trials, entries) = tokio::task::spawn_blocking(move || {
@@ -1353,7 +1362,12 @@ async fn align_round(
     for trial in trials.iter().filter(|t| t.candidate >= logged) {
         event!("m4", "m4 probe {trial:?}");
     }
-    Ok(entries)
+    let fitted = trials
+        .iter()
+        .filter(|t| t.accepted)
+        .map(|t| t.candidate)
+        .collect();
+    Ok((entries, fitted))
 }
 
 /// Writes the timings of every download of `probe` under `dump_dir`, if
@@ -2067,31 +2081,49 @@ mod tests {
     #[tokio::test]
     async fn more_candidates_are_tried_only_when_none_of_the_first_fits() {
         let (head, fits, other) = film();
-        let o = || other.clone();
+        // Unfitting files with times of their own; the same `k` twice is one
+        // timing with other text (SS-071).
+        let o = |k: usize| other.split("\n\n").skip(k).collect::<Vec<_>>().join("\n\n");
         // (ranked files, labeling mode) → menu, downloads.
         let cases = [
             (
-                vec![o(), o(), o(), fits.clone(), o()],
+                vec![o(0), o(1), o(2), fits.clone(), o(4)],
                 false,
                 vec!["tur"],
                 5,
             ),
             (
-                vec![fits.clone(), o(), o(), o(), o()],
+                vec![fits.clone(), o(1), o(2), o(3), o(4)],
                 false,
                 vec!["tur"],
                 3,
             ),
-            (vec![o(), o(), o(), o()], false, vec!["NoneAccepted"], 4),
-            (vec![o(), o(), o()], false, vec!["NoneAccepted"], 3),
+            (vec![o(0), o(1), o(2), o(3)], false, vec!["NoneAccepted"], 4),
+            (vec![o(0), o(1), o(2)], false, vec!["NoneAccepted"], 3),
             (
-                vec![o(), o(), o(), o(), o(), o(), o(), fits.clone()],
+                vec![o(0), o(1), o(2), o(3), o(4), o(5), o(6), fits.clone()],
                 false,
                 vec!["NoneAccepted"],
                 6,
             ),
             // Labeling mode lists every candidate anyway.
-            (vec![o(), o(), o(), fits.clone()], true, vec![], 3),
+            (vec![o(0), o(1), o(2), fits.clone()], true, vec![], 3),
+            // Two timing copies in the second round took the fitting one's
+            // slot before SS-071.
+            (
+                vec![o(0), o(1), o(2), o(3), o(3), o(3), fits.clone()],
+                false,
+                vec!["tur"],
+                7,
+            ),
+            // Copies let the first round reach the fitting one; the second
+            // still runs, as the first three alone would have asked for it.
+            (
+                vec![o(0), o(0), o(0), fits.clone(), o(4), o(5), o(6)],
+                false,
+                vec!["tur"],
+                7,
+            ),
         ];
         for (i, (files, label_mode, menu, downloads)) in cases.into_iter().enumerate() {
             let dir = std::env::temp_dir().join(format!(
