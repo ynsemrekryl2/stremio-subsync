@@ -1,6 +1,6 @@
 # A `v*` tag builds the server for 64-bit Intel and ARM Linux and publishes
-# both as a GitHub release (SS-065). The install script downloads
-# releases/latest/download/stremio-subsync-$(uname -m)-linux.
+# both as a GitHub release (SS-065) and as a container image. The install
+# script downloads releases/latest/download/stremio-subsync-$(uname -m)-linux.
 # Built on Ubuntu 22.04, so any Linux with glibc 2.35 or later runs it.
 name: release
 
@@ -71,3 +71,42 @@ jobs:
         run: |
           gh release create "$TAG" dist/* --verify-tag \
             --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+
+  # The same two binaries as one x86_64 + ARM64 image on GitHub's registry,
+  # for compose.yaml: ghcr.io/<repo>:<version>, :<major.minor> and, for the
+  # newest tag, :latest.
+  image:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          # All tags, to tell whether this one is the newest.
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push the image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="${TAG#v}"
+          tags=(-t "$image:$version" -t "$image:${version%.*}")
+          newest="$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
+          [ "$newest" = "$TAG" ] && tags+=(-t "$image:latest")
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg BINARY=release \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$version" \
+            --label "org.opencontainers.image.licenses=GPL-3.0-or-later" \
+            "${tags[@]}" --push .
