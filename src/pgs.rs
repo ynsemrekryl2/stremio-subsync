@@ -3,10 +3,11 @@
 //! text ruler offline, and become the ruler when the file has no English
 //! text track. Only times are kept; no image is ever read.
 //!
-//! Cues give PGS points without duration. Each line is assumed to be a
-//! "show" display set followed by a "clear" one, so consecutive points are
-//! paired. Which point opens a pair is not known from Cues alone; both
-//! phases are tried. `stremio-subsync pgs-check <dir>` lays each phase over
+//! Cues give PGS points without duration. Most lines are a "show" display
+//! set followed by a "clear" one, so consecutive points are paired. A line
+//! that replaces the one on screen has no clear before it, which shifts the
+//! pairing by one; a point followed within `GAP_MS` by the next is taken for
+//! a clear, and pairing picks up again from there (`Gaps`). `stremio-subsync pgs-check <dir>` lays each phase over
 //! the text rulers saved with it, one line per pair of tracks.
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,11 @@ use crate::ruler::Event;
 
 /// A pair longer than this is unlikely to be one subtitle line.
 const LONG_MS: u64 = 10_000;
-/// A track with fewer `Even` lines is forced or partial, not a ruler.
+/// No line is this short, so a point the next one follows this soon is a
+/// clear. In a BluRay episode (2026-11-03) clears came 83–125 ms before the
+/// next line in over half the gaps, and no line lasted under 1 s.
+const GAP_MS: u64 = 500;
+/// A track with fewer `Gaps` lines is forced or partial, not a ruler.
 pub const MIN_RULER_LINES: usize = 50;
 
 /// One English PGS track's cue times in milliseconds, in Cues order with
@@ -54,10 +59,15 @@ pub enum Phase {
     Odd,
     /// Every point shows a line that lasts until the next point.
     Each,
+    /// As `Even`, but a point the next one follows within `GAP_MS` is a
+    /// clear and the next one a show, whatever the count says. A point
+    /// right before such a clear is a show too: two clears never follow
+    /// each other.
+    Gaps,
 }
 
 impl Phase {
-    pub const ALL: [Phase; 3] = [Phase::Even, Phase::Odd, Phase::Each];
+    pub const ALL: [Phase; 4] = [Phase::Even, Phase::Odd, Phase::Each, Phase::Gaps];
 }
 
 /// Sorted distinct times; a display set indexed twice counts once.
@@ -86,17 +96,33 @@ pub fn lines(times: &[u64], phase: Phase) -> Vec<Event> {
             .map(pair)
             .collect(),
         Phase::Each => times.array_windows::<2>().map(pair).collect(),
+        Phase::Gaps => {
+            let clears: Vec<bool> = times
+                .array_windows::<2>()
+                .map(|[a, b]| b - a <= GAP_MS)
+                .collect();
+            let mut out = Vec::new();
+            let mut after_clear = true;
+            for (i, w) in times.array_windows::<2>().enumerate() {
+                let show = !clears[i] && (after_clear || clears.get(i + 1) == Some(&true));
+                if show {
+                    out.push(pair(w));
+                }
+                after_clear = !show;
+            }
+            out
+        }
     }
 }
 
 /// Rulers from English PGS tracks for a file without an English text track:
-/// `Even` lines (show, then clear), which matched the text ruler in every
-/// file checked against one. Non-forced tracks come first; short tracks
-/// are left out.
+/// `Gaps` lines. Plain `Even` pairs went out of step at the first line that
+/// replaced another and lost half of a BluRay episode's lines (2026-11-03).
+/// Non-forced tracks come first; short tracks are left out.
 pub fn rulers(tracks: &[PgsTrack]) -> Vec<(u64, Vec<Event>)> {
     let mut out: Vec<(bool, u64, Vec<Event>)> = tracks
         .iter()
-        .map(|t| (t.forced, t.track, lines(&t.times, Phase::Even)))
+        .map(|t| (t.forced, t.track, lines(&t.times, Phase::Gaps)))
         .filter(|(_, _, lines)| lines.len() >= MIN_RULER_LINES)
         .collect();
     out.sort_by_key(|(forced, _, _)| *forced);
@@ -220,6 +246,50 @@ mod tests {
         assert!(lines(&[7], Phase::Odd).is_empty());
     }
 
+    /// A line that replaces the one on screen has no clear before it, as in
+    /// BluRay PGS tracks: `Even` pairs lose step there for good, `Gaps`
+    /// picks it up again at the next short gap.
+    #[test]
+    fn gaps_recover_lines_that_replace_each_other() {
+        let mut times = Vec::new();
+        let mut text = Vec::new();
+        let mut t = 1_000;
+        for i in 0..120u64 {
+            let len = 1_500 + (i * 337) % 2_500;
+            text.push(ev(t, t + len));
+            if i % 9 == 4 {
+                // The next line replaces this one: no clear point.
+                times.push(t);
+                t += len;
+                continue;
+            }
+            times.extend([t, t + len]);
+            t += len + if i % 5 == 0 { 3_000 } else { 83 };
+        }
+        let exact = |found: &[Event]| found.iter().filter(|e| text.contains(e)).count();
+        let even = lines(&times, Phase::Even);
+        assert!(exact(&even) < text.len() * 6 / 10, "{}", exact(&even));
+        // A line that replaced another and has a long gap after it is read
+        // as that gap instead (lines 5, 50 and 95); the next one is right.
+        let gaps = lines(&times, Phase::Gaps);
+        assert_eq!(exact(&gaps), text.len() - 3);
+        assert_eq!(gaps.len(), text.len());
+        let fix = align::align(&text, &gaps).accepted().expect("accepted");
+        assert_eq!((fix.num, fix.den, fix.shift_ms), (1, 1, 0));
+        let track = PgsTrack {
+            track: 6,
+            forced: false,
+            times,
+        };
+        assert_eq!(rulers(&[track])[0].1, gaps);
+    }
+
+    #[test]
+    fn gaps_match_even_without_replaced_lines() {
+        let times = [1_000, 2_000, 2_083, 4_000, 9_000, 10_500, 10_583, 12_000];
+        assert_eq!(lines(&times, Phase::Gaps), lines(&times, Phase::Even));
+    }
+
     #[test]
     fn debug_prints_counts_only() {
         let track = PgsTrack {
@@ -257,7 +327,7 @@ mod tests {
         let mut dump = Dump::new("movie", &[(3, text)], &[], &[]);
         dump.pgs = vec![pgs];
         let out = check_lines("1.json", &dump);
-        assert_eq!(out.len(), 3);
+        assert_eq!(out.len(), 4);
         let even = &out[0];
         assert!(
             even.contains("phase=Even") && even.contains("repeats=0"),
