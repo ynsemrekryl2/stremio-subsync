@@ -59,7 +59,8 @@ fn legacy_encoding(lang: &str) -> &'static Encoding {
 }
 
 /// Cues in start order. Blocks without a valid timing line or without text
-/// are skipped; a missing blank line between cues is tolerated.
+/// are skipped; a missing blank line between cues is tolerated, and blank
+/// rows inside a cue's text are dropped.
 pub fn parse(text: &str) -> Vec<Cue> {
     let mut cues = Vec::new();
     let mut current: Option<(u64, u64)> = None;
@@ -87,15 +88,27 @@ fn push_cue(cues: &mut Vec<Cue>, times: Option<(u64, u64)>, body: &mut Vec<&str>
     let Some((start_ms, end_ms)) = times.filter(|(s, e)| e > s) else {
         return;
     };
-    let first = lines.iter().position(|l| !l.trim().is_empty());
-    let last = lines.iter().rposition(|l| !l.trim().is_empty());
-    if let (Some(first), Some(last)) = (first, last) {
+    let text = without_blank_rows(lines);
+    if !text.is_empty() {
         cues.push(Cue {
             start_ms,
             end_ms,
-            text: lines[first..=last].join("\n"),
+            text,
         });
     }
+}
+
+/// A blank row ends a cue in SRT. One left inside makes the rows after it a
+/// block without a number, and Stremio for Mac then refuses the whole file.
+fn without_blank_rows<'a>(rows: impl IntoIterator<Item = &'a str>) -> String {
+    let mut text = String::new();
+    for row in rows.into_iter().filter(|row| !row.trim().is_empty()) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(row);
+    }
+    text
 }
 
 fn is_index(line: &str) -> bool {
@@ -169,10 +182,11 @@ pub fn render_local(cues: &[Cue], fix: Fix, extra: &[i64]) -> String {
     for (index, (start, end, text)) in moved.into_iter().enumerate() {
         let _ = write!(
             out,
-            "{}\n{} --> {}\n{text}\n\n",
+            "{}\n{} --> {}\n{}\n\n",
             index + 1,
             clock(start),
-            clock(end)
+            clock(end),
+            without_blank_rows(text.lines())
         );
     }
     out
@@ -284,6 +298,30 @@ mod tests {
             },
         );
         assert_eq!(straddle, "1\n00:00:00,000 --> 00:00:02,000\nD\n\n");
+    }
+
+    #[test]
+    fn blank_rows_inside_a_cue_are_dropped() {
+        // Seen in a real file; the stray row made Stremio for Mac refuse it.
+        let text = "1\r\n00:00:01,000 --> 00:00:02,000\r\n<i>A</i>\r\n\r\nB\r\n \t\r\nC\r\n\r\n\
+                    2\r\n00:00:03,000 --> 00:00:04,000\r\nD\r\n\r\n";
+        let cues = parse(text);
+        assert_eq!(
+            cues,
+            vec![cue(1_000, 2_000, "<i>A</i>\nB\nC"), cue(3_000, 4_000, "D")]
+        );
+        assert_eq!(
+            render(&cues, SAME),
+            "1\n00:00:01,000 --> 00:00:02,000\n<i>A</i>\nB\nC\n\n\
+             2\n00:00:03,000 --> 00:00:04,000\nD\n\n"
+        );
+    }
+
+    #[test]
+    fn render_writes_no_blank_row_whatever_the_cue_holds() {
+        // Cues from other formats do not come through `parse`.
+        let out = render(&[cue(1_000, 2_000, "\nA\n\n \r\nB\n")], SAME);
+        assert_eq!(out, "1\n00:00:01,000 --> 00:00:02,000\nA\nB\n\n");
     }
 
     #[test]
