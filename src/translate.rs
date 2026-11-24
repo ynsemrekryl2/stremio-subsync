@@ -21,6 +21,7 @@ use std::pin::Pin;
 
 use futures_util::stream::{self, StreamExt};
 
+use crate::events::event;
 use crate::srt::Cue;
 
 /// Lines per block, and lines a block shares with each neighbour as context
@@ -39,6 +40,10 @@ pub const TERM_LIMIT: usize = 32;
 /// lines, then one clean retry of the whole block.
 pub const MAX_TARGETED_REPAIRS: usize = 2;
 pub const MAX_FULL_RETRIES: usize = 1;
+
+/// Clean retries of a block whose answer is complete but has slid off its
+/// lines (see [`drift`]). The best answer is kept; drift never fails a run.
+pub const MAX_DRIFT_RETRIES: usize = 2;
 
 /// One subtitle line as the translator sees it: its number in the document
 /// (1-based) and its text, lines joined by `\n`.
@@ -481,12 +486,60 @@ fn clean_text(text: &str) -> String {
         .join("\n")
 }
 
+/// [`complete_block`], asked again while its texts have slid off their
+/// lines: the model can fold two lines into one and make up the count with
+/// the next ones, which every id check passes but shows each text a line or
+/// two early (SS-078). Keeps the answer with the least drift; a retry that
+/// fails changes nothing.
+async fn translate_block(
+    translator: &dyn Translator,
+    request: &BlockRequest,
+) -> Result<Vec<String>, Failure> {
+    let mut texts = complete_block(translator, request).await?;
+    let mut slid = block_drift(request, &texts);
+    let retry = BlockRequest {
+        mode: Mode::FullRetry,
+        ..request.clone()
+    };
+    for _ in 0..MAX_DRIFT_RETRIES {
+        if !slid.is_drifted() {
+            break;
+        }
+        event!(
+            "translate",
+            "translation block drifted block={}/{} {}",
+            request.block,
+            request.blocks,
+            drift_line(&slid)
+        );
+        let Ok(answer) = ask(translator, &retry).await else {
+            break;
+        };
+        if let Ok(again) = check(&request.output_ids, answer) {
+            let again_slid = block_drift(request, &again);
+            if again_slid.score < slid.score {
+                (texts, slid) = (again, again_slid);
+            }
+        }
+    }
+    if slid.is_drifted() {
+        event!(
+            "translate",
+            "translation block kept drifted block={}/{} {}",
+            request.block,
+            request.blocks,
+            drift_line(&slid)
+        );
+    }
+    Ok(texts)
+}
+
 /// One block with the fixed repair budget: the first answer, up to
 /// [`MAX_TARGETED_REPAIRS`] asking only for the bad lines (merged with
 /// those that passed), then one clean full retry. An unreadable answer uses
 /// the budget like a wrong one; any other translator error ends it at once.
 /// Only a fully valid block comes back.
-async fn translate_block(
+async fn complete_block(
     translator: &dyn Translator,
     request: &BlockRequest,
 ) -> Result<Vec<String>, Failure> {
@@ -612,6 +665,126 @@ pub fn balance(source: &[Cue], target: &[Cue]) -> Option<Balance> {
     Some(out)
 }
 
+/// A run of lines whose evidence for being one or two lines off adds up to
+/// more than this has drifted. On 15 real translations (SS-078) the two
+/// drifted blocks scored above 25 and the other 96 at most 7.
+pub const DRIFT_LIMIT: f64 = 12.0;
+/// Offsets tried, in lines.
+const DRIFT_LAGS: [isize; 4] = [1, 2, -1, -2];
+/// Spread of a line's translated length around the usual one, as a log ratio.
+const LENGTH_SPREAD: f64 = 0.33;
+/// Evidence one line can give, either way.
+const LINE_EVIDENCE: f64 = 4.0;
+
+/// The strongest run of translated lines that fit the source lines `lag`
+/// away better than their own. Numbers only, no text.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Drift {
+    pub score: f64,
+    /// How many lines later the texts' own source is (texts shown early).
+    pub lag: isize,
+    /// Positions in the translated lines.
+    pub first: usize,
+    pub last: usize,
+}
+
+impl Drift {
+    pub fn is_drifted(&self) -> bool {
+        self.score > DRIFT_LIMIT
+    }
+}
+
+/// What of a line survives translation: its length, whether it asks, and
+/// whether a speaker's dash opens one of its rows.
+struct Shape {
+    length: f64,
+    asks: bool,
+    dashed: bool,
+}
+
+fn shape(text: &str) -> Shape {
+    let shown = visible(text);
+    Shape {
+        // A few letters added, so one word more or less in a short line
+        // does not count as a different line.
+        length: (letters(text) as f64 + 4.0).ln(),
+        asks: shown.contains(['?', '\u{61f}', '\u{ff1f}']),
+        dashed: shown
+            .lines()
+            .any(|row| row.trim_start().starts_with(['-', '\u{2013}', '\u{2014}'])),
+    }
+}
+
+/// Looks for a run of `texts` that has slid off its lines: `texts[i]` is
+/// given for `source[at + i]`. For each lag the evidence of consecutive
+/// lines is added up, starting over whenever it turns against the lag.
+fn drift(source: &[Shape], at: usize, texts: &[Shape]) -> Drift {
+    let mut ratios: Vec<f64> = texts
+        .iter()
+        .zip(source.iter().skip(at))
+        .map(|(t, s)| t.length - s.length)
+        .collect();
+    ratios.sort_by(f64::total_cmp);
+    let usual = ratios.get(ratios.len() / 2).copied().unwrap_or(0.0);
+    let fit = |s: &Shape, t: &Shape| {
+        let off = t.length - s.length - usual;
+        let length = (off * off / (2.0 * LENGTH_SPREAD * LENGTH_SPREAD)).min(4.0);
+        let asks = if s.asks == t.asks { 0.0 } else { 2.5 };
+        let dashed = if s.dashed == t.dashed { 0.0 } else { 1.0 };
+        -(length + asks + dashed)
+    };
+    let mut worst = Drift::default();
+    for lag in DRIFT_LAGS {
+        let mut sum = 0.0;
+        let mut first = 0;
+        for (i, text) in texts.iter().enumerate() {
+            let other = (at + i)
+                .checked_add_signed(lag)
+                .and_then(|there| source.get(there));
+            let (Some(own), Some(other)) = (source.get(at + i), other) else {
+                continue;
+            };
+            let evidence = fit(other, text) - fit(own, text);
+            if sum <= 0.0 {
+                (sum, first) = (0.0, i);
+            }
+            sum += evidence.clamp(-LINE_EVIDENCE, LINE_EVIDENCE);
+            if sum > worst.score {
+                worst = Drift {
+                    score: sum,
+                    lag,
+                    first,
+                    last: i,
+                };
+            }
+        }
+    }
+    worst
+}
+
+/// [`drift`] of a block's answer; the context beyond the block is known.
+fn block_drift(request: &BlockRequest, texts: &[String]) -> Drift {
+    let source: Vec<Shape> = request.context.iter().map(|l| shape(&l.text)).collect();
+    let at = request
+        .context
+        .iter()
+        .position(|l| request.output_ids.first() == Some(&l.id))
+        .unwrap_or(0);
+    let texts: Vec<Shape> = texts.iter().map(|text| shape(text)).collect();
+    drift(&source, at, &texts)
+}
+
+/// One log line for a [`Drift`], lines counted from 1.
+pub fn drift_line(d: &Drift) -> String {
+    format!(
+        "score={:.1} lag={} lines={}-{}",
+        d.score,
+        d.lag,
+        d.first + 1,
+        d.last + 1
+    )
+}
+
 /// Text without `<...>` and `{...}` markup.
 pub(crate) fn visible(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -648,7 +821,8 @@ fn ends_sentence(text: &str) -> bool {
 }
 
 /// `stremio-subsync balance-check <english.srt> <translated.srt>`: prints
-/// [`Balance`] for a translation already on disk; no network.
+/// [`Balance`] and every drifted block ([`Drift`]) for a translation already
+/// on disk; no network.
 pub fn balance_check(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
     let read = |path: &std::path::Path, lang: &str| {
         std::fs::read(path)
@@ -656,10 +830,47 @@ pub fn balance_check(source: &std::path::Path, target: &std::path::Path) -> Resu
             .map_err(|err| format!("read: {:?}", err.kind()))
     };
     let lang = std::env::var("SUBSYNC_LANG").unwrap_or_else(|_| "tur".to_owned());
-    let report = balance(&read(source, "eng")?, &read(target, &lang)?)
-        .ok_or("not the same cues (count or times differ)")?;
+    let (source, target) = (read(source, "eng")?, read(target, &lang)?);
+    let report = balance(&source, &target).ok_or("not the same cues (count or times differ)")?;
     println!("{}", balance_line(&report));
+    let drifts = drifts(&source, &target);
+    let worst = drifts.iter().map(|(_, d)| d.score).fold(0.0, f64::max);
+    let drifted: Vec<_> = drifts.iter().filter(|(_, d)| d.is_drifted()).collect();
+    println!(
+        "drift blocks={} drifted={} worst={worst:.1}",
+        drifts.len(),
+        drifted.len()
+    );
+    for (block, drift) in drifted {
+        println!("  block={block} {}", drift_line(drift));
+    }
     Ok(())
+}
+
+/// Every block's number and [`drift`], with positions in the whole document.
+fn drifts(source: &[Cue], target: &[Cue]) -> Vec<(usize, Drift)> {
+    let shapes = |cues: &[Cue]| cues.iter().map(|c| shape(&c.text)).collect::<Vec<_>>();
+    let (source, target) = (shapes(source), shapes(target));
+    layout(source.len())
+        .iter()
+        .map(|block| {
+            let start = block.context.start;
+            let found = drift(
+                &source[block.context.clone()],
+                block.output.start - start,
+                &target[block.output.clone()],
+            );
+            let at = block.output.start;
+            (
+                block.index + 1,
+                Drift {
+                    first: found.first + at,
+                    last: found.last + at,
+                    ..found
+                },
+            )
+        })
+        .collect()
 }
 
 /// One log line for a [`Balance`].
@@ -839,6 +1050,152 @@ mod tests {
             line,
             "balance lines=10 split_pairs=4 shifted=1 (25.0%) forward=1 back=0"
         );
+    }
+
+    /// Lines 1–`n` of uneven lengths, some asking, some with a dash.
+    fn dialogue(n: u32) -> Vec<Line> {
+        (1..=n)
+            .map(|id| {
+                let words = [2, 7, 4, 9, 1, 6, 3, 8][(id as usize * 5 + id as usize / 8) % 8];
+                let dash = if id % 5 == 0 { "- " } else { "" };
+                let end = if id % 4 == 1 { "?" } else { "." };
+                let text = (0..words).map(|w| format!("w{id}x{w}")).collect::<Vec<_>>();
+                line(id, &format!("{dash}{}{end}", text.join(" ")))
+            })
+            .collect()
+    }
+
+    /// A block of `dialogue` translating `ids`, with the lines around them.
+    fn dialogue_block(n: u32, ids: std::ops::RangeInclusive<u32>) -> BlockRequest {
+        BlockRequest {
+            context: dialogue(n),
+            output_ids: ids.collect(),
+            ..block_request(&[])
+        }
+    }
+
+    /// The right answer: every asked line, as long as its source.
+    fn aligned(request: &BlockRequest) -> Vec<Line> {
+        request
+            .context
+            .iter()
+            .filter(|l| request.output_ids.contains(&l.id))
+            .cloned()
+            .collect()
+    }
+
+    /// The seen failure: line `at` takes the next one's text too, the rest
+    /// come one early, and the line after the block fills the last id.
+    fn slid(request: &BlockRequest, at: u32) -> Vec<Line> {
+        let text = |id: u32| request.context[id as usize - 1].text.clone();
+        request
+            .output_ids
+            .iter()
+            .map(|&id| match id {
+                _ if id < at => line(id, &text(id)),
+                _ if id == at => line(id, &format!("{} {}", text(id), text(id + 1))),
+                _ => line(id, &text(id + 1)),
+            })
+            .collect()
+    }
+
+    fn texts(lines: &[Line]) -> Vec<String> {
+        lines.iter().map(|l| l.text.clone()).collect()
+    }
+
+    #[test]
+    fn drift_finds_lines_that_slid_and_leaves_the_rest() {
+        let request = dialogue_block(40, 4..=37);
+        assert!(!block_drift(&request, &texts(&aligned(&request))).is_drifted());
+        for at in [5, 15, 25] {
+            let found = block_drift(&request, &texts(&slid(&request, at)));
+            assert!(found.is_drifted(), "{at}: {found:?}");
+            assert_eq!(found.lag, 1, "{at}");
+            let first = found.first as u32 + 4;
+            assert!((at..=at + 3).contains(&first), "{at}: {found:?}");
+        }
+    }
+
+    #[test]
+    fn drift_allows_a_split_sentence_told_the_other_way_round() {
+        let request = dialogue_block(40, 4..=37);
+        let mut answer = aligned(&request);
+        for i in [6, 14, 22] {
+            let (a, b) = (answer[i].text.clone(), answer[i + 1].text.clone());
+            (answer[i].text, answer[i + 1].text) = (b, a);
+        }
+        assert!(!block_drift(&request, &texts(&answer)).is_drifted());
+    }
+
+    #[test]
+    fn drift_allows_a_language_that_takes_twice_the_letters() {
+        let request = dialogue_block(40, 4..=37);
+        let doubled: Vec<String> = aligned(&request)
+            .iter()
+            .map(|l| l.text.replace('w', "wwwww"))
+            .collect();
+        assert!(!block_drift(&request, &doubled).is_drifted());
+    }
+
+    #[tokio::test]
+    async fn a_drifted_block_is_asked_again() {
+        let request = dialogue_block(40, 4..=37);
+        let fake = Fake::scripted(vec![Ok(slid(&request, 10)), Ok(aligned(&request))]);
+        let got = translate_block(&fake, &request).await.unwrap();
+        assert_eq!(got, texts(&aligned(&request)));
+        let modes: Vec<Mode> = fake.asked().iter().map(|r| r.mode).collect();
+        assert_eq!(modes, vec![Mode::Initial, Mode::FullRetry]);
+        assert_eq!(fake.asked()[1].output_ids, request.output_ids);
+    }
+
+    #[tokio::test]
+    async fn drift_never_fails_a_block_and_the_least_drifted_answer_stays() {
+        let request = dialogue_block(40, 4..=37);
+        let (bad, less) = (slid(&request, 6), slid(&request, 24));
+        let fake = Fake::scripted(vec![Ok(bad.clone()), Ok(less.clone()), Ok(bad.clone())]);
+        let got = translate_block(&fake, &request).await.unwrap();
+        assert_eq!(got, texts(&less));
+        assert_eq!(fake.asked().len(), 1 + MAX_DRIFT_RETRIES);
+
+        // An incomplete retry is passed over; a dead service ends retrying.
+        let fake = Fake::scripted(vec![
+            Ok(bad.clone()),
+            Ok(Vec::new()),
+            Err(TranslateError::Transient),
+        ]);
+        let got = translate_block(&fake, &request).await.unwrap();
+        assert_eq!(got, texts(&bad));
+        assert_eq!(fake.asked().len(), 3);
+    }
+
+    #[test]
+    fn drifts_names_the_block_and_lines_of_the_document() {
+        let lines = dialogue(100);
+        let source: Vec<Cue> = (0u64..).zip(&lines).map(|(i, l)| cue(i, &l.text)).collect();
+        let block = layout(100)[1].clone();
+        let mut target = source.clone();
+        for i in block.output.start + 4..block.output.end {
+            target[i].text = source[i + 1].text.clone();
+        }
+        let drifted: Vec<(usize, Drift)> = drifts(&source, &target)
+            .into_iter()
+            .filter(|(_, d)| d.is_drifted())
+            .collect();
+        assert_eq!(drifted.len(), 1, "{drifted:?}");
+        assert_eq!((drifted[0].0, drifted[0].1.lag), (2, 1));
+        assert!(block.output.contains(&drifted[0].1.first));
+        assert!(block.output.contains(&drifted[0].1.last));
+    }
+
+    #[test]
+    fn drift_line_prints_numbers_only() {
+        let line = drift_line(&Drift {
+            score: 29.46,
+            lag: 2,
+            first: 229,
+            last: 239,
+        });
+        assert_eq!(line, "score=29.5 lag=2 lines=230-240");
     }
 
     #[test]
