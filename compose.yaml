@@ -1,0 +1,59 @@
+# SubSync with Docker Compose. Next to this file, a `.env` with:
+#
+#   SUBSYNC_TOKEN=<openssl rand -hex 32>   the install link's secret
+#
+# and, unless your own reverse proxy puts HTTPS in front of 127.0.0.1:7001,
+# Caddy getting a certificate itself for a domain pointed at this machine:
+#
+#   COMPOSE_PROFILES=https
+#   SUBSYNC_DOMAIN=subs.example.com
+#
+# then `docker compose up -d`. The configure page is
+# https://<address>/<SUBSYNC_TOKEN>/configure.
+services:
+  subsync:
+    image: ghcr.io/ynsemrekryl2/stremio-subsync:latest
+    restart: unless-stopped
+    env_file: .env
+    # Only this machine: a reverse proxy on it (or the Caddy below) puts
+    # HTTPS in front. Stremio does not install add-ons over plain HTTP.
+    ports:
+      - "127.0.0.1:7001:7001"
+    # Keys, settings, the backup's token and answered menus.
+    volumes:
+      - subsync-data:/data
+
+  caddy:
+    profiles: [https]
+    image: caddy:2
+    restart: unless-stopped
+    # For the site address below; only this, the token stays out of Caddy.
+    environment:
+      SUBSYNC_DOMAIN: ${SUBSYNC_DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+
+configs:
+  # Request URIs carry the install token, so there are no access logs and
+  # the error loggers, which print the URI, are dropped.
+  caddyfile:
+    content: |
+      {
+      	log default {
+      		exclude http.log.error http.handlers.reverse_proxy
+      	}
+      }
+
+      {$$SUBSYNC_DOMAIN} {
+      	reverse_proxy subsync:7001
+      }
+
+volumes:
+  subsync-data:
+  caddy-data:

@@ -1,0 +1,11 @@
+target
+.git
+.claude
+secrets.json
+settings.json
+cache
+dumps
+notes
+.local
+CLAUDE.md
+AGENTS.md
